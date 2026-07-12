@@ -12,7 +12,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use bytes::Bytes;
 use quinn::{Connection, RecvStream, SendStream};
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex, Semaphore};
@@ -26,6 +25,7 @@ use crate::protocol::{
     Carrier, FLOW_FRAME_MAGIC, FlowKind, FlowRole, SessionId, read_flow_header, read_request,
 };
 
+pub(in crate::portal) use self::flow::QueuedDatagram;
 use self::flow::{PortalUdpFlow, UdpFlowKey};
 use super::relay::relay_tcp_target;
 use crate::portal::PortalInner;
@@ -46,7 +46,7 @@ pub(super) struct PortalSession {
 pub(super) struct CompactUdpState {
     pub(super) target: String,
     pub(super) downlink: Carrier,
-    pub(super) sender: mpsc::Sender<Bytes>,
+    pub(super) sender: mpsc::Sender<QueuedDatagram>,
     pub(super) acked: Arc<AtomicBool>,
 }
 

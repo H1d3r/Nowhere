@@ -7,7 +7,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use bytes::Bytes;
 use quinn::Connection;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
@@ -75,13 +74,13 @@ pub(in crate::portal) enum UdpUp {
 }
 
 pub(in crate::portal) struct QuicUdpReceiver {
-    receiver: mpsc::Receiver<Bytes>,
+    receiver: mpsc::Receiver<crate::portal::conn::QueuedDatagram>,
     on_drop: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl QuicUdpReceiver {
     pub(in crate::portal) fn new(
-        receiver: mpsc::Receiver<Bytes>,
+        receiver: mpsc::Receiver<crate::portal::conn::QueuedDatagram>,
         on_drop: impl FnOnce() + Send + 'static,
     ) -> Self {
         Self {
@@ -90,8 +89,8 @@ impl QuicUdpReceiver {
         }
     }
 
-    pub(in crate::portal) async fn recv(&mut self) -> Option<Bytes> {
-        self.receiver.recv().await
+    pub(in crate::portal) async fn recv(&mut self) -> Option<bytes::Bytes> {
+        self.receiver.recv().await.map(|datagram| datagram.payload)
     }
 }
 

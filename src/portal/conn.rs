@@ -8,6 +8,8 @@ mod relay;
 mod session;
 mod tcp;
 
+pub(in crate::portal) use self::session::QueuedDatagram;
+
 use std::sync::Arc;
 
 use quinn::{Connection, Incoming, VarInt};

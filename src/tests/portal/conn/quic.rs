@@ -416,6 +416,51 @@ async fn udp_queue_budget_is_checked_before_flow_creation() {
             .is_err()
     );
     assert_eq!(portal.inner.stats.udp_active.load(Ordering::Relaxed), 0);
+    timeout(Duration::from_secs(1), async {
+        while portal.inner.stats.udp_dropped.load(Ordering::Relaxed) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    connection.close(VarInt::from_u32(0), b"");
+    stop_test_quic(server_endpoint, client_endpoint, shutdown, server_task).await;
+}
+
+#[tokio::test]
+async fn compact_udp_uses_connection_queue_budget_and_counts_drop() {
+    let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let target_addr = target.local_addr().unwrap().to_string();
+    let limits = UdpFlowLimits {
+        max_flows: DEFAULT_QUIC_MAX_UDP_FLOWS,
+        queue_bytes: 1,
+    };
+    let (portal, server_endpoint, client_endpoint, connection, shutdown, server_task) =
+        connect_test_quic_with_url_and_limits(
+            "portal://secret@127.0.0.1:0?log=none&net=udp",
+            Some(limits),
+        )
+        .await;
+    authenticate_test_connection(&portal, &connection).await;
+
+    let open = encode_udp_open_data(21, Carrier::Udp, &target_addr, b"dropped").unwrap();
+    connection.send_datagram(Bytes::from(open)).unwrap();
+
+    let mut received = [0u8; 16];
+    assert!(
+        timeout(Duration::from_millis(200), target.recv_from(&mut received))
+            .await
+            .is_err()
+    );
+    timeout(Duration::from_secs(1), async {
+        while portal.inner.stats.udp_dropped.load(Ordering::Relaxed) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(portal.inner.stats.udp_active.load(Ordering::Relaxed), 0);
 
     connection.close(VarInt::from_u32(0), b"");
     stop_test_quic(server_endpoint, client_endpoint, shutdown, server_task).await;
