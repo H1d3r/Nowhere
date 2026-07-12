@@ -154,17 +154,17 @@ impl PortalUdpFlow {
             ));
         }
         let mut buf = session.portal.buffers.get_udp_buffer();
-        let mut last_used = Instant::now();
+        let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
+        tokio::pin!(idle_sleep);
 
         let complete_reason = loop {
-            let deadline = last_used + udp_idle_timeout();
             tokio::select! {
                 _ = self.cancel.cancelled() => break "cancelled".to_string(),
                 datagram = receiver.recv() => {
                     let Some(datagram) = datagram else {
                         break "request channel closed".to_string();
                     };
-                    last_used = Instant::now();
+                    idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                     if let Some(limiter) = &session.portal.rate_limiter {
                         limiter.wait_read(datagram.payload.len() as i64).await;
                     }
@@ -198,7 +198,7 @@ impl PortalUdpFlow {
                     if n == 0 {
                         continue;
                     }
-                    last_used = Instant::now();
+                    idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                     let frame = frame_payload_bytes(&response_header, &buf[..n]);
                     if let Some(limiter) = &session.portal.rate_limiter {
                         limiter.wait_write(n as i64).await;
@@ -216,7 +216,7 @@ impl PortalUdpFlow {
                         }
                     }
                 }
-                _ = tokio::time::sleep_until(deadline) => {
+                _ = &mut idle_sleep => {
                     break "idle timeout".to_string();
                 }
             }

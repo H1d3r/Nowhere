@@ -78,12 +78,12 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
     portal.stats.add_session(true);
     let _done = SessionGuard::new(portal.clone(), true);
     let mut target_buf = portal.buffers.get_udp_buffer();
-    let mut last_used = Instant::now();
+    let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
+    tokio::pin!(idle_sleep);
 
     let complete_reason = loop {
         // UoT is connection-oriented, so the idle timer is based on traffic in
         // either direction rather than target socket lifetime alone.
-        let idle_deadline = last_used + udp_idle_timeout();
         tokio::select! {
             packet = read_uot_packet(client_read) => {
                 let payload = match packet {
@@ -91,7 +91,7 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
                     Ok(None) => break "client EOF".to_string(),
                     Err(err) => break format!("client frame error: {err}"),
                 };
-                last_used = Instant::now();
+                idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_read(payload.len() as i64).await;
                 }
@@ -113,7 +113,7 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
                     Ok(n) => n,
                     Err(err) => break format!("target read error: {err}"),
                 };
-                last_used = Instant::now();
+                idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_write(n as i64).await;
                 }
@@ -123,7 +123,7 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
                 portal.stats.udp_tx.fetch_add(n as u64, Ordering::Relaxed);
                 portal.stats.down_tcp.fetch_add(n as u64, Ordering::Relaxed);
             }
-            _ = tokio::time::sleep_until(idle_deadline) => {
+            _ = &mut idle_sleep => {
                 break "idle timeout".to_string();
             }
         }
@@ -182,9 +182,9 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
     let _done = SessionGuard::new(portal.clone(), true);
     let mut ack_sent = false;
     let mut target_buf = portal.buffers.get_udp_buffer();
-    let mut last_used = Instant::now();
+    let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
+    tokio::pin!(idle_sleep);
     let complete_reason = loop {
-        let idle_deadline = last_used + udp_idle_timeout();
         tokio::select! {
             packet = read_paired_udp(&mut uplink) => {
                 let payload = match packet {
@@ -193,7 +193,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                     Err(err) => break format!("uplink error: {err}"),
                 };
                 if payload.is_empty() { continue; }
-                last_used = Instant::now();
+                idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_read(payload.len() as i64).await;
                 }
@@ -222,7 +222,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                     Err(err) => break format!("target read error: {err}"),
                 };
                 if n == 0 { continue; }
-                last_used = Instant::now();
+                idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_write(n as i64).await;
                 }
@@ -235,7 +235,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                     Carrier::Udp => &portal.stats.down_udp,
                 }.fetch_add(n as u64, Ordering::Relaxed);
             }
-            _ = tokio::time::sleep_until(idle_deadline) => break "idle timeout".to_string(),
+            _ = &mut idle_sleep => break "idle timeout".to_string(),
         }
     };
     if let Err(err) = send_udp_close(&mut downlink, flow_id).await {
