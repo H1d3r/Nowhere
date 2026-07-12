@@ -121,6 +121,15 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
             return;
         }
     };
+    let pool_permit = match portal.tcp_idle_pool_budget.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            portal.logger.debug(format_args!(
+                "portal::conn::handle_tcp_incoming: authenticated idle pool limit reached"
+            ));
+            return;
+        }
+    };
     let mut link_guard = Some(
         portal
             .pairing
@@ -180,6 +189,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
         None => return,
     };
     drop(pool_guard);
+    drop(pool_permit);
 
     if let Some(header) = flow_header {
         let valid_ingress = match header.role {

@@ -24,7 +24,7 @@ pub(super) use self::state::{
 };
 use self::state::{FlowKey, LinkCounts, Metadata, PendingTcp, PendingUdp};
 
-const DEFAULT_MAX_PENDING_FLOW_PAIRS: usize = 1024;
+const DEFAULT_MAX_PENDING_PAIRS: usize = 1024;
 const DEFAULT_FLOW_PAIR_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) struct PairingRegistry {
@@ -352,11 +352,11 @@ impl PairingRegistry {
 }
 
 fn read_max_pending() -> usize {
-    std::env::var("NOW_MAX_PENDING_FLOW_PAIRS")
+    std::env::var("NOW_MAX_PENDING_PAIRS")
         .ok()
         .and_then(|value| value.parse().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_PENDING_FLOW_PAIRS)
+        .unwrap_or(DEFAULT_MAX_PENDING_PAIRS)
 }
 
 fn read_pair_timeout() -> Duration {

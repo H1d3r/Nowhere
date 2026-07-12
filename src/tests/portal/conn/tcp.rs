@@ -357,3 +357,50 @@ async fn tls_tcp_pool_ttl_closes_unused_connection() {
     shutdown.cancel();
     let _ = tls.shutdown().await;
 }
+
+#[tokio::test]
+async fn tls_tcp_idle_pool_limit_closes_excess_authenticated_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen_addr = listener.local_addr().unwrap();
+    let portal = Portal::new(
+        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    portal.inner.tcp_idle_pool_budget.close();
+    let portal_inner = portal.inner.clone();
+    let shutdown = CancellationToken::new();
+    let child_shutdown = shutdown.clone();
+    let server_task = tokio::spawn(async move {
+        let (stream, peer) = listener.accept().await.unwrap();
+        let admission = portal_inner
+            .unauthenticated_admission
+            .try_acquire(peer.ip())
+            .unwrap();
+        handle_tcp_incoming(portal_inner, stream, peer, admission, child_shutdown).await;
+    });
+
+    let mut tls = connect_test_tls(listen_addr).await;
+    let auth = write_auth_frame(
+        portal.inner.credentials.key,
+        &portal.inner.credentials.protocol_spec,
+        [9; 32],
+    );
+    tls.write_all(&auth).await.unwrap();
+
+    timeout(Duration::from_secs(1), server_task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(portal.inner.pool_active.load(Ordering::Relaxed), 0);
+    let mut byte = [0u8; 1];
+    match timeout(Duration::from_secs(1), tls.read(&mut byte))
+        .await
+        .unwrap()
+    {
+        Ok(0) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {}
+        result => panic!("expected closed excess pool connection, got {result:?}"),
+    }
+    shutdown.cancel();
+}
