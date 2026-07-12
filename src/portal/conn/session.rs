@@ -207,16 +207,16 @@ impl PortalSession {
         }
 
         let peer = self.conn.remote_address();
-        let local = self.conn.local_ip().map_or_else(
-            || portal.endpoint_addr.clone(),
-            |ip| std::net::SocketAddr::new(ip, portal.listen_port).to_string(),
-        );
+        let local = self
+            .conn
+            .local_ip()
+            .map(|ip| std::net::SocketAddr::new(ip, portal.listen_port));
         relay_tcp_target(
             portal.clone(),
             &mut recv,
             &mut send,
             target_addr,
-            peer.to_string(),
+            peer,
             local,
             Carrier::Udp,
         )

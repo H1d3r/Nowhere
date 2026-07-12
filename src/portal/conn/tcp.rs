@@ -55,10 +55,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
             "portal::conn::handle_tcp_incoming: failed to enable TCP_NODELAY: {err}"
         ));
     }
-    let local = stream
-        .local_addr()
-        .map(|address| address.to_string())
-        .unwrap_or_else(|_| portal.endpoint_addr.clone());
+    let local = stream.local_addr().ok();
     let acceptor = TlsAcceptor::from(portal.tls_server_config.clone());
     let mut tls_stream = match timeout(handshake_timeout(), acceptor.accept(stream)).await {
         Ok(Ok(stream)) => stream,
@@ -202,6 +199,11 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
             ));
             return;
         }
+        let peer = peer.to_string();
+        let local = local.map_or_else(
+            || portal.endpoint_addr.clone(),
+            |address| address.to_string(),
+        );
         let pairing = portal.pairing.clone();
         match header.kind {
             FlowKind::Tcp => {
@@ -214,7 +216,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                                 target_addr,
                                 crate::portal::pairing::LinkHalf::tcp(
                                     crate::portal::pairing::LinkPath {
-                                        peer: peer.to_string(),
+                                        peer: peer.clone(),
                                         local: local.clone(),
                                     },
                                 ),
@@ -234,7 +236,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                                 target_addr,
                                 crate::portal::pairing::LinkHalf::tcp(
                                     crate::portal::pairing::LinkPath {
-                                        peer: peer.to_string(),
+                                        peer: peer.clone(),
                                         local: local.clone(),
                                     },
                                 ),
@@ -267,7 +269,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                                 target_addr,
                                 crate::portal::pairing::LinkHalf::tcp(
                                     crate::portal::pairing::LinkPath {
-                                        peer: peer.to_string(),
+                                        peer: peer.clone(),
                                         local: local.clone(),
                                     },
                                 ),
@@ -291,7 +293,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                                 target_addr,
                                 crate::portal::pairing::LinkHalf::tcp(
                                     crate::portal::pairing::LinkPath {
-                                        peer: peer.to_string(),
+                                        peer: peer.clone(),
                                         local: local.clone(),
                                     },
                                 ),
@@ -321,7 +323,6 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
         return;
     }
 
-    let peer = peer.to_string();
     if is_uot_magic_target(&target_addr) {
         tokio::select! {
             _ = shutdown.cancelled() => {}

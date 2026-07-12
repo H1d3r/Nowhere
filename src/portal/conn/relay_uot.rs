@@ -3,6 +3,7 @@
 
 //! UDP-over-TCP relay loop for UoT clients.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -28,8 +29,8 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
     portal: Arc<PortalInner>,
     client_read: &mut R,
     client_write: &mut W,
-    peer: String,
-    local: String,
+    peer: SocketAddr,
+    local: Option<SocketAddr>,
 ) where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -64,6 +65,11 @@ pub(in crate::portal::conn) async fn relay_udp_over_tcp_target<R, W>(
         }
     };
     if portal.logger.debug_enabled() {
+        let peer = peer.to_string();
+        let local = local.map_or_else(
+            || portal.endpoint_addr.clone(),
+            |address| address.to_string(),
+        );
         let target_local = socket
             .local_addr()
             .map(|address| address.to_string())

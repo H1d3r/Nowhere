@@ -3,6 +3,7 @@
 
 //! TCP target dialing and stream relay setup.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -24,8 +25,8 @@ pub(in crate::portal::conn) async fn relay_tcp_target<R, W>(
     client_read: &mut R,
     client_write: &mut W,
     target_addr: String,
-    peer: String,
-    local: String,
+    peer: SocketAddr,
+    local: Option<SocketAddr>,
     carrier: Carrier,
 ) where
     R: AsyncRead + Unpin,
@@ -48,6 +49,11 @@ pub(in crate::portal::conn) async fn relay_tcp_target<R, W>(
         }
     };
     if portal.logger.debug_enabled() {
+        let peer = peer.to_string();
+        let local = local.map_or_else(
+            || portal.endpoint_addr.clone(),
+            |address| address.to_string(),
+        );
         let target_local = target_conn
             .local_addr()
             .map(|address| address.to_string())
