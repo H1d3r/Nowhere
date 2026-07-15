@@ -1,106 +1,130 @@
 # Nowhere
 
-> **One spec. Nowhere else the same.**
+> **One port. Two transports. Split directions.**
 
-Most relay protocols look the same wherever they run. Nowhere does not.
-
-Nowhere is an encrypted relay protocol for TCP and UDP. The client and Portal
-use the same shared key and a compact `spec` to generate matching authentication
-and message layouts. The `spec` is never sent over the connection. Change it,
-and Nowhere keeps the same features and behavior while using a different layout
-for that deployment.
+Nowhere brings TLS/TCP and QUIC/UDP together on one service port for both TCP
+and UDP traffic. Each logical flow composes its upload and download paths
+independently, allowing the two directions to use different carriers.
 
 <div align="center">
   <img src="assets/nowhere.png" width="640" alt="Nowhere">
 </div>
 
-## Highlights
+## What Nowhere Does
 
-- **A protocol shape defined by `spec`.** Authentication identity, padding, and
-  frame order are derived independently by both peers. The `spec` is never sent,
-  and no profile registry or extra negotiation is required.
-- **TLS/TCP and QUIC/UDP on one port.** A Portal can listen on both transports at
-  the same time, with TLS 1.3 and the same authentication model throughout.
-- **Independent upload and download carriers.** A client pins each flow to any
-  TLS/TCP and QUIC/UDP direction pair. TCP uses dedicated TLS halves or QUIC
-  streams; UDP uses UoT or compact QUIC DATAGRAM frames.
-- **Observable and controllable by design.** EVENT checkpoints expose pools,
-  active flows, and byte counters, while directional rate limits and runtime
-  controls keep the service operator-friendly.
-- **Ready for centralized management.** Run the Portal directly or manage its
-  lifecycle, persistent configuration, logs, and live metrics through OpenCtrl's
-  REST API and Server-Sent Events.
-- **Hardened before authentication.** QUIC Retry, bounded pre-authentication
-  admission, jittered authentication deadlines, and disabled 0-RTT reduce work
-  and information exposure before a client is trusted.
+- **One service port.** TLS/TCP and QUIC/UDP share the same listener address,
+  service port, credentials, and operational lifecycle.
+- **Independent directions.** Upload and download can use different carriers,
+  so transport selection follows the needs of each direction rather than the
+  whole connection.
+- **TCP and UDP coverage.** TCP uses TLS connections or QUIC streams. UDP uses
+  UoT over TLS/TCP or QUIC DATAGRAM.
+- **Lean wire frames.** A 32-byte connection-auth frame leads into a 5-byte
+  flow header and one-byte setup result. Common QUIC DATAGRAM and UoT packets
+  add only 5 and 2 bytes, respectively.
+- **Efficient hot path.** Stack-encoded headers, binary targets, allocation-free
+  DATAGRAM decoding, reusable buffers, shared QUIC connections, and prepared
+  TLS lanes reduce parsing, copying, allocation, and connection setup work.
+- **Production controls.** Directional rate limits, warm TLS lanes, outbound
+  SOCKS5, source binding, certificate reload, resource limits, access paths,
+  EVENT telemetry, and graceful shutdown are built in.
 
-## Transports
+## Directional Transport
 
-| Traffic | TLS/TCP | QUIC/UDP |
+The Vector `up` and `down` parameters select carriers independently:
+
+| Vector mode | Upload | Download |
 | --- | --- | --- |
-| TCP | Dedicated encrypted connection | Bidirectional stream |
-| UDP | Length-prefixed UDP-over-TCP | QUIC DATAGRAM |
+| `tcp/tcp` | TLS/TCP | TLS/TCP |
+| `tcp/udp` | TLS/TCP | QUIC/UDP |
+| `udp/tcp` | QUIC/UDP | TLS/TCP |
+| `udp/udp` | QUIC/UDP | QUIC/UDP |
 
-A single Portal URL can enable TLS/TCP, QUIC/UDP, or both on the same port.
-Asymmetric client profiles require both listeners and pair their client-created
-halves by authenticated session and flow IDs rather than source address.
+For TCP traffic, the QUIC carrier is a bidirectional stream. For UDP traffic,
+the TLS/TCP carrier uses length-prefixed UoT and the QUIC carrier uses
+DATAGRAM. Split flows are joined by their authenticated session and flow
+identity, not by source address.
+
+Portal `net=mix`, the default, accepts both carrier families on the same port.
+`net=tcp` and `net=udp` are available when an operator intentionally wants only
+one listener transport.
+
+## Data Path
+
+Authentication is bound to each TLS or QUIC connection through a TLS exporter.
+A shared QUIC connection can carry many streams and UDP flows, while the
+`tcp/tcp` warm pool can prepare authenticated TLS lanes before an application
+requests them. Binary target addressing and compact setup metadata keep relay
+work direct, and explicit limits keep connection, flow, queue, and reassembly
+state bounded.
+
+## Components
+
+- `portal://` accepts encrypted carriers and dials target endpoints.
+- `vector://` connects to Portal and serves a local SOCKS5 endpoint.
+- [Anywhere](https://github.com/NodePassProject/Anywhere) is the Apple client.
+  See the [integration guide](docs/integrations.md) for release compatibility.
 
 ## Quick Start
 
-Download a Linux binary from
-[Releases](https://github.com/NodePassProject/Nowhere/releases), or run from
-source with a stable Rust toolchain:
+Build with a stable Rust toolchain:
 
 ```bash
-cargo run --release --locked -- 'portal://change-me@:2077?spec=nightfall'
+cargo build --release --locked
 ```
 
-The URL username is the shared key. The empty host listens on IPv4 and IPv6,
-while the default `net=mix` starts TLS/TCP and QUIC/UDP on port `2077`.
-
-The default `tls=1` creates an ephemeral self-signed certificate. Long-lived
-deployments should use `tls=2` with a PEM certificate and private key:
+Start a local Portal:
 
 ```bash
-nowhere 'portal://change-me@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem&spec=nightfall'
+./target/release/nowhere 'portal://change-me@127.0.0.1:2077'
 ```
 
-## Ecosystem
+Start Vector with TLS/TCP in both directions and five prepared lanes:
 
-- [OpenCtrl](https://github.com/NodePassProject/OpenCtrl) is a supported
-  management layer for Portal lifecycle, durable state, REST/SSE control, logs,
-  and EVENT metrics.
-- [Anywhere](https://github.com/NodePassProject/Anywhere) is a supported native
-  client for TLS/TCP and QUIC/UDP, including TCP relay, QUIC DATAGRAM, and UoT.
+```bash
+./target/release/nowhere \
+  'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=127.0.0.1:1080'
+```
 
-Additional core and client integrations are planned.
+Or use QUIC/UDP for upload and TLS/TCP for download:
+
+```bash
+./target/release/nowhere \
+  'vector://change-me@127.0.0.1:2077?up=udp&down=tcp&socks=127.0.0.1:1080'
+```
+
+The local examples omit `sni`, which disables certificate verification. For a
+public Portal, install a CA-trusted certificate and enable strict verification:
+
+```bash
+nowhere 'portal://change-me@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
+nowhere 'vector://change-me@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
+```
+
+Portal and Vector default to ALPN `now/1`. A custom `alpn` must match on both
+ends.
 
 ## Documentation
 
-- [Configuration reference](docs/configuration.md)
 - [Documentation index](docs/README.md)
-- [Integration guide](docs/integrations.md)
-- [Operations guide](docs/operations.md)
-- [Protocol specification](docs/protocol.md)
 - [Quick start](docs/quick-start.md)
+- [Configuration reference](docs/configuration.md)
+- [Operations guide](docs/operations.md)
 - [Security model](docs/security.md)
+- [Protocol specification](docs/protocol.md)
+- [Integration guide](docs/integrations.md)
 
 ## Development
 
 ```bash
 cargo fmt --all -- --check
 cargo test --locked
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
-Nowhere uses the Rust 2024 edition.
-
-## Contributing
-
-[Issues](https://github.com/NodePassProject/Nowhere/issues) and focused pull
-requests are welcome. Protocol changes must update the test vectors and
-protocol specification in the same commit.
+Protocol changes must update the normative document and wire-vector tests in
+the same change.
 
 ## License
 

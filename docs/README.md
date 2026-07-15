@@ -1,67 +1,45 @@
 # Nowhere Documentation
 
-The documentation is split by job. Read the quick start first if you are
-running the reference server. Read the protocol specification first if you are
-building a compatible client.
+> **One port. Two transports. Split directions.**
 
-## Transport Map
+Nowhere combines a Portal relay with the native Vector SOCKS5 client. Portal
+accepts TLS/TCP and QUIC/UDP on one service port, while logical flows can select
+their upload and download carriers independently.
 
-The `net` parameter selects which ingress transports listen on the configured
-port. It does not restrict the Portal to one proxy payload type.
+## Capability Map
 
-| `net` value | Listener | TCP proxy path | UDP proxy path |
-| --- | --- | --- | --- |
-| `tcp` | TLS/TCP | Dedicated authenticated connection | UoT on a dedicated authenticated connection |
-| `udp` | QUIC/UDP | Bidirectional QUIC stream | QUIC DATAGRAM |
-| `mix` | Both | Both paths | Both paths |
-
-UoT uses the same logical-flow header as every other carrier, followed by the
-role-dependent target request and typed UDP packet/control frames. It is part
-of the v1 wire protocol and requires no separate server option.
+| Capability | Description |
+| --- | --- |
+| Shared service port | TLS/TCP and QUIC/UDP use the same Portal address and port |
+| Directional carriers | `up` and `down` independently select `tcp` or `udp` |
+| TCP relay | TLS/TCP lanes or QUIC bidirectional streams |
+| UDP relay | UoT over TLS/TCP or QUIC DATAGRAM |
+| Native ingress | Vector SOCKS5 CONNECT, UDP ASSOCIATE, and optional RFC1929 |
+| Operations | Pools, rate control, limits, telemetry, reload, and graceful shutdown |
 
 ## Documents
 
-| Document | Scope |
+| Document | Purpose |
 | --- | --- |
-| [Configuration reference](configuration.md) | URL shape, query parameters, listener rules, TLS inputs, and examples. |
-| [Integration guide](integrations.md) | OpenCtrl management and Anywhere client setup. |
-| [Operations guide](operations.md) | Logging, event records, rate limits, runtime controls, shutdown, and deployment habits. |
-| [Protocol specification](protocol.md) | Normative v1 wire format, derivation, TCP, QUIC DATAGRAM, UoT, limits, and conformance checks. |
-| [Quick start](quick-start.md) | Build, run, and smoke-check a local Portal. |
-| [Security notes](security.md) | Shared-key handling, TLS trust, authentication failure behavior, and exposure guidance. |
+| [Quick start](quick-start.md) | Build and run a local Portal and Vector |
+| [Configuration](configuration.md) | Command URLs, defaults, and environment limits |
+| [Operations](operations.md) | Logs, events, pools, reconnect, certificates, and shutdown |
+| [Security](security.md) | Trust policy, authentication, limits, and SOCKS exposure |
+| [Protocol](protocol.md) | Authentication, flow, target, DATAGRAM, and UoT wire format |
+| [Integrations](integrations.md) | Process managers, OpenCtrl, and client compatibility |
+
+## Terminology
+
+- **Portal**: the service accepting encrypted carriers and dialing targets.
+- **Vector**: the Rust client exposing a local SOCKS5 ingress.
+- **carrier**: TLS/TCP or QUIC/UDP used for one flow direction.
+- **bundle**: carriers sharing an authenticated session identity.
+- **UoT**: length-prefixed UDP packets carried over a TLS/TCP half.
+- **rate**: client-to-target; **etar**: target-to-client.
 
 ## Reading Paths
 
-For operators:
-
-1. [Quick start](quick-start.md)
-2. [Configuration reference](configuration.md)
-3. [Operations guide](operations.md)
-4. [Integration guide](integrations.md)
-5. [Security notes](security.md)
-
-For client authors:
-
-1. [Protocol specification](protocol.md)
-2. [Configuration reference](configuration.md)
-3. [Integration guide](integrations.md)
-4. [Security notes](security.md)
-
-For release maintainers:
-
-1. [Quick start](quick-start.md)
-2. [Operations guide](operations.md)
-3. The GitHub release workflow in `.github/workflows/release.yml`
-
-## Style
-
-The docs use the same naming throughout:
-
-- `Portal` means this Rust server.
-- `client` means a peer that dials the Portal and opens target flows.
-- `shared key` means the URL username after percent decoding.
-- `effective_spec` means the resolved `spec` value after defaults.
-- `effective_alpn` means the resolved `alpn` value after defaults.
-- `UoT` means the UDP-over-TCP packet path carried by one authenticated TLS/TCP connection.
-- `rate` is client-to-target traffic.
-- `etar` is target-to-client traffic.
+Operators should read Quick Start, Configuration, Security, then Operations.
+Client authors should begin with Protocol and the wire-vector tests. Release
+maintainers should review the complete documentation set before coordinating an
+upgrade.
