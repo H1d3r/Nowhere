@@ -12,37 +12,39 @@ cargo build --release --locked
 ./target/release/nowhere --help
 ```
 
-## Local Portal and Vector
-
-Terminal one:
+## Start a Local Portal
 
 ```bash
 ./target/release/nowhere 'portal://secret@127.0.0.1:2077?log=debug'
 ```
 
-Terminal two:
+Portal starts TLS/TCP and QUIC/UDP on port 2077. Its default in-memory
+certificate is intended for local operation.
+
+## Start Vector
+
+In another terminal:
 
 ```bash
 ./target/release/nowhere \
   'vector://secret@127.0.0.1:2077?up=udp&down=udp&sni=none&socks=127.0.0.1:1080&log=debug'
 ```
 
-The Portal's default certificate is self-signed. This local example uses
-`sni=none`, so certificate verification is disabled without an extra warning.
+This exposes a SOCKS5 listener on `127.0.0.1:1080`. `sni=none` deliberately
+disables certificate verification for the local in-memory certificate.
 
-Test TCP through SOCKS5:
+Test a TCP request:
 
 ```bash
 curl --proxy socks5h://127.0.0.1:1080 https://example.com/
 ```
 
-Applications with SOCKS5 UDP ASSOCIATE support can use the same listener for
-UDP. One association may address multiple targets; Vector maintains one idle-
-timed Nowhere UDP flow per target.
+Applications supporting SOCKS5 UDP ASSOCIATE can use the same listener for
+UDP. Vector keeps one idle-timed Nowhere UDP flow per target address.
 
-## Choose Upload and Download
+## Select Directional Carriers
 
-Set the two Vector direction parameters independently:
+Set upload and download independently:
 
 ```text
 up=tcp&down=tcp&pool=5
@@ -51,11 +53,10 @@ up=udp&down=tcp
 up=udp&down=udp
 ```
 
-Split combinations require Portal `net=mix`, which is the default. `pool` is
-effective only for `tcp/tcp`; values over 256 are clamped and all other carrier
-pairs report `pool=0`.
+Split combinations require Portal `net=mix`, which is the default. The warm
+pool applies only to `tcp/tcp`; every other pair reports `pool=0`.
 
-## Production TLS
+## Use a Trusted Certificate
 
 Portal:
 
@@ -71,10 +72,10 @@ nowhere \
   'vector://secret@relay.example:2077?up=tcp&down=tcp&pool=5&sni=relay.example&socks=127.0.0.1:1080'
 ```
 
-The configured ALPN defaults to `now/1`. If overridden, supply the identical
-nonempty value to Portal and Vector.
+ALPN defaults to `now/1`. If it is overridden, Portal and Vector must receive
+the same nonempty value.
 
-## Shutdown
+## Stop
 
-Send Ctrl-C or SIGINT. New connections stop, pending pairs are cancelled,
-QUIC endpoints close, and flow tasks drain until `NOW_SHUTDOWN_TIMEOUT`.
+Send Ctrl-C or SIGINT. New work stops, pending pairs are cancelled, QUIC
+connections close, and active flow tasks drain until `NOW_SHUTDOWN_TIMEOUT`.

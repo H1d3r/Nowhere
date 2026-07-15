@@ -1,10 +1,14 @@
 # Integrations
 
-## Direct Process Management
+Nowhere exposes two process roles and one wire contract. Process managers own
+the command URL and lifecycle; applications reach Vector through SOCKS5;
+protocol clients connect directly to Portal.
 
-Nowhere is one binary with two URL commands. A service manager should store the
-complete URL outside the repository and restart only after configuration
-validation succeeds.
+## Process Management
+
+A service manager should store the complete command URL outside the repository,
+restrict access to it, validate it before restart, and preserve stdout for
+operational records.
 
 Portal example:
 
@@ -18,49 +22,53 @@ Vector example:
 vector://change-me@relay.example:2077?up=tcp&down=tcp&pool=5&sni=relay.example&alpn=now%2F1&rate=0&etar=0&socks=127.0.0.1:1080&log=event
 ```
 
-Do not expose URLs through world-readable unit files or process dashboards: the
-username is the shared key.
+The URL username is the shared key. Do not expose it through world-readable
+unit files, process dashboards, crash reports, or command inventories.
 
 ## OpenCtrl
 
-[OpenCtrl](https://github.com/NodePassProject/OpenCtrl) may supervise Portal
-processes and consume stdout EVENT records. The managed URL must use the 1.5
-parameter set and omit removed legacy fields. OpenCtrl lifecycle, persistence,
-REST, and SSE are management-layer concerns; they do not change the wire
-protocol.
+[OpenCtrl](https://github.com/NodePassProject/OpenCtrl) can supervise Portal
+processes, persist command URLs, collect stdout, and consume EVENT records over
+its management interfaces. OpenCtrl does not terminate Nowhere carriers or
+change protocol semantics; the managed process remains the source of transport
+state and flow telemetry.
 
-Before migrating an existing record:
+A controller should verify:
 
-1. Remove the legacy protocol-shape parameter.
-2. Confirm the intended ALPN on both sides.
-3. Upgrade the Portal binary and compatible clients together.
-4. Verify CHECK_POINT and a real TCP and UDP flow.
+1. command URL validation succeeds;
+2. the process emits its credential-free effective URL;
+3. CHECK_POINT records continue at the configured interval;
+4. both TCP and UDP application flows complete through the selected carriers.
 
 ## Vector SOCKS5
 
-Vector provides the standard integration point for applications and gateways:
+Vector is the application-facing integration point:
 
-- CONNECT maps to one Nowhere TCP logical flow.
-- UDP ASSOCIATE maps each target address to an idle-timed UDP logical flow.
-- RFC1929 is enabled by putting percent-encoded credentials in `socks`.
-- BIND and SOCKS5 UDP fragmentation are unsupported.
+- CONNECT opens one Nowhere TCP flow.
+- UDP ASSOCIATE creates idle-timed Nowhere UDP flows per target address.
+- One association may communicate with multiple targets.
+- RFC1929 is enabled by percent-encoded credentials in `socks`.
+- Configured credentials cannot downgrade to no-auth.
+- BIND and SOCKS5 UDP fragmentation are rejected.
 
-Prefer a loopback listener. Wildcard listeners require authentication and
-network policy.
+Use a loopback listener by default. A wildcard listener should be protected by
+RFC1929 credentials and host firewall rules.
 
-## Anywhere Compatibility
+## Client Implementation Contract
 
-The current [Anywhere](https://github.com/NodePassProject/Anywhere) source tree
-mirrors the previous codec. It is intentionally not modified by the Rust-only
-1.5 work and cannot connect to a 1.5 Portal. Keep it paired with its matching
-older Portal until a coordinated Apple-client update is available.
+A direct client MUST implement the complete wire protocol described in
+[Wire Protocol](protocol.md), including:
 
-The retained `now/1` ALPN does not signal wire compatibility. Mixed versions
-fail during application authentication.
+- TLS 1.3 and matching ALPN;
+- TLS-exporter-bound authentication on every physical connection;
+- the 5-byte flow header and its role/carrier validation;
+- binary IPv4, IPv6, and domain targets;
+- the 1-byte setup result;
+- 5-byte DATA/CLOSE and 13-byte FRAGMENT QUIC DATAGRAM headers;
+- READY gating before QUIC UDP DATA;
+- length-prefixed UoT packets;
+- bounded flow, queue, and reassembly state.
 
-## Third-Party Clients
-
-Implement the normative codec directly. Required conformance includes
-TLS exporter authentication, exact flags and reserved-bit checks, binary SOCKS5
-ATYP targets, one-byte setup results, 5/13-byte QUIC DATAGRAM headers, and
-length-only UoT. Portal and clients must target the same protocol release.
+ALPN selects the application protocol during TLS or QUIC negotiation. A client
+is ready to interoperate only when its frame encoders, decoders, lifecycle, and
+error handling satisfy the same wire contract.

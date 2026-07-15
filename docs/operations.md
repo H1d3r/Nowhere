@@ -1,78 +1,99 @@
 # Operations Guide
 
-## Startup Output
+Portal and Vector expose their effective configuration, transport state, flow
+counts, traffic counters, and lifecycle through local logs. Credentials are
+never included in effective URLs or access records.
 
-Portal and Vector log a credential-free effective URL. Shared keys and SOCKS
-passwords are never included. Vector prints `sni=none` when certificate
-verification is disabled.
+## Startup Output
 
 Both commands validate selected values before opening listeners. Unknown
 parameters and later duplicates are ignored; missing optional parameters use
 their defaults.
 
-## Logs
+Portal prints:
 
-Levels are `none`, `debug`, `info`, `warn`, `error`, and `event`.
+```text
+net -> tls -> alpn -> rate -> etar -> dial -> socks
+```
 
-EVENT emits periodic machine-readable records:
+Vector prints:
+
+```text
+up -> down -> pool -> sni -> alpn -> rate -> etar -> socks
+```
+
+Vector records `sni=none` whenever certificate verification is disabled and
+reports `pool=0` for every carrier pair except `tcp/tcp`.
+
+## Logs and Telemetry
+
+Available levels are `none`, `debug`, `info`, `warn`, `error`, and `event`.
+
+EVENT emits machine-readable checkpoints:
 
 ```text
 CHECK_POINT|MODE=0|PING=0ms|POOL=5|TCPS=0|UDPS=0|TCPRX=0|TCPTX=0|UDPRX=0|UDPTX=0
 ```
 
-Portal MODE values remain `0=mix`, `1=tcp`, `2=udp`. Vector MODE values encode
-direction pairs: `0=tcp/tcp`, `1=tcp/udp`, `2=udp/tcp`, `3=udp/udp`.
+Portal MODE values are `0=mix`, `1=tcp`, and `2=udp`. Vector MODE values are
+`0=tcp/tcp`, `1=tcp/udp`, `2=udp/tcp`, and `3=udp/udp`.
 
-DEBUG additionally emits:
+DEBUG additionally emits carrier state:
 
 ```text
 LINK_STATUS|TCP=0|UDP=0|PAIRS=0|UPTCP=0|UPUDP=0|DOWNTCP=0|DOWNUDP=0
 ```
 
-Access logs use matching `starting` and `complete` messages and show upload and
-download carriers plus client, relay, and target endpoints. They never include
-authentication secrets.
+Access paths use matching `starting` and `complete` messages. They include the
+selected upload and download carriers plus client, relay, and target endpoints,
+but never shared keys or SOCKS passwords.
 
-## Pools and Reconnection
+## TLS Warm Lanes
 
-Vector `tcp/tcp` pool connections complete TLS and exporter authentication
-before entering the idle set. Acquired lanes are single-use. Closed, expired,
-or consumed slots are replenished in the background.
+Vector uses a warm pool only for `tcp/tcp`. Each prepared lane completes TCP,
+TLS, exporter derivation, and the 32-byte authentication exchange before it is
+placed in the idle set.
 
-Vector remains running while Portal is unavailable. Current affected flows
-fail; later requests trigger bounded-backoff reconnect, while the SOCKS listener
-continues accepting requests. QUIC reconnect retains the logical session ID so
-Portal can replace the stale carrier deterministically.
+An acquired lane is single-use. Consumed, closed, unhealthy, or expired lanes
+are removed and replenished in the background. Portal independently limits the
+number of authenticated idle lanes, so client and server pool controls protect
+different resources.
+
+## QUIC Sessions and Recovery
+
+Vector shares one QUIC connection across eligible TCP streams and UDP flows.
+When Portal is unavailable, the SOCKS listener remains active while affected
+requests fail cleanly. Later requests trigger reconnect after
+`NOW_SERVICE_COOLDOWN`.
+
+The logical session ID remains stable across QUIC reconnects. Portal admits one
+current QUIC carrier for that session and cancels state owned by a displaced
+connection instead of moving live flows between connections.
 
 ## Limits and Rate Control
 
-`rate` is client-to-target and `etar` is target-to-client. Portal and Vector
-enforce their configured limits independently; the effective path is bounded by
-the tighter side.
+`rate` applies client-to-target and `etar` applies target-to-client. Portal and
+Vector enforce their configured limits independently; the tighter side bounds
+the complete path.
 
-Tune environment limits only after measuring CPU, memory, queue pressure, and
-target behavior. Increasing QUIC streams or UDP flows also increases worst-case
-state. Queue overload and invalid early DATAGRAMs are dropped rather than
-allowed to grow without bound.
+Increase stream, flow, queue, or pair limits only after measuring CPU, memory,
+queue pressure, and target behavior. Queue overload, unknown UDP flows, DATA
+before READY, and expired fragments are dropped instead of accumulating
+unbounded state.
 
 ## Certificates
 
-Portal `tls=2` checks PEM files at startup and reloads them no more often than
-`NOW_RELOAD_INTERVAL`. Reload failure leaves the last valid certificate active
-and writes an error.
+Portal `tls=2` validates PEM files at startup and checks for replacement files
+no more often than `NOW_RELOAD_INTERVAL`. A reload failure keeps the last valid
+certificate active and emits an error.
 
-Vector reads system roots for verified `sni` connections. Root-store or name
-errors fail the carrier rather than falling back to unverified TLS.
+Vector loads system roots for verified `sni` connections. A root-store,
+certificate-chain, or name error fails the carrier. There is no automatic
+fallback from verified to unverified TLS.
 
 ## Graceful Shutdown
 
 On Ctrl-C, listeners and reconnect loops stop, QUIC endpoints send close,
-pending pairs receive cancellation, and active tasks drain for
-`NOW_SHUTDOWN_TIMEOUT`. At deadline, remaining tasks are aborted and all rate
-and pool state is released.
-
-## Upgrade Rule
-
-Nowhere has no mixed-version mode. Upgrade Portal and all 1.5-compatible clients
-as one coordinated operation. The current Anywhere release must remain on an
-older Portal until its codec is updated.
+pending pairs are cancelled, and active tasks drain for
+`NOW_SHUTDOWN_TIMEOUT`. At the deadline, remaining tasks are aborted and pool,
+flow, queue, and rate-limit state is released.

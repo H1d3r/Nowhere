@@ -1,74 +1,99 @@
-# Security Notes
+# Security Model
 
-## Transport and Identity
+Nowhere separates transport confidentiality, server identity, shared-key
+authorization, and resource admission. These controls work together and should
+be configured as distinct trust boundaries.
 
-Nowhere requires TLS 1.3 for TLS/TCP and QUIC. Plaintext operation, 0-RTT
-application data, and half-RTT server data are disabled.
+## Transport Security
 
-The shared key authenticates each physical connection through a TLS exporter.
-It is never sent on the wire. The 16-byte authentication tag binds transport,
-connection secrets, and logical session ID, so a captured authentication frame
-cannot be replayed on another TLS or QUIC connection.
+TLS/TCP and QUIC require TLS 1.3. Plaintext carriers, application 0-RTT data,
+and half-RTT server data are not accepted.
 
-Use a high-entropy shared key and treat command lines, management records, and
-debug logs containing it as secrets. Authentication is authorization to dial
-arbitrary targets; Nowhere does not implement accounts or target allowlists.
+TLS protects carrier confidentiality and integrity. Certificate verification
+establishes Portal identity. Exporter-bound shared-key authentication then
+authorizes the physical connection to join a logical session and request target
+connections.
+
+## Shared-Key Authentication
+
+The shared key is read from the URL username and never sent on the wire. Portal
+and client derive an authentication key once, then combine it with the current
+TLS exporter, transport domain, and session ID to produce a 16-byte tag.
+
+The exporter binds the tag to one physical TLS or QUIC connection. A captured
+32-byte authentication frame therefore cannot authenticate another connection.
+Tags are compared in constant time.
+
+Use a high-entropy shared key. Anyone with the key can request arbitrary target
+connections because Nowhere does not provide per-user accounts or target
+allowlists.
 
 ## Certificate Policy
 
-Portal `tls=1` creates a new self-signed certificate at each start. It is useful
-for local testing but has no stable identity.
+Portal `tls=1` creates a new in-memory self-signed certificate at startup. It
+provides encryption but no stable public identity.
 
-Portal `tls=2` loads a PEM chain and key and can reload them. Public deployments
-should use a CA-trusted certificate.
+Portal `tls=2` loads a PEM certificate chain and private key and supports safe
+reload while retaining the last valid certificate.
 
-Vector has an explicit trust boundary:
+Vector trust behavior is explicit:
 
-- Supplying `sni=<name>` loads system roots and requires valid chain and name.
-- Empty, omitted, or `sni=none` disables certificate verification; operator
-  output records the effective value as `sni=none`.
+- `sni=<name>` loads system roots and verifies the certificate chain and name.
+- Empty, omitted, or `sni=none` disables certificate verification.
+- A verification failure closes the carrier and does not fall back to an
+  unverified policy.
 
-Exporter-bound shared-key authentication does not replace server certificate
-verification: without it, an active intermediary that knows or obtains the
-shared key can impersonate a Portal. Prefer `sni` outside controlled networks.
+Exporter authentication does not replace certificate verification. Without
+certificate verification, an active intermediary that knows or obtains the
+shared key can impersonate Portal.
 
-## Authentication Failure
+## Authentication Boundary
 
-No target is dialed before auth succeeds. Failure paths wait for a common
-authentication deadline and return no detailed network error. QUIC closes
-with a generic access-denied application error; diagnostic details remain in
-local logs.
+Portal never dials a target before authentication succeeds. Authentication
+failures wait for the common authentication deadline and expose only a generic
+network outcome; detailed diagnostics stay in local logs.
 
-## Resource Boundaries
+Before QUIC authentication, Portal requires Retry, applies global and
+source-prefix admission limits, allows one bidirectional stream, grants
+conservative receive credit, and discards all DATAGRAMs.
 
-Before QUIC authentication, Portal requires Retry, admits only bounded global
-and source-prefix connection counts, exposes one bidi stream, and grants small
-receive credit. Pre-authentication DATAGRAMs are discarded rather than queued.
+After authentication, Portal raises the normal stream and receive limits and
+registers the carrier under the validated session ID.
 
-After auth, explicit caps cover streams, UDP flows, pending pairs, TLS idle
-lanes, queue bytes, reassembly slots and lifetime, target length, setup time,
-and idle flows. Decoders check length and enum bounds before allocating.
+## Flow and Memory Boundaries
 
-Vector applies global local SOCKS flow limits, pins UDP ASSOCIATE traffic to the
-control peer, rejects SOCKS UDP fragments, and closes all target flows when the
-association control connection ends.
+Explicit limits cover:
 
-## SOCKS Exposure
+- authenticated streams and UDP flows;
+- pending asymmetric pairs;
+- idle TLS lanes;
+- UDP queue packets and bytes;
+- fragment reassembly slots, bytes, and lifetime;
+- target lengths and flow identifiers;
+- authentication, setup, dial, idle, and shutdown deadlines.
 
-`socks=:1080`, `0.0.0.0`, and `[::]` expose Vector to other hosts. Configure
-RFC1929 credentials and firewall rules before using wildcard listeners.
-Credentials are redacted from effective URLs and access logs.
+Decoders validate enum values, reserved bits, identifiers, and lengths before
+allocating from network-controlled input. DATA for unknown flows or flows that
+have not reached READY is dropped.
 
-Portal outbound SOCKS errors never fall back direct, preventing route-policy
-bypass. Domain targets stay unresolved until the configured outbound proxy
-when proxying is enabled.
+## SOCKS5 Boundaries
+
+Vector ties UDP ASSOCIATE traffic to the TCP control peer, rejects SOCKS5 UDP
+fragments, limits target flows globally, and closes target state when the
+control connection ends.
+
+Wildcard listeners such as `socks=:1080`, `0.0.0.0`, or `[::]` expose Vector to
+other hosts. Protect them with RFC1929 credentials and firewall rules.
+
+Portal outbound SOCKS failures never fall back to direct dialing. When proxying
+is configured, domain targets remain unresolved until they reach the proxy.
 
 ## Deployment Checklist
 
-- Use `tls=2` and Vector `sni` for public or long-lived deployments.
-- Restrict certificate/key file permissions.
-- Use independent high-entropy shared and SOCKS keys.
-- Enable only required Portal listener transports.
+- Use `tls=2` and verified Vector `sni` for public deployments.
+- Restrict command URL, certificate, and private-key access.
+- Use independent high-entropy shared and SOCKS credentials.
+- Enable only the required Portal listener transports.
+- Keep wildcard SOCKS listeners behind authentication and firewall policy.
 - Monitor CHECK_POINT, LINK_STATUS, authentication failures, and restarts.
-- Coordinate Portal and Vector upgrades; mixed wire versions are unsupported.
-- Treat debug access paths as sensitive operational metadata.
+- Treat DEBUG access paths as sensitive operational metadata.

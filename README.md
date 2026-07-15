@@ -62,8 +62,6 @@ state bounded.
 
 - `portal://` accepts encrypted carriers and dials target endpoints.
 - `vector://` connects to Portal and serves a local SOCKS5 endpoint.
-- [Anywhere](https://github.com/NodePassProject/Anywhere) is the Apple client.
-  See the [integration guide](docs/integrations.md) for release compatibility.
 
 ## Quick Start
 
