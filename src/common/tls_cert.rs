@@ -25,7 +25,7 @@ pub(super) fn new_self_signed_cert()
     Ok((vec![cert.cert.into()], key.into()))
 }
 
-pub(super) fn certificate_sha256(cert: &CertificateDer<'_>) -> String {
+pub(crate) fn certificate_sha256(cert: &CertificateDer<'_>) -> String {
     let digest = Sha256::digest(cert.as_ref());
     let mut fingerprint = String::with_capacity(digest.len() * 2);
     for byte in digest {

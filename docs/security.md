@@ -38,6 +38,10 @@ reload while retaining the last valid certificate.
 
 Vector trust behavior is explicit:
 
+- `pin=<sha256>` verifies the exact lowercase SHA-256 fingerprint of the leaf
+  certificate and the TLS handshake signature. A matching pin takes priority
+  over certificate-chain, validity, and name verification.
+- Empty, omitted, or `pin=none` disables certificate pinning.
 - `sni=<name>` loads system roots and verifies the certificate chain and name.
 - Empty, omitted, or `sni=none` disables certificate verification.
 - A verification failure closes the carrier and does not fall back to an
@@ -90,7 +94,8 @@ is configured, domain targets remain unresolved until they reach the proxy.
 
 ## Deployment Checklist
 
-- Use `tls=2` and verified Vector `sni` for public deployments.
+- Use a verified Vector `sni` or a securely distributed `pin` for public
+  deployments.
 - Restrict command URL, certificate, and private-key access.
 - Use independent high-entropy shared and SOCKS credentials.
 - Enable only the required Portal listener transports.

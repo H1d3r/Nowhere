@@ -71,6 +71,8 @@ Vector parameters:
                    Ignored for other carrier pairs, which report pool=0.
   sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
                    none disables certificate validation. Default: none.
+  pin=<sha256|none> Pin the server certificate SHA-256 fingerprint. Empty,
+                    omitted, or none disables pinning. Default: none.
   alpn=<value>     TLS/QUIC ALPN. Default: now/1.
   rate=<mbps>      SOCKS client-to-target limit. 0 disables it.
   etar=<mbps>      Target-to-SOCKS client limit. 0 disables it.
@@ -161,7 +163,7 @@ async fn start(args: Vec<String>) -> Result<()> {
             "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "log",
         ][..],
         "vector" => &[
-            "up", "down", "pool", "sni", "alpn", "rate", "etar", "socks", "log",
+            "up", "down", "pool", "sni", "pin", "alpn", "rate", "etar", "socks", "log",
         ][..],
         _ => bail!("main::start: unknown URL scheme: {scheme}"),
     };

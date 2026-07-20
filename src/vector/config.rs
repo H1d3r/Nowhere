@@ -18,7 +18,7 @@ pub(super) const DEFAULT_POOL_SIZE: usize = 5;
 pub(super) const MAX_POOL_SIZE: usize = 256;
 
 const VECTOR_QUERY_KEYS: &[&str] = &[
-    "up", "down", "pool", "sni", "alpn", "rate", "etar", "socks", "log",
+    "up", "down", "pool", "sni", "pin", "alpn", "rate", "etar", "socks", "log",
 ];
 
 /// Physical carrier selected for one logical flow direction.
@@ -95,6 +95,7 @@ pub(crate) struct VectorConfig {
     pub(super) pool: usize,
     pub(super) alpn: String,
     pub(super) sni: Option<String>,
+    pub(super) pin: Option<String>,
     pub(super) rate_mbps: i32,
     pub(super) etar_mbps: i32,
     pub(super) socks: SocksListenConfig,
@@ -165,6 +166,10 @@ impl VectorConfig {
                 Ok(value.to_owned())
             })
             .transpose()?;
+        let pin = query
+            .get("pin")
+            .filter(|value| !value.is_empty() && value.as_str() != "none")
+            .cloned();
         let rate_mbps = parse_rate(query.get("rate").map(String::as_str), "rate")?;
         let etar_mbps = parse_rate(query.get("etar").map(String::as_str), "etar")?;
         let socks = SocksListenConfig::from_url(url)?;
@@ -177,6 +182,7 @@ impl VectorConfig {
             pool,
             alpn: alpn.to_owned(),
             sni,
+            pin,
             rate_mbps,
             etar_mbps,
             socks,
@@ -198,12 +204,13 @@ impl VectorConfig {
 
     pub(super) fn effective_url(&self) -> String {
         format!(
-            "vector://{}?up={}&down={}&pool={}&sni={}&alpn={}&rate={}&etar={}&socks={}",
+            "vector://{}?up={}&down={}&pool={}&sni={}&pin={}&alpn={}&rate={}&etar={}&socks={}",
             self.portal_endpoint(),
             self.up,
             self.down,
             self.pool,
             self.sni.as_deref().unwrap_or("none"),
+            self.pin.as_deref().unwrap_or("none"),
             self.alpn,
             self.rate_mbps,
             self.etar_mbps,

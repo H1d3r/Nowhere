@@ -23,4 +23,5 @@ pub(crate) use datagram::{
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
 pub(crate) use socks::{OutboundDialer, SocksConfig};
+pub(crate) use tls::certificate_sha256;
 pub use tls::{TLSMode, new_server_configs};

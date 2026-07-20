@@ -73,14 +73,14 @@ portal://secret@:2077?alpn=now%2Fprivate&rate=100&etar=200
 ## Vector
 
 ```text
-vector://<shared-key>@<portal-host>:<port>?up=...&down=...&pool=...&sni=...&alpn=...&rate=...&etar=...&socks=...&log=...
+vector://<shared-key>@<portal-host>:<port>?up=...&down=...&pool=...&sni=...&pin=...&alpn=...&rate=...&etar=...&socks=...&log=...
 ```
 
 Portal host, Portal port, and the local `socks` listener are required. Vector
 prints its effective settings in this order:
 
 ```text
-up -> down -> pool -> sni -> alpn -> rate -> etar -> socks
+up -> down -> pool -> sni -> pin -> alpn -> rate -> etar -> socks
 ```
 
 | Parameter | Default | Rules |
@@ -89,6 +89,7 @@ up -> down -> pool -> sni -> alpn -> rate -> etar -> socks
 | `down` | `udp` | `tcp` selects TLS/TCP; `udp` selects QUIC |
 | `pool` | `5` for `tcp/tcp` | Nonnegative integer, capped at 256 |
 | `sni` | `none` | DNS certificate name; empty or `none` disables verification |
+| `pin` | `none` | Leaf-certificate SHA-256; empty or `none` disables pinning |
 | `alpn` | `now/1` | Must match Portal |
 | `rate` | `0` | Local SOCKS-client-to-target Mbps |
 | `etar` | `0` | Local target-to-SOCKS-client Mbps |
@@ -101,9 +102,12 @@ carrier pair ignores the supplied pool value and reports `pool=0`.
 
 When `sni` contains a DNS name, Vector loads system roots and verifies both the
 certificate chain and name. Empty, omitted, or `none` disables certificate
-verification. A domain Portal host may still be sent as ClientHello SNI for
-virtual-host routing. Operator output always records the effective value,
-including `sni=none`.
+verification. When `pin` is set, its exact lowercase SHA-256 match takes
+priority over certificate-chain and name validation while the TLS handshake
+signature remains verified. Empty, omitted, or `none` disables pinning. A
+domain Portal host may still be sent as ClientHello SNI for virtual-host
+routing. Operator output always records both effective values, including
+`sni=none` and `pin=none`.
 
 The SOCKS listener value cannot be empty, but its host may be empty:
 
@@ -111,6 +115,7 @@ The SOCKS listener value cannot be empty, but its host may be empty:
 vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080
 vector://secret@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=:1080
 vector://secret@relay.example:2077?sni=relay.example&socks=user:p%40ss@0.0.0.0:1080
+vector://secret@relay.example:2077?pin=<portal-cert-sha256>&socks=127.0.0.1:1080
 ```
 
 An empty SOCKS host binds separate IPv4 and IPv6 wildcard listeners. Explicit

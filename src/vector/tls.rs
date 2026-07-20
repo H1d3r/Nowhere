@@ -9,14 +9,16 @@ use std::sync::Arc;
 use anyhow::{Context, Result, anyhow, bail};
 use quinn::crypto::rustls::QuicClientConfig;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::crypto::ring;
+use rustls::crypto::{
+    WebPkiSupportedAlgorithms, ring, verify_tls12_signature, verify_tls13_signature,
+};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::common::handshake_timeout;
+use crate::common::{certificate_sha256, handshake_timeout};
 use crate::protocol::{TLS_EXPORTER_LEN, TlsExporter};
 
 use super::config::VectorConfig;
@@ -36,8 +38,15 @@ impl ClientTls {
         let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .context("vector::tls::ClientTls::new: failed to enable TLS 1.3")?;
-        let verified = config.sni.is_some();
-        let mut client = if verified {
+        let mut client = if let Some(pin) = &config.pin {
+            builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(PinnedCertificateVerification {
+                    pin: pin.clone(),
+                    algorithms: provider.signature_verification_algorithms,
+                }))
+                .with_no_client_auth()
+        } else if config.sni.is_some() {
             let native = rustls_native_certs::load_native_certs();
             if !native.errors.is_empty() {
                 bail!(
@@ -121,6 +130,58 @@ impl ClientTls {
             .export_keying_material(&mut exporter, EXPORTER_LABEL, Some(&[]))
             .context("vector::tls::connect_tcp: TLS exporter failed")?;
         Ok((tls, exporter))
+    }
+}
+
+#[derive(Clone)]
+struct PinnedCertificateVerification {
+    pin: String,
+    algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl fmt::Debug for PinnedCertificateVerification {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("PinnedCertificateVerification")
+    }
+}
+
+impl ServerCertVerifier for PinnedCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        if certificate_sha256(end_entity) != self.pin {
+            return Err(rustls::Error::General(
+                "server certificate pin mismatch".to_owned(),
+            ));
+        }
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, certificate, signature, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signature: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, certificate, signature, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algorithms.supported_schemes()
     }
 }
 

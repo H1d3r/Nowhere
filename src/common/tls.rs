@@ -14,7 +14,8 @@ use quinn::crypto::rustls::QuicServerConfig;
 use rustls::crypto::ring;
 use url::Url;
 
-use self::tls_cert::{ReloadingCertResolver, certificate_sha256, new_self_signed_cert};
+pub(crate) use self::tls_cert::certificate_sha256;
+use self::tls_cert::{ReloadingCertResolver, new_self_signed_cert};
 use super::{Logger, query_first};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[

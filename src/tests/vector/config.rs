@@ -12,6 +12,7 @@ fn defaults_to_quic_both_directions() {
     assert_eq!(config.pool, 0);
     assert_eq!(config.alpn, "now/1");
     assert_eq!(config.sni, None);
+    assert_eq!(config.pin, None);
     assert_eq!(config.socks.host, "");
     assert_eq!(config.socks.port, 1080);
 }
@@ -69,7 +70,7 @@ fn ignores_unknown_values_and_keeps_the_first_duplicate() {
 }
 
 #[test]
-fn rejects_invalid_selected_values_but_accepts_empty_or_none_sni() {
+fn rejects_invalid_selected_values_but_accepts_disabled_identity_options() {
     assert!(parse("vector://secret@example.com:2077?socks=:1080&up=mix").is_err());
     assert!(parse("vector://secret@example.com:2077?socks=:1080&rate=-1").is_err());
     assert!(
@@ -83,18 +84,40 @@ fn rejects_invalid_selected_values_but_accepts_empty_or_none_sni() {
         assert_eq!(config.sni, None);
         assert!(config.effective_url().contains("&sni=none&"));
     }
+    for pin in ["", "none"] {
+        let config = parse(&format!(
+            "vector://secret@example.com:2077?pin={pin}&socks=:1080"
+        ))
+        .unwrap();
+        assert_eq!(config.pin, None);
+        assert!(config.effective_url().contains("&pin=none&"));
+    }
+
+    let config = parse("vector://secret@example.com:2077?pin&socks=:1080").unwrap();
+    assert_eq!(config.pin, None);
 }
 
 #[test]
-fn effective_url_uses_canonical_order_and_always_prints_sni() {
+fn effective_url_uses_canonical_order_and_prints_identity_options() {
     let config = parse(
-        "vector://secret@example.com:2077?log=debug&alpn=private&pool=7&down=tcp&up=tcp&sni=relay.example&etar=2&rate=1&socks=:1080",
+        "vector://secret@example.com:2077?log=debug&alpn=private&pool=7&down=tcp&up=tcp&sni=relay.example&pin=abc&etar=2&rate=1&socks=:1080",
     )
     .unwrap();
     assert_eq!(
         config.effective_url(),
-        "vector://example.com:2077?up=tcp&down=tcp&pool=7&sni=relay.example&alpn=private&rate=1&etar=2&socks=:1080"
+        "vector://example.com:2077?up=tcp&down=tcp&pool=7&sni=relay.example&pin=abc&alpn=private&rate=1&etar=2&socks=:1080"
     );
+}
+
+#[test]
+fn preserves_pin_without_early_validation() {
+    for pin in ["abc", "ABCDEF", "not-a-fingerprint"] {
+        let config = parse(&format!(
+            "vector://secret@example.com:2077?pin={pin}&socks=:1080"
+        ))
+        .unwrap();
+        assert_eq!(config.pin.as_deref(), Some(pin));
+    }
 }
 
 #[test]

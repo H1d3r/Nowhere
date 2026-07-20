@@ -19,6 +19,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "socks=<listener>",
         "pool=<number>",
         "sni=<name|none>",
+        "pin=<sha256|none>",
         "UDP ASSOCIATE",
         "rate=<mbps>",
         "etar=<mbps>",

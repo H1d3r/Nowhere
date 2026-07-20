@@ -99,6 +99,9 @@ nowhere 'portal://change-me@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhe
 nowhere 'vector://change-me@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
 ```
 
+Alternatively, set `pin` to the lowercase `CERT_SHA256` value printed by Portal.
+Certificate pinning takes priority over `sni` certificate-chain and name checks.
+
 Portal and Vector default to ALPN `now/1`. A custom `alpn` must match on both
 ends.
 

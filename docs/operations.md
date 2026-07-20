@@ -19,11 +19,11 @@ net -> tls -> alpn -> rate -> etar -> dial -> socks
 Vector prints:
 
 ```text
-up -> down -> pool -> sni -> alpn -> rate -> etar -> socks
+up -> down -> pool -> sni -> pin -> alpn -> rate -> etar -> socks
 ```
 
-Vector records `sni=none` whenever certificate verification is disabled and
-reports `pool=0` for every carrier pair except `tcp/tcp`.
+Vector records `sni=none` and `pin=none` whenever those identity controls are
+disabled, and reports `pool=0` for every carrier pair except `tcp/tcp`.
 
 ## Logs and Telemetry
 
@@ -89,7 +89,8 @@ certificate active and emits an error.
 
 Vector loads system roots for verified `sni` connections. A root-store,
 certificate-chain, or name error fails the carrier. There is no automatic
-fallback from verified to unverified TLS.
+fallback from verified to unverified TLS. An enabled `pin` takes precedence and
+requires an exact leaf-certificate SHA-256 match.
 
 ## Graceful Shutdown
 
