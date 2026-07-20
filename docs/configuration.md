@@ -127,13 +127,14 @@ local host.
 | `NOW_TCP_IDLE_POOL_CONNS` | `4096` | Portal authenticated idle TLS lane cap |
 | `NOW_MAX_PENDING_PAIRS` | `1024` | Pending split-flow cap per session |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Split-flow pairing deadline |
+| `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Vector deadline for waiting for Portal READY |
 | `NOW_TCP_DATA_BUF_SIZE` | `32768` (32 KiB) | TCP relay buffer size |
 | `NOW_UDP_DATA_BUF_SIZE` | `65536` (64 KiB) | UDP receive buffer size |
 | `NOW_TCP_DIAL_TIMEOUT` | `15s` | TCP target connect deadline |
 | `NOW_UDP_DIAL_TIMEOUT` | `15s` | UDP target setup deadline |
 | `NOW_TCP_READ_TIMEOUT` | `30s` | Opposite-half TCP drain grace |
 | `NOW_UDP_IDLE_TIMEOUT` | `2m` | UDP flow and association target idle timeout |
-| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Authentication and flow setup deadline |
+| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Authentication and request-write deadline |
 | `NOW_REPORT_INTERVAL` | `5s` | CHECK_POINT and LINK_STATUS interval |
 | `NOW_SERVICE_COOLDOWN` | `3s` | Carrier reconnect delay |
 | `NOW_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown deadline |

@@ -103,13 +103,14 @@ Environment:
   NOW_TCP_IDLE_POOL_CONNS   Maximum authenticated idle TLS/TCP connections.
   NOW_MAX_PENDING_PAIRS     Maximum pending logical-flow IDs per session.
   NOW_FLOW_PAIR_TIMEOUT     Timeout for completing a split logical flow.
+  NOW_FLOW_SETUP_TIMEOUT    Timeout for waiting for a logical flow to become ready.
   NOW_TCP_DATA_BUF_SIZE     TCP relay buffer size.
   NOW_UDP_DATA_BUF_SIZE     UDP target receive buffer size.
   NOW_TCP_DIAL_TIMEOUT      TCP target dial timeout.
   NOW_UDP_DIAL_TIMEOUT      UDP target dial timeout.
   NOW_TCP_READ_TIMEOUT      TCP half-close grace timeout.
   NOW_UDP_IDLE_TIMEOUT      QUIC and DATAGRAM/UoT flow idle timeout.
-  NOW_HANDSHAKE_TIMEOUT     Fixed authentication and setup deadline.
+  NOW_HANDSHAKE_TIMEOUT     Authentication and request-write deadline.
   NOW_REPORT_INTERVAL       Local CHECK_POINT and LINK_STATUS report interval.
   NOW_SERVICE_COOLDOWN      Transport reconnect retry delay.
   NOW_SHUTDOWN_TIMEOUT      Graceful shutdown wait.

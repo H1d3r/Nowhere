@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use std::net::SocketAddr;
+use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 
@@ -58,4 +59,17 @@ async fn cold_attach_lane_coalesces_auth_and_flow_header() {
     reader.read_to_end(&mut wire).await.unwrap();
     assert_eq!(&wire[..AUTH_FRAME_LEN], &auth);
     assert_eq!(&wire[AUTH_FRAME_LEN..], &write_flow_header(header));
+}
+
+#[tokio::test]
+async fn ready_wait_uses_its_own_deadline() {
+    let (_writer, reader) = tokio::io::duplex(1);
+    let mut reader: BoxReader = Box::pin(reader);
+
+    let started = tokio::time::Instant::now();
+    assert_eq!(
+        read_ready_with_timeout(&mut reader, Duration::from_millis(20)).await,
+        Err(SetupResult::InternalError)
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
 }

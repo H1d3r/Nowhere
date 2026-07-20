@@ -28,6 +28,8 @@ fn help_text_documents_usage_and_configuration_surface() {
         "NOW_QUIC_UDP_QUEUE_BYTES",
         "NOW_TCP_IDLE_POOL_CONNS",
         "NOW_MAX_PENDING_PAIRS",
+        "NOW_FLOW_PAIR_TIMEOUT",
+        "NOW_FLOW_SETUP_TIMEOUT",
         "NOW_HANDSHAKE_TIMEOUT",
         "NOW_SERVICE_COOLDOWN",
         "Password credentials are not supported.",

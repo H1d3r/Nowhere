@@ -140,6 +140,11 @@ pub fn handshake_timeout() -> Duration {
     env_duration("NOW_HANDSHAKE_TIMEOUT", Duration::from_secs(5))
 }
 
+/// Deadline for waiting for a logical flow to become ready.
+pub fn flow_setup_timeout() -> Duration {
+    env_duration("NOW_FLOW_SETUP_TIMEOUT", Duration::from_secs(20))
+}
+
 /// Interval between event checkpoint log lines.
 pub fn report_interval() -> Duration {
     env_duration("NOW_REPORT_INTERVAL", Duration::from_secs(5))

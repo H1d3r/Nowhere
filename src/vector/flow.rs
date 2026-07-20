@@ -6,6 +6,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -17,7 +18,7 @@ use crate::common::socks::{
     REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE, REPLY_HOST_UNREACHABLE,
     REPLY_NETWORK_UNREACHABLE, REPLY_SUCCEEDED, REPLY_TTL_EXPIRED, SocksAddress,
 };
-use crate::common::{handshake_timeout, tcp_read_timeout};
+use crate::common::{flow_setup_timeout, handshake_timeout, tcp_read_timeout};
 use crate::protocol::{
     AUTH_FRAME_LEN, AuthFrame, Carrier, FLOW_HEADER_LEN, FlowHeader, FlowKind, FlowResult,
     FlowRole, SetupResult, TARGET_MAX_ENCODED_LEN, Target, encode_target_into, read_flow_result,
@@ -362,7 +363,14 @@ pub(super) async fn write_header(
 }
 
 pub(super) async fn read_ready(reader: &mut BoxReader) -> std::result::Result<(), SetupResult> {
-    let result = timeout(handshake_timeout(), read_flow_result(reader))
+    read_ready_with_timeout(reader, flow_setup_timeout()).await
+}
+
+async fn read_ready_with_timeout(
+    reader: &mut BoxReader,
+    setup_timeout: Duration,
+) -> std::result::Result<(), SetupResult> {
+    let result = timeout(setup_timeout, read_flow_result(reader))
         .await
         .map_err(|_| SetupResult::InternalError)
         .and_then(|result| result.map_err(|_| SetupResult::InternalError))?;

@@ -69,3 +69,13 @@ fn positive_env_usize_rejects_zero_and_invalid_values() {
     assert_eq!(env_positive_usize(name, 7), (7, true));
     unsafe { std::env::remove_var(name) };
 }
+
+#[test]
+fn flow_setup_timeout_defaults_and_accepts_override() {
+    unsafe { std::env::remove_var("NOW_FLOW_SETUP_TIMEOUT") };
+    assert_eq!(flow_setup_timeout(), Duration::from_secs(20));
+
+    unsafe { std::env::set_var("NOW_FLOW_SETUP_TIMEOUT", "750ms") };
+    assert_eq!(flow_setup_timeout(), Duration::from_millis(750));
+    unsafe { std::env::remove_var("NOW_FLOW_SETUP_TIMEOUT") };
+}
