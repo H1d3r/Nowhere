@@ -11,6 +11,56 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{Notify, oneshot};
 use tokio::task::AbortHandle;
 
+const READY_GATE_CLOSED: usize = 1usize << (usize::BITS - 1);
+const READY_GATE_COUNT: usize = READY_GATE_CLOSED - 1;
+
+/// Lock-free linearization gate for committing v1 READY results.
+#[derive(Default)]
+pub(super) struct ReadyGate {
+    state: AtomicUsize,
+}
+
+impl ReadyGate {
+    /// Reserves a READY commit that linearizes before shutdown admission closes.
+    pub(super) fn try_enter(&self) -> Option<ReadyPermit<'_>> {
+        let mut state = self.state.load(Ordering::Acquire);
+        loop {
+            if state & READY_GATE_CLOSED != 0 || state & READY_GATE_COUNT == READY_GATE_COUNT {
+                return None;
+            }
+            match self.state.compare_exchange_weak(
+                state,
+                state + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(ReadyPermit { gate: self }),
+                Err(current) => state = current,
+            }
+        }
+    }
+
+    /// Prevents all commits that did not already reserve a permit.
+    pub(super) fn close(&self) {
+        self.state.fetch_or(READY_GATE_CLOSED, Ordering::AcqRel);
+    }
+
+    #[cfg(test)]
+    fn active(&self) -> usize {
+        self.state.load(Ordering::Acquire) & READY_GATE_COUNT
+    }
+}
+
+pub(super) struct ReadyPermit<'a> {
+    gate: &'a ReadyGate,
+}
+
+impl Drop for ReadyPermit<'_> {
+    fn drop(&mut self) {
+        self.gate.state.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 #[derive(Default)]
 pub(super) struct FlowTaskTracker {
     state: Mutex<TrackerState>,
@@ -30,27 +80,37 @@ impl FlowTaskTracker {
     where
         F: Future<Output = ()> + Send + 'static,
     {
+        self.spawn_or_return(future).is_none()
+    }
+
+    /// Spawns while admission is open, or returns ownership to the caller so
+    /// it can complete protocol cleanup instead of silently dropping a flow.
+    pub(super) fn spawn_or_return<F>(self: &Arc<Self>, future: F) -> Option<F>
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         let mut state = self.state.lock().expect("flow task tracker poisoned");
         if state.closed {
-            return false;
+            return Some(future);
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.active.fetch_add(1, Ordering::AcqRel);
-        let task = tokio::spawn(future);
-        let abort_handle = task.abort_handle();
         let (registered, registration) = oneshot::channel();
         let tracker = self.clone();
-        tokio::spawn(async move {
-            // Registration must win even if the worker finishes immediately;
-            // otherwise completion could remove the handle before insertion.
+        // Capture the guard in the task future itself. If Tokio aborts the task
+        // before its first poll, dropping that future still balances `active`.
+        let completion = CompletionGuard { tracker, id };
+        let task = tokio::spawn(async move {
+            let _completion = completion;
             let _ = registration.await;
-            let _ = task.await;
-            tracker.done(id);
+            future.await;
         });
+        let abort_handle = task.abort_handle();
+        drop(task);
         state.handles.insert(id, abort_handle);
         drop(state);
         let _ = registered.send(());
-        true
+        None
     }
 
     pub(super) fn close(&self) {
@@ -87,6 +147,17 @@ impl FlowTaskTracker {
         if self.active.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.idle.notify_waiters();
         }
+    }
+}
+
+struct CompletionGuard {
+    tracker: Arc<FlowTaskTracker>,
+    id: u64,
+}
+
+impl Drop for CompletionGuard {
+    fn drop(&mut self) {
+        self.tracker.done(self.id);
     }
 }
 

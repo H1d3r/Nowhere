@@ -6,7 +6,22 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::FlowTaskTracker;
+use super::{FlowTaskTracker, ReadyGate};
+
+#[test]
+fn ready_gate_linearizes_existing_commits_before_close() {
+    let gate = ReadyGate::default();
+    let first = gate.try_enter().expect("gate starts open");
+    assert_eq!(gate.active(), 1);
+
+    gate.close();
+    assert!(gate.try_enter().is_none());
+    assert_eq!(gate.active(), 1);
+
+    drop(first);
+    assert_eq!(gate.active(), 0);
+    assert!(gate.try_enter().is_none());
+}
 
 #[tokio::test]
 async fn close_waits_for_existing_tasks_and_rejects_new_tasks() {
