@@ -73,10 +73,12 @@ async fn start_mixed(
         portal.inner.clone(),
         endpoint.clone(),
         shutdown.clone(),
+        shutdown.clone(),
     ));
     let tcp_task = tokio::spawn(crate::portal::listener::accept_tcp_loop(
         portal.inner.clone(),
         listener,
+        shutdown.clone(),
         shutdown.clone(),
     ));
     let (client_endpoint, quic) =

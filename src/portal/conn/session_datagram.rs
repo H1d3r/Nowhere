@@ -10,7 +10,6 @@ use std::task::{Context, Poll, Wake, Waker};
 use bytes::Bytes;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::handshake_timeout;
 use crate::protocol::{OwnedUdpFragment, OwnedUdpFrame, ReassemblyOutcome, decode_udp_frame_owned};
 
 use super::flow::reserve_packet_budget;
@@ -67,7 +66,7 @@ impl PortalSession {
         shutdown: &CancellationToken,
     ) {
         let waker = Waker::from(Arc::new(DatagramReadyWake));
-        let deadline = tokio::time::Instant::now() + handshake_timeout();
+        let deadline = tokio::time::Instant::now() + self.portal.runtime.handshake_timeout;
         let mut drained = 0usize;
         loop {
             let polled = {

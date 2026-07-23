@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
@@ -28,8 +28,6 @@ pub(super) use self::state::{
 };
 use self::state::{FlowClaim, FlowKey, LinkCounts, Metadata, PendingTcp, PendingUdp};
 
-const DEFAULT_MAX_PENDING_PAIRS: usize = 1024;
-const DEFAULT_FLOW_PAIR_TIMEOUT: Duration = Duration::from_secs(15);
 const FLOW_RESULT_WRITE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
@@ -88,6 +86,7 @@ pub(super) struct PairingRegistry {
     pub(super) links: StdMutex<HashMap<SessionId, LinkCounts>>,
     claims: StdMutex<HashMap<FlowKey, FlowClaim>>,
     rejections: StdMutex<HashMap<FlowKey, TerminalRejection>>,
+    accepting: AtomicBool,
     pub(super) next_quic_generation: AtomicU64,
     next_epoch: AtomicU64,
     pub(super) max_pending: usize,
@@ -96,17 +95,18 @@ pub(super) struct PairingRegistry {
 }
 
 impl PairingRegistry {
-    pub(super) fn new(max_udp_flows: usize) -> Self {
+    pub(super) fn new(max_udp_flows: usize, max_pending: usize, timeout: Duration) -> Self {
         Self {
             tcp: Mutex::new(HashMap::new()),
             udp: Mutex::new(HashMap::new()),
             links: StdMutex::new(HashMap::new()),
             claims: StdMutex::new(HashMap::new()),
             rejections: StdMutex::new(HashMap::new()),
+            accepting: AtomicBool::new(true),
             next_quic_generation: AtomicU64::new(1),
             next_epoch: AtomicU64::new(1),
-            max_pending: read_max_pending(),
-            timeout: read_pair_timeout(),
+            max_pending,
+            timeout,
             max_udp_flows,
         }
     }
@@ -198,6 +198,15 @@ impl PairingRegistry {
         quic_generation: Option<u64>,
     ) -> Result<(u64, bool), PairingError> {
         let mut claims = self.claims.lock().expect("flow claim registry poisoned");
+        // The claims lock is the drain/admission linearization point. Once
+        // draining flips this flag while holding the same lock, neither an
+        // OPEN nor a late ATTACH can create or complete another flow.
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(PairingError::new(
+                FlowErrorCode::FlowLimit,
+                "portal::pairing: portal is draining",
+            ));
+        }
         if let Some(claim) = claims.get_mut(&key) {
             if claim.active || claim.metadata != metadata {
                 return Err(PairingError::new(
@@ -297,6 +306,12 @@ impl PairingRegistry {
         }
         let cancel = {
             let mut claims = self.claims.lock().expect("flow claim registry poisoned");
+            if !self.accepting.load(Ordering::Acquire) {
+                return Err(PairingError::new(
+                    FlowErrorCode::FlowLimit,
+                    "portal::pairing: portal is draining",
+                ));
+            }
             let claim = claims.get_mut(&key).ok_or_else(|| {
                 PairingError::new(
                     FlowErrorCode::InternalError,
@@ -1196,6 +1211,37 @@ impl PairingRegistry {
         self.drain_pending().await;
     }
 
+    /// Closes logical-flow admission and rejects every setup that has not
+    /// activated yet. Active relays retain their claims and are left alone.
+    pub(super) async fn begin_drain(self: &Arc<Self>) {
+        self.close_admission();
+
+        let mut pending = self
+            .tcp
+            .lock()
+            .await
+            .keys()
+            .copied()
+            .collect::<HashSet<_>>();
+        pending.extend(self.udp.lock().await.keys().copied());
+        for key in pending {
+            self.reject_flow_setup(key.session_id, key.flow_id, FlowErrorCode::FlowLimit)
+                .await;
+        }
+    }
+
+    /// Synchronous admission barrier used at the start of the one absolute
+    /// shutdown deadline.
+    pub(super) fn close_admission(&self) {
+        let _claims = self.claims.lock().expect("flow claim registry poisoned");
+        self.accepting.store(false, Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_accepting(&self) -> bool {
+        self.accepting.load(Ordering::Acquire)
+    }
+
     async fn purge_quic_generation(self: &Arc<Self>, session_id: SessionId, generation: u64) {
         let mut stale = self
             .tcp
@@ -1281,22 +1327,6 @@ async fn reject_tcp_writer(writer: &mut Option<BoxWriter>, code: FlowErrorCode) 
         };
         let _ = tokio::time::timeout(FLOW_RESULT_WRITE_TIMEOUT, write).await;
     }
-}
-
-fn read_max_pending() -> usize {
-    std::env::var("NOW_MAX_PENDING_PAIRS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_MAX_PENDING_PAIRS)
-}
-
-fn read_pair_timeout() -> Duration {
-    std::env::var("NOW_FLOW_PAIR_TIMEOUT")
-        .ok()
-        .and_then(|value| humantime::parse_duration(&value).ok())
-        .filter(|value| !value.is_zero())
-        .unwrap_or(DEFAULT_FLOW_PAIR_TIMEOUT)
 }
 
 #[cfg(test)]

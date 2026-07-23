@@ -11,7 +11,6 @@ mod network;
 pub(crate) mod socks;
 mod tls;
 
-pub(crate) use config::env_positive_usize;
 pub use config::{
     DEFAULT_DIALER_IP, DEFAULT_RATE_LIMIT, env_duration, env_int, flow_setup_timeout,
     handshake_timeout, init_dialer_ip, query_first, quic_max_streams, rate_limit_bytes_per_second,

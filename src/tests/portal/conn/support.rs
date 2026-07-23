@@ -179,6 +179,8 @@ pub(super) async fn connect_test_quic_with_url_and_limits(
         inner.udp_flow_limits = limits;
         inner.pairing = Arc::new(crate::portal::pairing::PairingRegistry::new(
             limits.max_flows,
+            inner.runtime.max_pending_pairs,
+            inner.runtime.flow_pair_timeout,
         ));
     }
     let server_endpoint = portal.listen_endpoints().unwrap().pop().unwrap();
@@ -191,6 +193,7 @@ pub(super) async fn connect_test_quic_with_url_and_limits(
         crate::portal::listener::accept_endpoint_loop(
             server_portal,
             server_endpoint_for_task,
+            server_shutdown.clone(),
             server_shutdown,
         )
         .await;

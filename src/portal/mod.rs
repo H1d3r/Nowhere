@@ -4,6 +4,7 @@
 //! Portal server state and module wiring.
 
 mod admission;
+mod config;
 mod conn;
 mod event;
 mod listener;
@@ -17,11 +18,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 
-use crate::common::{Logger, OutboundDialer, TLSMode};
+use crate::common::{Lifecycle, Logger, OutboundDialer, TLSMode};
 use crate::protocol::Credentials;
 use crate::transport::{Buffers, RateLimiter, Stats};
 
+use self::config::PortalRuntimeConfig;
 pub(crate) use self::mode::NetworkMode;
 
 const DEFAULT_QUIC_MAX_UDP_FLOWS: usize = 256;
@@ -53,6 +56,10 @@ struct PortalInner {
     rate_limit: i32,
     etar_limit: i32,
     logger: Logger,
+    lifecycle: Arc<Lifecycle>,
+    /// Cancels only work that has not committed a v1 READY result yet.
+    drain: CancellationToken,
+    runtime: PortalRuntimeConfig,
     stats: Arc<Stats>,
     pool_active: AtomicU64,
     tcp_idle_pool_budget: Arc<Semaphore>,
@@ -63,7 +70,9 @@ struct PortalInner {
     quic_server_config: quinn::ServerConfig,
     unauthenticated_admission: Arc<admission::UnauthenticatedAdmission>,
     pairing: Arc<pairing::PairingRegistry>,
-    flow_tasks: Arc<tasks::FlowTaskTracker>,
+    ready_gate: tasks::ReadyGate,
+    connection_tasks: Arc<tasks::FlowTaskTracker>,
+    relay_tasks: Arc<tasks::FlowTaskTracker>,
 }
 
 #[cfg(test)]

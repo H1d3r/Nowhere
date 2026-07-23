@@ -73,10 +73,12 @@ async fn start_runtime(up: &str, down: &str) -> TestRuntime {
         portal.inner.clone(),
         endpoint.clone(),
         shutdown.clone(),
+        shutdown.clone(),
     ));
     let tcp_task = tokio::spawn(crate::portal::listener::accept_tcp_loop(
         portal.inner.clone(),
         listener,
+        shutdown.clone(),
         shutdown.clone(),
     ));
     let vector = Vector::new(

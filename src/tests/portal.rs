@@ -218,3 +218,21 @@ fn certificate_parameters_are_tied_to_ca_trusted_mode() {
         assert!(Portal::new(Url::parse(raw).unwrap(), test_logger()).is_err());
     }
 }
+
+#[tokio::test]
+async fn listener_bind_failure_moves_lifecycle_to_stopped() {
+    let blocker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = blocker.local_addr().unwrap().port();
+    let portal = Portal::new(
+        Url::parse(&format!(
+            "portal://secret@127.0.0.1:{port}?net=tcp&log=none"
+        ))
+        .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+    let lifecycle = portal.inner.lifecycle.clone();
+
+    assert!(portal.run().await.is_err());
+    assert_eq!(lifecycle.state(), Some(crate::common::LifeState::Stopped));
+}

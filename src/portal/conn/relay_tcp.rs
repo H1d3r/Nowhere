@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::common::tcp_dial_timeout;
 use crate::portal::PortalInner;
 use crate::portal::pairing::PairedTcp;
 use crate::protocol::{FlowErrorCode, FlowResult, write_flow_result};
@@ -43,12 +42,22 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             ).await;
             return;
         },
-        result = portal.outbound.dial_tcp_target(&target, tcp_dial_timeout()) => result,
+        _ = portal.drain.cancelled() => {
+            let _ = write_flow_result_bounded(
+                &mut client_write,
+                FlowResult::Reject(FlowErrorCode::FlowLimit),
+                true,
+            ).await;
+            return;
+        },
+        result = portal.outbound.dial_tcp_target(&target, portal.runtime.tcp_dial_timeout) => result,
     } {
         Ok(conn) => conn,
         Err(err) => {
             let code = if cancel.is_cancelled() {
                 FlowErrorCode::SessionReplaced
+            } else if portal.drain.is_cancelled() {
+                FlowErrorCode::FlowLimit
             } else {
                 FlowErrorCode::DialFailed
             };
@@ -60,7 +69,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             return;
         }
     };
-    match commit_ready(&cancel, &mut client_write).await {
+    match commit_ready(&cancel, &portal.ready_gate, &mut client_write).await {
         Ok(true) => {}
         Ok(false) | Err(_) => return,
     }
@@ -124,8 +133,23 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
 /// a competing REJECT that could corrupt a partially written frame.
 async fn commit_ready(
     cancel: &tokio_util::sync::CancellationToken,
+    ready_gate: &crate::portal::tasks::ReadyGate,
     writer: &mut crate::portal::pairing::BoxWriter,
 ) -> anyhow::Result<bool> {
+    if cancel.is_cancelled() {
+        write_flow_result_bounded(
+            writer,
+            FlowResult::Reject(FlowErrorCode::SessionReplaced),
+            true,
+        )
+        .await?;
+        return Ok(false);
+    }
+    let Some(_ready_permit) = ready_gate.try_enter() else {
+        write_flow_result_bounded(writer, FlowResult::Reject(FlowErrorCode::FlowLimit), true)
+            .await?;
+        return Ok(false);
+    };
     if cancel.is_cancelled() {
         write_flow_result_bounded(
             writer,

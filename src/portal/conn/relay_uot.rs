@@ -12,7 +12,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::Instant;
 
-use crate::common::{UdpDatagramSend, send_quic_udp_packet, udp_dial_timeout, udp_idle_timeout};
+use crate::common::{UdpDatagramSend, send_quic_udp_packet};
 use crate::portal::PortalInner;
 use crate::portal::pairing::{PairedUdp, UdpDown, UdpUp};
 use crate::protocol::{
@@ -49,12 +49,21 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
             ).await;
             return;
         },
-        result = portal.outbound.dial_udp_target(&target, udp_dial_timeout()) => result,
+        _ = portal.drain.cancelled() => {
+            let _ = send_udp_result_bounded(
+                &mut downlink,
+                FlowResult::Reject(FlowErrorCode::FlowLimit),
+            ).await;
+            return;
+        },
+        result = portal.outbound.dial_udp_target(&target, portal.runtime.udp_dial_timeout) => result,
     } {
         Ok(socket) => socket,
         Err(err) => {
             let code = if cancel.is_cancelled() {
                 FlowErrorCode::SessionReplaced
+            } else if portal.drain.is_cancelled() {
+                FlowErrorCode::FlowLimit
             } else {
                 FlowErrorCode::DialFailed
             };
@@ -65,17 +74,35 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
             return;
         }
     };
-    if let UdpUp::Quic(receiver) = &mut uplink
-        && !receiver.prepare_ready().await
-    {
-        let _ = send_udp_result_bounded(
-            &mut downlink,
-            FlowResult::Reject(FlowErrorCode::InternalError),
-        )
-        .await;
-        return;
+    if let UdpUp::Quic(receiver) = &mut uplink {
+        let prepared = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                let _ = send_udp_result_bounded(
+                    &mut downlink,
+                    FlowResult::Reject(FlowErrorCode::SessionReplaced),
+                ).await;
+                return;
+            }
+            _ = portal.drain.cancelled() => {
+                let _ = send_udp_result_bounded(
+                    &mut downlink,
+                    FlowResult::Reject(FlowErrorCode::FlowLimit),
+                ).await;
+                return;
+            }
+            prepared = receiver.prepare_ready() => prepared,
+        };
+        if !prepared {
+            let _ = send_udp_result_bounded(
+                &mut downlink,
+                FlowResult::Reject(FlowErrorCode::InternalError),
+            )
+            .await;
+            return;
+        }
     }
-    match commit_udp_ready(&cancel, &mut downlink).await {
+    match commit_udp_ready(&cancel, &portal.ready_gate, &mut downlink).await {
         Ok(true) => {
             // READY is now queued on the authoritative downlink. Activate the
             // DATAGRAM route synchronously before the peer can observe it and
@@ -114,7 +141,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         UdpDown::TlsTcp { liveness, .. } => liveness.take(),
         UdpDown::Quic { .. } => None,
     };
-    let idle_sleep = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
+    let idle_sleep = tokio::time::sleep_until(Instant::now() + portal.runtime.udp_idle_timeout);
     tokio::pin!(idle_sleep);
     let activity = Notify::new();
     let mut downlink_frame_incomplete = false;
@@ -211,7 +238,9 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                     Err(err) => format!("target read or downlink write error: {err}"),
                 },
                 _ = activity.notified() => {
-                    idle_sleep.as_mut().reset(Instant::now() + udp_idle_timeout());
+                    idle_sleep
+                        .as_mut()
+                        .reset(Instant::now() + portal.runtime.udp_idle_timeout);
                 }
                 _ = &mut idle_sleep => break "idle timeout".to_string(),
             }
@@ -253,8 +282,18 @@ async fn send_quic_control_result(
 /// second control result.
 async fn commit_udp_ready(
     cancel: &tokio_util::sync::CancellationToken,
+    ready_gate: &crate::portal::tasks::ReadyGate,
     downlink: &mut UdpDown,
 ) -> anyhow::Result<bool> {
+    if cancel.is_cancelled() {
+        send_udp_result_bounded(downlink, FlowResult::Reject(FlowErrorCode::SessionReplaced))
+            .await?;
+        return Ok(false);
+    }
+    let Some(_ready_permit) = ready_gate.try_enter() else {
+        send_udp_result_bounded(downlink, FlowResult::Reject(FlowErrorCode::FlowLimit)).await?;
+        return Ok(false);
+    };
     if cancel.is_cancelled() {
         send_udp_result_bounded(downlink, FlowResult::Reject(FlowErrorCode::SessionReplaced))
             .await?;

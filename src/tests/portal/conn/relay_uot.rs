@@ -67,6 +67,7 @@ impl AsyncWrite for PartialDataWriter {
 #[tokio::test]
 async fn cancelled_uot_ready_returns_typed_session_replaced_and_fin() {
     let cancel = tokio_util::sync::CancellationToken::new();
+    let ready_gate = crate::portal::tasks::ReadyGate::default();
     cancel.cancel();
     let (writer, mut peer) = duplex(64);
     let mut downlink = UdpDown::TlsTcp {
@@ -74,11 +75,39 @@ async fn cancelled_uot_ready_returns_typed_session_replaced_and_fin() {
         liveness: None,
     };
 
-    assert!(!commit_udp_ready(&cancel, &mut downlink).await.unwrap());
+    assert!(
+        !commit_udp_ready(&cancel, &ready_gate, &mut downlink)
+            .await
+            .unwrap()
+    );
 
     assert_eq!(
         read_flow_result(&mut peer).await.unwrap(),
         FlowResult::Reject(FlowErrorCode::SessionReplaced)
+    );
+    let mut byte = [0u8; 1];
+    assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn drained_uot_ready_returns_typed_flow_limit_and_fin() {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let ready_gate = crate::portal::tasks::ReadyGate::default();
+    ready_gate.close();
+    let (writer, mut peer) = duplex(64);
+    let mut downlink = UdpDown::TlsTcp {
+        writer: Box::pin(writer),
+        liveness: None,
+    };
+
+    assert!(
+        !commit_udp_ready(&cancel, &ready_gate, &mut downlink)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        read_flow_result(&mut peer).await.unwrap(),
+        FlowResult::Reject(FlowErrorCode::FlowLimit)
     );
     let mut byte = [0u8; 1];
     assert_eq!(peer.read(&mut byte).await.unwrap(), 0);

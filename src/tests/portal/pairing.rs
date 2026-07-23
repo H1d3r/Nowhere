@@ -26,12 +26,125 @@ fn registry(max_udp_flows: usize, timeout: Duration) -> Arc<PairingRegistry> {
         links: StdMutex::new(HashMap::new()),
         claims: StdMutex::new(HashMap::new()),
         rejections: StdMutex::new(HashMap::new()),
+        accepting: AtomicBool::new(true),
         next_quic_generation: AtomicU64::new(1),
         next_epoch: AtomicU64::new(1),
         max_pending: 16,
         timeout,
         max_udp_flows,
     })
+}
+
+#[tokio::test]
+async fn drain_rejects_pending_and_new_flows_but_preserves_active_claims() {
+    let registry = registry(8, Duration::from_secs(30));
+    let stats = Arc::new(Stats::default());
+    let session_id = [0x5a; SESSION_ID_LEN];
+    let _tcp_guard = registry.register_tcp_link(session_id, stats);
+
+    let (active_up, _active_up_peer) = tokio::io::duplex(64);
+    let (active_down, _active_down_peer) = tokio::io::duplex(64);
+    let active = registry
+        .submit_tcp(
+            session_id,
+            header(
+                FlowRole::Duplex,
+                40,
+                FlowKind::Tcp,
+                Carrier::TlsTcp,
+                Carrier::TlsTcp,
+            ),
+            Some(target("target.test:443")),
+            tcp_half("active"),
+            Some(Box::pin(active_up)),
+            Some(Box::pin(active_down)),
+            None,
+        )
+        .await
+        .unwrap()
+        .expect("flow should activate before drain");
+    let active_cancel = active._flow_lease.cancellation_token();
+
+    let (pending_up, _pending_peer) = tokio::io::duplex(64);
+    assert!(
+        registry
+            .submit_tcp(
+                session_id,
+                header(
+                    FlowRole::Open,
+                    41,
+                    FlowKind::Tcp,
+                    Carrier::TlsTcp,
+                    Carrier::TlsTcp,
+                ),
+                Some(target("target.test:443")),
+                tcp_half("pending"),
+                Some(Box::pin(pending_up)),
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    registry.begin_drain().await;
+    assert!(!registry.is_accepting());
+    assert!(!active_cancel.is_cancelled());
+    assert!(registry.tcp.lock().await.is_empty());
+
+    let (late_down, mut late_peer) = tokio::io::duplex(64);
+    let error = registry
+        .submit_tcp(
+            session_id,
+            header(
+                FlowRole::Attach,
+                41,
+                FlowKind::Tcp,
+                Carrier::TlsTcp,
+                Carrier::TlsTcp,
+            ),
+            None,
+            tcp_half("late"),
+            None,
+            Some(Box::pin(late_down)),
+            None,
+        )
+        .await
+        .unwrap_pairing_error();
+    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
+    assert_eq!(
+        read_flow_result(&mut late_peer).await.unwrap(),
+        FlowResult::Reject(FlowErrorCode::FlowLimit)
+    );
+
+    let (new_up, _new_up_peer) = tokio::io::duplex(64);
+    let (new_down, mut new_peer) = tokio::io::duplex(64);
+    let error = registry
+        .submit_tcp(
+            session_id,
+            header(
+                FlowRole::Duplex,
+                42,
+                FlowKind::Tcp,
+                Carrier::TlsTcp,
+                Carrier::TlsTcp,
+            ),
+            Some(target("target.test:443")),
+            tcp_half("new"),
+            Some(Box::pin(new_up)),
+            Some(Box::pin(new_down)),
+            None,
+        )
+        .await
+        .unwrap_pairing_error();
+    assert_eq!(error.code(), FlowErrorCode::FlowLimit);
+    assert_eq!(
+        read_flow_result(&mut new_peer).await.unwrap(),
+        FlowResult::Reject(FlowErrorCode::FlowLimit)
+    );
+
+    drop(active);
 }
 
 fn header(

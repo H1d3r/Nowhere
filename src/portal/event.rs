@@ -8,8 +8,6 @@ use std::sync::atomic::Ordering;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::common::report_interval;
-
 use super::PortalInner;
 
 pub(super) async fn event_loop(portal: Arc<PortalInner>, shutdown: CancellationToken) {
@@ -38,7 +36,7 @@ pub(super) async fn event_loop(portal: Arc<PortalInner>, shutdown: CancellationT
 
         tokio::select! {
             _ = shutdown.cancelled() => return,
-            _ = tokio::time::sleep(report_interval()) => {}
+            _ = tokio::time::sleep(portal.runtime.report_interval) => {}
         }
     }
 }

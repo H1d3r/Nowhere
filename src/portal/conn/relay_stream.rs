@@ -9,7 +9,6 @@ use std::sync::atomic::Ordering;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 
-use crate::common::tcp_read_timeout;
 use crate::portal::PortalInner;
 use crate::protocol::Carrier;
 
@@ -87,13 +86,13 @@ where
         EitherDone::Client(Ok(())) => {
             // After a clean half-close, give the other direction a short drain
             // window so protocol trailers or final response bytes can pass.
-            timeout(tcp_read_timeout(), &mut target_to_client)
+            timeout(portal.runtime.tcp_read_timeout, &mut target_to_client)
                 .await
                 .unwrap_or(Ok(()))?;
         }
         EitherDone::Target(Ok(())) => {
             // Symmetric drain window for target-initiated close.
-            timeout(tcp_read_timeout(), &mut client_to_target)
+            timeout(portal.runtime.tcp_read_timeout, &mut client_to_target)
                 .await
                 .unwrap_or(Ok(()))?;
         }

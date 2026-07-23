@@ -10,11 +10,8 @@ use anyhow::{Context, Result};
 use quinn::{Endpoint, EndpointConfig, IdleTimeout, ServerConfig, VarInt, default_runtime};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::TcpListener;
-use tokio::task::JoinSet;
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
-
-use crate::common::udp_idle_timeout;
 
 use super::{PortalInner, conn};
 
@@ -34,11 +31,12 @@ const TCP_LISTEN_BACKLOG: i32 = 1024;
 pub(super) async fn accept_endpoint_loop(
     portal: Arc<PortalInner>,
     endpoint: Endpoint,
-    shutdown: CancellationToken,
+    stop_accepting: CancellationToken,
+    force_shutdown: CancellationToken,
 ) {
     loop {
         tokio::select! {
-            _ = shutdown.cancelled() => break,
+            _ = stop_accepting.cancelled() => break,
             incoming = endpoint.accept() => {
                 let Some(incoming) = incoming else {
                     break;
@@ -62,8 +60,8 @@ pub(super) async fn accept_endpoint_loop(
                     continue;
                 };
                 let portal = portal.clone();
-                let child_shutdown = shutdown.clone();
-                let tasks = portal.flow_tasks.clone();
+                let child_shutdown = force_shutdown.clone();
+                let tasks = portal.connection_tasks.clone();
                 tasks.spawn(async move {
                     conn::handle_incoming(portal, incoming, admission, child_shutdown).await;
                 });
@@ -75,12 +73,12 @@ pub(super) async fn accept_endpoint_loop(
 pub(super) async fn accept_tcp_loop(
     portal: Arc<PortalInner>,
     listener: TcpListener,
-    shutdown: CancellationToken,
+    stop_accepting: CancellationToken,
+    force_shutdown: CancellationToken,
 ) {
-    let mut connections = JoinSet::new();
     loop {
         tokio::select! {
-            _ = shutdown.cancelled() => break,
+            _ = stop_accepting.cancelled() => break,
             result = listener.accept() => match result {
                 Ok((stream, peer)) => {
                     let Some(admission) = portal.unauthenticated_admission.try_acquire(peer.ip()) else {
@@ -91,8 +89,9 @@ pub(super) async fn accept_tcp_loop(
                         continue;
                     };
                     let portal = portal.clone();
-                    let child_shutdown = shutdown.clone();
-                    connections.spawn(async move {
+                    let child_shutdown = force_shutdown.clone();
+                    let tasks = portal.connection_tasks.clone();
+                    tasks.spawn(async move {
                         conn::handle_tcp_incoming(portal, stream, peer, admission, child_shutdown).await;
                     });
                 }
@@ -103,13 +102,8 @@ pub(super) async fn accept_tcp_loop(
                     sleep(Duration::from_millis(100)).await;
                 }
             },
-            Some(_) = connections.join_next(), if !connections.is_empty() => {}
         }
     }
-    // The portal runtime owns the single absolute shutdown deadline. If this
-    // loop is aborted at that deadline, dropping the JoinSet aborts any
-    // remaining connection tasks.
-    while connections.join_next().await.is_some() {}
 }
 
 /// Opens a Quinn endpoint on an already configured server config.
@@ -169,7 +163,10 @@ pub(super) fn format_endpoint_addr(host: &str, port: u16) -> String {
 }
 
 /// Applies transport limits that should be set before the config is shared.
-pub(super) fn configure_transport(server_config: &mut quinn::ServerConfig) -> Result<()> {
+pub(super) fn configure_transport(
+    server_config: &mut quinn::ServerConfig,
+    udp_idle_timeout: Duration,
+) -> Result<()> {
     let transport = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
         anyhow::anyhow!("portal::configure_transport: server transport already shared")
     })?;
@@ -180,7 +177,7 @@ pub(super) fn configure_transport(server_config: &mut quinn::ServerConfig) -> Re
     transport.send_window(QUIC_SEND_WINDOW);
     transport.max_concurrent_bidi_streams(VarInt::from_u32(1));
     transport.max_concurrent_uni_streams(VarInt::from_u32(0));
-    transport.max_idle_timeout(Some(IdleTimeout::try_from(udp_idle_timeout())?));
+    transport.max_idle_timeout(Some(IdleTimeout::try_from(udp_idle_timeout)?));
     transport.keep_alive_interval(None);
     transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
 

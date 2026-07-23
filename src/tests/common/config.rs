@@ -56,21 +56,6 @@ fn rate_limit_converts_mbps_to_bytes_per_second() {
 }
 
 #[test]
-fn positive_env_usize_rejects_zero_and_invalid_values() {
-    let name = "NOWHERE_TEST_POSITIVE_USIZE";
-    unsafe { std::env::remove_var(name) };
-    assert_eq!(env_positive_usize(name, 7), (7, false));
-
-    unsafe { std::env::set_var(name, "11") };
-    assert_eq!(env_positive_usize(name, 7), (11, false));
-    unsafe { std::env::set_var(name, "0") };
-    assert_eq!(env_positive_usize(name, 7), (7, true));
-    unsafe { std::env::set_var(name, "invalid") };
-    assert_eq!(env_positive_usize(name, 7), (7, true));
-    unsafe { std::env::remove_var(name) };
-}
-
-#[test]
 fn flow_setup_timeout_defaults_and_accepts_override() {
     unsafe { std::env::remove_var("NOW_FLOW_SETUP_TIMEOUT") };
     assert_eq!(flow_setup_timeout(), Duration::from_secs(20));

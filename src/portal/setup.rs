@@ -8,21 +8,19 @@ use std::sync::atomic::AtomicU64;
 
 use anyhow::Result;
 use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    DEFAULT_RATE_LIMIT, Logger, OutboundDialer, SocksConfig, bind_udp_addrs, env_positive_usize,
-    init_dialer_ip, new_server_configs, query_first, rate_limit_bytes_per_second,
-    tcp_data_buf_size, udp_data_buf_size,
+    DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, OutboundDialer,
+    SocksConfig, bind_udp_addrs, init_dialer_ip, new_server_configs_with_reload_interval,
+    query_first, rate_limit_bytes_per_second,
 };
 use crate::protocol::Credentials;
 use crate::transport::{Buffers, RateLimiter, Stats};
 
 use super::listener::{configure_transport, format_endpoint_addr};
-use super::{
-    DEFAULT_ALPN, DEFAULT_QUIC_MAX_UDP_FLOWS, DEFAULT_QUIC_UDP_QUEUE_BYTES,
-    DEFAULT_TCP_IDLE_POOL_CONNECTIONS, NetworkMode, Portal, PortalInner, UdpFlowLimits, admission,
-};
+use super::{DEFAULT_ALPN, NetworkMode, Portal, PortalInner, UdpFlowLimits, admission};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
     "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "log",
@@ -42,6 +40,22 @@ impl Portal {
         parsed_url: Url,
         listen_host: Option<&str>,
         logger: Logger,
+    ) -> Result<Self> {
+        let lifecycle = Arc::new(Lifecycle::new(LifeMode::Portal));
+        lifecycle.transition(&logger, LifeState::Starting, LifeReason::Startup);
+        let result = Self::build(parsed_url, listen_host, logger.clone(), lifecycle.clone());
+        if result.is_err() {
+            lifecycle.transition(&logger, LifeState::Stopped, LifeReason::StartFailed);
+            logger.flush();
+        }
+        result
+    }
+
+    fn build(
+        parsed_url: Url,
+        listen_host: Option<&str>,
+        logger: Logger,
+        lifecycle: Arc<Lifecycle>,
     ) -> Result<Self> {
         if parsed_url.scheme() != "portal" {
             anyhow::bail!("portal::new: URL scheme must be portal");
@@ -66,6 +80,8 @@ impl Portal {
         }
         let credentials =
             Credentials::new(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
+        let runtime = super::config::PortalRuntimeConfig::from_env()
+            .map_err(|e| anyhow::anyhow!("portal::new: invalid runtime configuration: {e}"))?;
         let alpn = query
             .get("alpn")
             .cloned()
@@ -73,8 +89,13 @@ impl Portal {
         let network_mode =
             NetworkMode::from_url(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
         let (tls_mode, tls_server_config, mut quic_server_config) =
-            new_server_configs(&parsed_url, &alpn, logger.clone())
-                .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
+            new_server_configs_with_reload_interval(
+                &parsed_url,
+                &alpn,
+                runtime.reload_interval,
+                logger.clone(),
+            )
+            .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
 
         let host = listen_host.unwrap_or_else(|| parsed_url.host_str().unwrap_or_default());
         let endpoint_addr = format_endpoint_addr(host, port);
@@ -88,31 +109,15 @@ impl Portal {
         let rate_limit = parse_rate(&query, "rate")?;
         let etar_limit = parse_rate(&query, "etar")?;
 
-        configure_transport(&mut quic_server_config)?;
+        configure_transport(&mut quic_server_config, runtime.udp_idle_timeout)?;
 
         let read_bps = rate_limit_bytes_per_second(rate_limit) as i64;
         let write_bps = rate_limit_bytes_per_second(etar_limit) as i64;
         let rate_limiter = RateLimiter::new(read_bps, write_bps).map(Arc::new);
         let udp_flow_limits = UdpFlowLimits {
-            max_flows: read_positive_env(
-                "NOW_QUIC_MAX_UDP_FLOWS",
-                DEFAULT_QUIC_MAX_UDP_FLOWS,
-                u32::MAX as usize,
-                &logger,
-            ),
-            queue_bytes: read_positive_env(
-                "NOW_QUIC_UDP_QUEUE_BYTES",
-                DEFAULT_QUIC_UDP_QUEUE_BYTES,
-                Semaphore::MAX_PERMITS.min(u32::MAX as usize),
-                &logger,
-            ),
+            max_flows: runtime.max_udp_flows,
+            queue_bytes: runtime.udp_queue_bytes,
         };
-        let tcp_idle_pool_connections = read_positive_env(
-            "NOW_TCP_IDLE_POOL_CONNS",
-            DEFAULT_TCP_IDLE_POOL_CONNECTIONS,
-            Semaphore::MAX_PERMITS,
-            &logger,
-        );
 
         Ok(Self {
             inner: Arc::new(PortalInner {
@@ -127,10 +132,13 @@ impl Portal {
                 rate_limit,
                 etar_limit,
                 logger,
+                lifecycle,
+                drain: CancellationToken::new(),
+                runtime,
                 stats: Arc::new(Stats::default()),
                 pool_active: AtomicU64::new(0),
-                tcp_idle_pool_budget: Arc::new(Semaphore::new(tcp_idle_pool_connections)),
-                buffers: Buffers::new(tcp_data_buf_size(), udp_data_buf_size()),
+                tcp_idle_pool_budget: Arc::new(Semaphore::new(runtime.tcp_idle_pool_connections)),
+                buffers: Buffers::new(runtime.tcp_data_buf_size, runtime.udp_data_buf_size),
                 rate_limiter,
                 udp_flow_limits,
                 tls_server_config,
@@ -138,8 +146,12 @@ impl Portal {
                 unauthenticated_admission: Arc::new(admission::UnauthenticatedAdmission::new()),
                 pairing: Arc::new(super::pairing::PairingRegistry::new(
                     udp_flow_limits.max_flows,
+                    runtime.max_pending_pairs,
+                    runtime.flow_pair_timeout,
                 )),
-                flow_tasks: Arc::new(super::tasks::FlowTaskTracker::default()),
+                ready_gate: super::tasks::ReadyGate::default(),
+                connection_tasks: Arc::new(super::tasks::FlowTaskTracker::default()),
+                relay_tasks: Arc::new(super::tasks::FlowTaskTracker::default()),
             }),
         })
     }
@@ -199,15 +211,4 @@ fn parse_rate(query: &std::collections::HashMap<String, String>, name: &str) -> 
             .filter(|value| *value >= 0)
             .ok_or_else(|| anyhow::anyhow!("invalid {name} rate limit"))
     })
-}
-
-fn read_positive_env(name: &str, default_value: usize, max_value: usize, logger: &Logger) -> usize {
-    let (value, invalid) = env_positive_usize(name, default_value);
-    if invalid || value > max_value {
-        logger.warn(format_args!(
-            "portal::new: invalid {name}; using default {default_value}"
-        ));
-        return default_value;
-    }
-    value
 }

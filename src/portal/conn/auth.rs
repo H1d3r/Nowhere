@@ -10,7 +10,6 @@ use quinn::{Connection, RecvStream, SendStream, VarInt};
 use tokio::time::{Instant, sleep_until};
 use tokio_util::sync::CancellationToken;
 
-use crate::common::handshake_timeout;
 use crate::protocol::{AuthTransport, read_auth_frame};
 
 use super::session::PortalSession;
@@ -74,6 +73,7 @@ pub(super) async fn authenticate_connection(
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return AuthenticationOutcome::Shutdown,
+            _ = portal.drain.cancelled() => return AuthenticationOutcome::Shutdown,
             _ = sleep_until(deadline) => {
                 return AuthenticationOutcome::Failure(auth_error.unwrap_or_else(|| {
                     anyhow::anyhow!(
@@ -89,7 +89,12 @@ pub(super) async fn authenticate_connection(
                         // be installed: poll until Quinn reports no queued
                         // DATAGRAM. Unlike the old bounded drain, an arbitrary
                         // pre-auth backlog can never leak into a READY flow.
-                        match drain_pre_auth_datagrams(&conn, deadline, shutdown).await {
+                        match drain_pre_auth_datagrams(
+                            &conn,
+                            deadline,
+                            shutdown,
+                            &portal.drain,
+                        ).await {
                             PreAuthDrainOutcome::Complete => {}
                             PreAuthDrainOutcome::Deadline => {
                                 return AuthenticationOutcome::Failure(anyhow::anyhow!(
@@ -140,6 +145,7 @@ async fn drain_pre_auth_datagrams(
     conn: &Connection,
     deadline: Instant,
     shutdown: &CancellationToken,
+    drain: &CancellationToken,
 ) -> PreAuthDrainOutcome {
     let waker = Waker::from(Arc::new(DatagramDrainWake));
     let mut drained = 0usize;
@@ -153,7 +159,7 @@ async fn drain_pre_auth_datagrams(
         match polled {
             Poll::Ready(Ok(_)) => {
                 drained += 1;
-                if shutdown.is_cancelled() {
+                if shutdown.is_cancelled() || drain.is_cancelled() {
                     return PreAuthDrainOutcome::Shutdown;
                 }
                 if Instant::now() >= deadline {
@@ -169,17 +175,19 @@ async fn drain_pre_auth_datagrams(
 }
 
 /// Returns the fixed absolute authentication deadline.
-pub(super) fn authentication_deadline() -> Instant {
-    Instant::now() + handshake_timeout()
+pub(super) fn authentication_deadline(handshake_timeout: std::time::Duration) -> Instant {
+    Instant::now() + handshake_timeout
 }
 
 /// Waits for the same auth deadline after a failed auth read.
 pub(super) async fn wait_for_auth_deadline(
     deadline: Instant,
     shutdown: &CancellationToken,
+    drain: &CancellationToken,
 ) -> bool {
     tokio::select! {
         _ = sleep_until(deadline) => true,
         _ = shutdown.cancelled() => false,
+        _ = drain.cancelled() => false,
     }
 }

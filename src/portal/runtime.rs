@@ -1,58 +1,177 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Portal runtime orchestration and shutdown handling.
+//! Portal runtime orchestration, listener supervision, and bounded flow drain.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use quinn::{Endpoint, VarInt};
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
-use crate::common::shutdown_timeout;
+use crate::common::{LifeReason, LifeState, ShutdownSignals};
 
 use super::listener::{accept_endpoint_loop, accept_tcp_loop, listen_endpoint, listen_tcp};
 use super::{Portal, event};
 
-impl Portal {
-    /// Starts listeners, event reporting, and graceful shutdown handling.
-    pub async fn run(self) -> Result<()> {
-        let shutdown = CancellationToken::new();
-        let endpoints = self.listen_endpoints()?;
-        let tcp_listeners = self.listen_tcp_listeners()?;
-        self.log_info("starting");
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ShutdownOutcome {
+    Drained,
+    Timeout,
+    Forced,
+}
 
-        let mut runtime_tasks = JoinSet::new();
-        runtime_tasks.spawn(event::event_loop(self.inner.clone(), shutdown.clone()));
+impl ShutdownOutcome {
+    fn life_reason(self) -> LifeReason {
+        match self {
+            Self::Drained => LifeReason::Drained,
+            Self::Timeout => LifeReason::Timeout,
+            Self::Forced => LifeReason::Forced,
+        }
+    }
+}
+
+struct ShutdownTrigger {
+    reason: LifeReason,
+    failure: Option<anyhow::Error>,
+}
+
+impl Portal {
+    /// Starts listeners, supervises them, and drains READY relays on shutdown.
+    pub async fn run(self) -> Result<()> {
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Starting,
+            LifeReason::Startup,
+        );
+
+        let mut signals = match ShutdownSignals::new()
+            .context("portal::run: failed to install shutdown signal handlers")
+        {
+            Ok(signals) => signals,
+            Err(error) => return self.start_failed(error),
+        };
+        let endpoints = match self.listen_endpoints() {
+            Ok(endpoints) => endpoints,
+            Err(error) => return self.start_failed(error),
+        };
+        let tcp_listeners = match self.listen_tcp_listeners() {
+            Ok(listeners) => listeners,
+            Err(error) => return self.start_failed(error),
+        };
+
+        self.log_info("starting");
+        let stop_accepting = CancellationToken::new();
+        let force_shutdown = CancellationToken::new();
+
+        let mut quic_listeners = JoinSet::new();
         for endpoint in endpoints.iter().cloned() {
             let portal = self.inner.clone();
-            let child_shutdown = shutdown.clone();
-            runtime_tasks.spawn(async move {
-                accept_endpoint_loop(portal, endpoint, child_shutdown).await;
+            let stop_accepting = stop_accepting.clone();
+            let force_shutdown = force_shutdown.clone();
+            quic_listeners.spawn(async move {
+                accept_endpoint_loop(portal, endpoint, stop_accepting, force_shutdown).await;
             });
         }
+
+        let mut tcp_listener_tasks = JoinSet::new();
         for listener in tcp_listeners {
             let portal = self.inner.clone();
-            let child_shutdown = shutdown.clone();
-            runtime_tasks.spawn(async move {
-                accept_tcp_loop(portal, listener, child_shutdown).await;
+            let stop_accepting = stop_accepting.clone();
+            let force_shutdown = force_shutdown.clone();
+            tcp_listener_tasks.spawn(async move {
+                accept_tcp_loop(portal, listener, stop_accepting, force_shutdown).await;
             });
         }
 
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                shutdown.cancel();
-            }
-            _ = shutdown.cancelled() => {}
-        }
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Ready,
+            LifeReason::Listening,
+        );
+        let mut auxiliary_tasks = JoinSet::new();
+        auxiliary_tasks.spawn(event::event_loop(
+            self.inner.clone(),
+            force_shutdown.clone(),
+        ));
 
-        let shutdown_deadline = Instant::now() + shutdown_timeout();
+        let trigger = tokio::select! {
+            signal = signals.recv() => match signal {
+                Ok(reason) => ShutdownTrigger { reason, failure: None },
+                Err(error) => ShutdownTrigger {
+                    reason: LifeReason::SigInt,
+                    failure: Some(error.context("portal::run: shutdown signal stream failed")),
+                },
+            },
+            result = quic_listeners.join_next(), if !quic_listeners.is_empty() => {
+                ShutdownTrigger {
+                    reason: LifeReason::QuicListenerExit,
+                    failure: Some(listener_exit_error("QUIC", result)),
+                }
+            },
+            result = tcp_listener_tasks.join_next(), if !tcp_listener_tasks.is_empty() => {
+                ShutdownTrigger {
+                    reason: LifeReason::TcpListenerExit,
+                    failure: Some(listener_exit_error("TCP", result)),
+                }
+            },
+        };
+
+        let deadline = Instant::now() + self.inner.runtime.shutdown_timeout;
+
+        // Establish the admission barrier before cancelling listeners. A flow
+        // that activated before this point is tracked; every later setup gets
+        // the v1 FLOW_LIMIT result through its authoritative downlink.
+        self.inner.pairing.close_admission();
+        self.inner.ready_gate.close();
+        self.inner.drain.cancel();
+        self.inner.relay_tasks.close();
+        for endpoint in &endpoints {
+            endpoint.set_server_config(None);
+        }
+        stop_accepting.cancel();
+        self.inner
+            .lifecycle
+            .transition(&self.inner.logger, LifeState::Draining, trigger.reason);
+
+        let drain = async {
+            self.inner.pairing.begin_drain().await;
+            self.inner.relay_tasks.wait().await;
+        };
+        let mut outcome = tokio::select! {
+            biased;
+            signal = signals.recv() => {
+                match signal {
+                    Ok(_) => ShutdownOutcome::Forced,
+                    Err(error) => {
+                        self.inner.logger.error(format_args!(
+                            "portal::run: shutdown signal stream failed during drain: {error}"
+                        ));
+                        ShutdownOutcome::Forced
+                    }
+                }
+            }
+            result = timeout_at(deadline, drain) => match result {
+                Ok(()) => ShutdownOutcome::Drained,
+                Err(_) => ShutdownOutcome::Timeout,
+            }
+        };
+
+        // No new setup is possible now. End physical carriers and auxiliary
+        // work; READY relays have either completed or are being forced below.
+        force_shutdown.cancel();
         for endpoint in &endpoints {
             endpoint.close(VarInt::from_u32(0), b"");
         }
-        self.inner.flow_tasks.close();
-        let _ = timeout_at(shutdown_deadline, self.inner.pairing.cancel_all()).await;
+        self.inner.connection_tasks.close();
+        if outcome != ShutdownOutcome::Drained {
+            self.inner.relay_tasks.abort_all();
+            self.inner.connection_tasks.abort_all();
+            quic_listeners.abort_all();
+            tcp_listener_tasks.abort_all();
+            auxiliary_tasks.abort_all();
+        }
 
         let mut endpoint_tasks = JoinSet::new();
         for endpoint in &endpoints {
@@ -61,33 +180,67 @@ impl Portal {
                 endpoint.wait_idle().await;
             });
         }
-        let graceful = timeout_at(shutdown_deadline, async {
+
+        let cleanup = async {
+            self.inner.pairing.cancel_all().await;
             while endpoint_tasks.join_next().await.is_some() {}
-            while runtime_tasks.join_next().await.is_some() {}
-            self.inner.flow_tasks.wait().await;
-        })
-        .await
-        .is_ok();
-        if !graceful {
+            while quic_listeners.join_next().await.is_some() {}
+            while tcp_listener_tasks.join_next().await.is_some() {}
+            while auxiliary_tasks.join_next().await.is_some() {}
+            self.inner.connection_tasks.wait().await;
+            self.inner.relay_tasks.wait().await;
+        };
+        let cleanup_deadline = if outcome == ShutdownOutcome::Forced {
+            Instant::now()
+        } else {
+            deadline
+        };
+        if timeout_at(cleanup_deadline, cleanup).await.is_err() {
+            if outcome == ShutdownOutcome::Drained {
+                outcome = ShutdownOutcome::Timeout;
+            }
             endpoint_tasks.abort_all();
-            runtime_tasks.abort_all();
-            self.inner.flow_tasks.abort_all();
+            quic_listeners.abort_all();
+            tcp_listener_tasks.abort_all();
+            auxiliary_tasks.abort_all();
+            self.inner.connection_tasks.abort_all();
+            self.inner.relay_tasks.abort_all();
             while endpoint_tasks.join_next().await.is_some() {}
-            while runtime_tasks.join_next().await.is_some() {}
-            self.inner.flow_tasks.wait().await;
+            while quic_listeners.join_next().await.is_some() {}
+            while tcp_listener_tasks.join_next().await.is_some() {}
+            while auxiliary_tasks.join_next().await.is_some() {}
+            self.inner.connection_tasks.wait().await;
+            self.inner.relay_tasks.wait().await;
+            self.inner.pairing.cancel_all().await;
         }
-        // Setup tasks that were already running when admission closed may have
-        // reached the registry after the first sweep.  No tracked ingress task
-        // remains here, so a final deterministic sweep closes that race.
-        self.inner.pairing.cancel_all().await;
+
         if let Some(rate) = &self.inner.rate_limiter {
             rate.reset();
         }
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Stopped,
+            outcome.life_reason(),
+        );
         self.inner
             .logger
             .info(format_args!("portal::run: portal shutdown complete"));
         self.inner.logger.flush();
-        Ok(())
+
+        match trigger.failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn start_failed(&self, error: anyhow::Error) -> Result<()> {
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Stopped,
+            LifeReason::StartFailed,
+        );
+        self.inner.logger.flush();
+        Err(error)
     }
 
     fn log_info(&self, prefix: &str) {
@@ -136,5 +289,18 @@ impl Portal {
             .copied()
             .map(listen_tcp)
             .collect()
+    }
+}
+
+fn listener_exit_error(
+    name: &str,
+    result: Option<std::result::Result<(), tokio::task::JoinError>>,
+) -> anyhow::Error {
+    match result {
+        Some(Ok(())) => anyhow::anyhow!("portal::run: {name} listener exited unexpectedly"),
+        Some(Err(error)) => {
+            anyhow::anyhow!("portal::run: {name} listener task failed: {error}")
+        }
+        None => anyhow::anyhow!("portal::run: {name} listener set became empty unexpectedly"),
     }
 }

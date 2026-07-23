@@ -18,7 +18,6 @@ use tokio::time::{timeout, timeout_at};
 use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::handshake_timeout;
 use crate::protocol::{
     AuthTransport, Carrier, FlowErrorCode, FlowKind, FlowResult, FlowRole, read_auth_frame,
     read_flow_header, read_request, write_flow_result,
@@ -57,7 +56,12 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
     }
     let local = stream.local_addr().ok();
     let acceptor = TlsAcceptor::from(portal.tls_server_config.clone());
-    let tls_stream = match timeout(handshake_timeout(), acceptor.accept(stream)).await {
+    let tls_stream = match tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return,
+        _ = portal.drain.cancelled() => return,
+        result = timeout(portal.runtime.handshake_timeout, acceptor.accept(stream)) => result,
+    } {
         Ok(Ok(stream)) => stream,
         Ok(Err(err)) => {
             if matches!(
@@ -76,7 +80,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
         }
         Err(_) => return,
     };
-    let auth_deadline = authentication_deadline();
+    let auth_deadline = authentication_deadline(portal.runtime.handshake_timeout);
     let mut tls_stream = tls_stream;
     let mut exporter = [0u8; 32];
     if let Err(err) = tls_stream.get_ref().1.export_keying_material(
@@ -91,6 +95,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
     }
     let auth = tokio::select! {
         _ = shutdown.cancelled() => return,
+        _ = portal.drain.cancelled() => return,
         result = timeout_at(
             auth_deadline,
             read_auth_frame(
@@ -107,7 +112,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
             session_id
         }
         Ok(Err(err)) => {
-            if !wait_for_auth_deadline(auth_deadline, &shutdown).await {
+            if !wait_for_auth_deadline(auth_deadline, &shutdown, &portal.drain).await {
                 return;
             }
             drop(tls_stream);
@@ -184,7 +189,7 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
     let flow_timeout = if pool_permit.is_some() {
         pool_ttl
     } else {
-        handshake_timeout()
+        portal.runtime.handshake_timeout
     };
     let header = match tokio::select! {
         result = timeout(flow_timeout, async {
@@ -228,8 +233,34 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
         return;
     }
     let target = if matches!(header.role, FlowRole::Open | FlowRole::Duplex) {
-        match timeout(handshake_timeout(), read_request(&mut recv)).await {
-            Ok(Ok(target)) => Some(target),
+        match tokio::select! {
+            result = timeout(portal.runtime.handshake_timeout, read_request(&mut recv)) => Some(result),
+            _ = shutdown.cancelled() => None,
+            _ = portal.drain.cancelled() => {
+                if header.role == FlowRole::Open {
+                    portal
+                        .pairing
+                        .reject_flow_setup(
+                            session_id,
+                            header.flow_id,
+                            FlowErrorCode::FlowLimit,
+                        )
+                        .await;
+                } else {
+                    let write = async {
+                        let _ = write_flow_result(
+                            &mut send,
+                            FlowResult::Reject(FlowErrorCode::FlowLimit),
+                        )
+                        .await;
+                        let _ = send.shutdown().await;
+                    };
+                    let _ = timeout(FLOW_REJECT_TIMEOUT, write).await;
+                }
+                return;
+            }
+        } {
+            Some(Ok(Ok(target))) => Some(target),
             _ => {
                 if header.role == FlowRole::Open {
                     portal
@@ -303,9 +334,10 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                 .await
             {
                 Ok(Some(paired)) => {
-                    portal
-                        .flow_tasks
-                        .spawn(super::relay::relay_paired_tcp(portal.clone(), paired));
+                    let relay = super::relay::relay_paired_tcp(portal.clone(), paired);
+                    if let Some(relay) = portal.relay_tasks.spawn_or_return(relay) {
+                        relay.await;
+                    }
                 }
                 Ok(None) => {}
                 Err(err) => portal.logger.debug(format_args!(
@@ -349,9 +381,10 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                 .await
             {
                 Ok(Some(paired)) => {
-                    portal
-                        .flow_tasks
-                        .spawn(super::relay::relay_paired_udp(portal.clone(), paired));
+                    let relay = super::relay::relay_paired_udp(portal.clone(), paired);
+                    if let Some(relay) = portal.relay_tasks.spawn_or_return(relay) {
+                        relay.await;
+                    }
                 }
                 Ok(None) => {}
                 Err(err) => portal.logger.debug(format_args!(

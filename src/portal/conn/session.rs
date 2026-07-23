@@ -17,7 +17,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::time::timeout;
 
-use crate::common::handshake_timeout;
 use crate::protocol::{
     Carrier, DatagramReassembler, FlowErrorCode, FlowKind, FlowResult, FlowRole, ReassemblyConfig,
     SessionId, read_flow_header, read_request, write_flow_result,
@@ -111,7 +110,7 @@ impl PortalSession {
         recv: RecvStream,
     ) {
         let mut recv = BufReader::new(recv);
-        match timeout(handshake_timeout(), recv.fill_buf()).await {
+        match timeout(self.portal.runtime.handshake_timeout, recv.fill_buf()).await {
             Ok(Ok([])) => {
                 let _ = send.finish();
                 return;
@@ -133,7 +132,12 @@ impl PortalSession {
         mut send: SendStream,
         mut recv: BufReader<RecvStream>,
     ) {
-        let header = match timeout(handshake_timeout(), read_flow_header(&mut recv)).await {
+        let header = match timeout(
+            self.portal.runtime.handshake_timeout,
+            read_flow_header(&mut recv),
+        )
+        .await
+        {
             Ok(Ok(header)) => header,
             Ok(Err(err)) => {
                 self.portal.logger.debug(format_args!(
@@ -162,7 +166,27 @@ impl PortalSession {
             return;
         }
         let target = if matches!(header.role, FlowRole::Open | FlowRole::Duplex) {
-            match timeout(handshake_timeout(), read_request(&mut recv)).await {
+            match tokio::select! {
+                result = timeout(
+                    self.portal.runtime.handshake_timeout,
+                    read_request(&mut recv),
+                ) => result,
+                _ = self.portal.drain.cancelled() => {
+                    if header.role == FlowRole::Open {
+                        self.portal
+                            .pairing
+                            .reject_flow_setup(
+                                self.session_id,
+                                header.flow_id,
+                                FlowErrorCode::FlowLimit,
+                            )
+                            .await;
+                    } else {
+                        reject_quic_control(&mut send, FlowErrorCode::FlowLimit).await;
+                    }
+                    return;
+                }
+            } {
                 Ok(Ok(target)) => Some(target),
                 _ => {
                     if header.role == FlowRole::Open {
@@ -199,9 +223,10 @@ impl PortalSession {
                     .await
                 {
                     Ok(Some(paired)) => {
-                        self.portal
-                            .flow_tasks
-                            .spawn(super::relay::relay_paired_tcp(self.portal.clone(), paired));
+                        let relay = super::relay::relay_paired_tcp(self.portal.clone(), paired);
+                        if let Some(relay) = self.portal.relay_tasks.spawn_or_return(relay) {
+                            relay.await;
+                        }
                     }
                     Ok(None) => {}
                     Err(err) => self.portal.logger.debug(format_args!(
@@ -254,9 +279,10 @@ impl PortalSession {
                     .await
                 {
                     Ok(Some(paired)) => {
-                        self.portal
-                            .flow_tasks
-                            .spawn(super::relay::relay_paired_udp(self.portal.clone(), paired));
+                        let relay = super::relay::relay_paired_udp(self.portal.clone(), paired);
+                        if let Some(relay) = self.portal.relay_tasks.spawn_or_return(relay) {
+                            relay.await;
+                        }
                     }
                     Ok(None) => {}
                     Err(err) => {

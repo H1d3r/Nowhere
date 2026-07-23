@@ -14,6 +14,7 @@ pub(in crate::portal) use self::session::QueuedDatagram;
 use std::sync::Arc;
 
 use quinn::{Connection, Incoming, VarInt};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use self::auth::{
@@ -23,7 +24,7 @@ use self::auth::{
 pub(super) use self::tcp::handle_tcp_incoming;
 use super::PortalInner;
 use super::admission::UnauthenticatedGuard;
-use crate::common::{quic_max_streams, rate_limit_bytes_per_second};
+use crate::common::rate_limit_bytes_per_second;
 
 pub(super) async fn handle_incoming(
     portal: Arc<PortalInner>,
@@ -31,14 +32,22 @@ pub(super) async fn handle_incoming(
     admission: UnauthenticatedGuard,
     shutdown: CancellationToken,
 ) {
-    let conn = match incoming.await {
-        Ok(conn) => conn,
-        Err(err) => {
-            portal.logger.error(format_args!(
-                "portal::conn::handle_incoming: failed to accept connection: {err}"
+    let conn = match tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return,
+        _ = portal.drain.cancelled() => return,
+        result = timeout(portal.runtime.handshake_timeout, incoming) => result,
+    } {
+        Ok(Ok(conn)) => conn,
+        Ok(Err(err)) => {
+            portal.logger.debug(format_args!(
+                "portal::conn::handle_incoming: QUIC TLS handshake failed: {err}"
             ));
             return;
         }
+        // Handshake timeouts are expected for abandoned or hostile clients.
+        // Keep them silent to avoid log amplification.
+        Err(_) => return,
     };
     handle_connection(portal, conn, admission, shutdown).await;
 }
@@ -50,7 +59,7 @@ async fn handle_connection(
     admission: UnauthenticatedGuard,
     shutdown: CancellationToken,
 ) {
-    let auth_deadline = authentication_deadline();
+    let auth_deadline = authentication_deadline(portal.runtime.handshake_timeout);
     let authenticated =
         match authenticate_connection(portal.clone(), conn.clone(), auth_deadline, &shutdown).await
         {
@@ -66,10 +75,15 @@ async fn handle_connection(
             }
             AuthenticationOutcome::Shutdown => return,
         };
+    if portal.drain.is_cancelled() {
+        conn.close(VarInt::from_u32(0), b"");
+        drop(admission);
+        return;
+    }
     // Once auth succeeds, expand the conservative pre-auth limits to the normal
     // data-plane limits and release the admission slot.
     conn.set_receive_window(VarInt::from_u32(super::listener::QUIC_RECEIVE_WINDOW));
-    conn.set_max_concurrent_bi_streams(VarInt::from_u32(quic_max_streams()));
+    conn.set_max_concurrent_bi_streams(VarInt::from_u32(portal.runtime.quic_max_streams));
     drop(admission);
     let session = authenticated.session;
     let link_replaced = CancellationToken::new();
@@ -93,7 +107,7 @@ async fn handle_connection(
 
     let datagram_task = tokio::spawn(session.clone().datagram_loop(shutdown.clone()));
     let first_session = session.clone();
-    let first_tasks = portal.flow_tasks.clone();
+    let first_tasks = portal.connection_tasks.clone();
     first_tasks.spawn(async move {
         first_session
             .handle_first_stream(authenticated.first_send, authenticated.first_recv)
@@ -113,7 +127,7 @@ async fn handle_connection(
                 match stream {
                     Ok((send, recv)) => {
                         let session = session.clone();
-                        let tasks = portal.flow_tasks.clone();
+                        let tasks = portal.connection_tasks.clone();
                         tasks.spawn(async move {
                             session.handle_stream(send, recv).await;
                         });
