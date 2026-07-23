@@ -77,5 +77,7 @@ the same nonempty value.
 
 ## Stop
 
-Send Ctrl-C or SIGINT. New work stops, pending pairs are cancelled, QUIC
-connections close, and active flow tasks drain until `NOW_SHUTDOWN_TIMEOUT`.
+Send Ctrl-C, SIGINT, or SIGTERM. Portal rejects unready and new flows while
+already-READY relays drain until the single `NOW_SHUTDOWN_TIMEOUT` deadline.
+Send a second signal to force shutdown. Vector closes its local and remote work
+immediately, bounded by the same timeout.

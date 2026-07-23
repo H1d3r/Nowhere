@@ -44,6 +44,23 @@ DEBUG additionally emits carrier state:
 LINK_STATUS|TCP=0|UDP=0|PAIRS=0|UPTCP=0|UPUDP=0|DOWNTCP=0|DOWNUDP=0
 ```
 
+Portal and Vector also emit transition-only lifecycle records:
+
+```text
+LIFE_STATUS|MODE=PORTAL|STATE=STARTING|REASON=STARTUP
+LIFE_STATUS|MODE=PORTAL|STATE=READY|REASON=LISTENING
+LIFE_STATUS|MODE=PORTAL|STATE=DRAINING|REASON=SIGTERM
+LIFE_STATUS|MODE=PORTAL|STATE=STOPPED|REASON=DRAINED
+```
+
+`MODE` is `PORTAL` or `VECTOR`. Portal draining reasons are `SIGINT`,
+`SIGTERM`, `TCP_LISTENER_EXIT`, and `QUIC_LISTENER_EXIT`; its stopped reasons
+are `DRAINED`, `TIMEOUT`, `FORCED`, and `START_FAILED`. Vector uses
+`SOCKS_LISTENER_EXIT` while draining and `CLEANUP_COMPLETE`, `TIMEOUT`,
+`FORCED`, or `START_FAILED` when stopped. Vector `READY` means that every local
+SOCKS listener is bound; it does not probe Portal. Lifecycle records use the
+EVENT channel and, like all output, are suppressed by `log=none`.
+
 Access paths use matching `starting` and `complete` messages. They include the
 selected upload and download carriers plus client, relay, and target endpoints,
 but never shared keys or SOCKS passwords.
@@ -70,6 +87,11 @@ The logical session ID remains stable across QUIC reconnects. Portal admits one
 current QUIC carrier for that session and cancels state owned by a displaced
 connection instead of moving live flows between connections.
 
+Portal applies `NOW_HANDSHAKE_TIMEOUT` independently to QUIC TLS negotiation
+and to v1 authentication, so one phase cannot consume the other's budget.
+Abandoned handshake timeouts are silent; non-timeout negotiation failures are
+available at DEBUG level.
+
 ## Limits and Rate Control
 
 `rate` applies client-to-target and `etar` applies target-to-client. Portal and
@@ -94,7 +116,14 @@ requires an exact leaf-certificate SHA-256 match.
 
 ## Graceful Shutdown
 
-On Ctrl-C, listeners and reconnect loops stop, QUIC endpoints send close,
-pending pairs are cancelled, and active tasks drain for
-`NOW_SHUTDOWN_TIMEOUT`. At the deadline, remaining tasks are aborted and pool,
-flow, queue, and rate-limit state is released.
+SIGINT and SIGTERM initiate shutdown. Portal first stops physical admission and
+rejects pending or newly requested v1 flows with `FLOW_LIMIT`. Relays that have
+already committed `READY` continue until they finish or the single absolute
+`NOW_SHUTDOWN_TIMEOUT` deadline expires. A second signal forces immediate
+cleanup. A TCP or QUIC listener task exiting unexpectedly follows the same
+drain path and makes Portal return an error after cleanup.
+
+Vector performs fast cleanup rather than flow draining: it closes the SOCKS
+listeners, local client work, pool maintenance, and remote carriers. A SOCKS
+listener task exiting unexpectedly is fatal. The periodic EVENT task is
+auxiliary in both modes and is not treated as a listener failure.
