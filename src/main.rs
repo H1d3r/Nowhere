@@ -112,7 +112,7 @@ Environment:
   NOW_UDP_DIAL_TIMEOUT      UDP target dial timeout.
   NOW_TCP_READ_TIMEOUT      TCP half-close grace timeout.
   NOW_UDP_IDLE_TIMEOUT      QUIC and DATAGRAM/UoT flow idle timeout.
-  NOW_HANDSHAKE_TIMEOUT     Authentication and request-write deadline.
+  NOW_HANDSHAKE_TIMEOUT     Per-phase TLS, authentication, and request deadline.
   NOW_REPORT_INTERVAL       Local CHECK_POINT and LINK_STATUS report interval.
   NOW_SERVICE_COOLDOWN      Transport reconnect retry delay.
   NOW_SHUTDOWN_TIMEOUT      Graceful shutdown wait.

@@ -139,8 +139,15 @@ local host.
 | `NOW_UDP_DIAL_TIMEOUT` | `15s` | UDP target setup deadline |
 | `NOW_TCP_READ_TIMEOUT` | `30s` | Opposite-half TCP drain grace |
 | `NOW_UDP_IDLE_TIMEOUT` | `2m` | UDP flow and association target idle timeout |
-| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Authentication and request-write deadline |
+| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Per-phase TLS, authentication, and request deadline |
 | `NOW_REPORT_INTERVAL` | `5s` | CHECK_POINT and LINK_STATUS interval |
 | `NOW_SERVICE_COOLDOWN` | `3s` | Carrier reconnect delay |
 | `NOW_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown deadline |
 | `NOW_RELOAD_INTERVAL` | `1h` | PEM certificate reload interval |
+
+Portal reads every variable it consumes into one typed startup snapshot. A
+present Portal value that is malformed, zero where a positive value is
+required, outside the implementation limit, or too large for its target type
+fails startup; it is never silently replaced with a default. Later environment
+changes do not alter a running Portal. Vector keeps its existing configuration
+behavior.
