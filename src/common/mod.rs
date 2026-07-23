@@ -5,6 +5,7 @@
 
 mod config;
 mod datagram;
+mod lifecycle;
 mod logger;
 mod network;
 pub(crate) mod socks;
@@ -20,6 +21,7 @@ pub use config::{
 pub(crate) use datagram::{
     BudgetedDatagram, UdpDatagramSend, reserve_udp_budget, send_quic_udp_packet,
 };
+pub(crate) use lifecycle::{LifeMode, LifeReason, LifeState, Lifecycle, ShutdownSignals};
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
 pub(crate) use socks::{OutboundDialer, SocksConfig};
