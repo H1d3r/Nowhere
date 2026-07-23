@@ -22,8 +22,8 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    Logger, quic_max_streams, rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size,
-    udp_data_buf_size,
+    LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals, quic_max_streams,
+    rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size, udp_data_buf_size,
 };
 use crate::protocol::{Credentials, SESSION_ID_LEN};
 use crate::transport::{Buffers, RateLimiter, Stats};
@@ -43,6 +43,7 @@ pub struct Vector {
 pub(super) struct VectorInner {
     config: VectorConfig,
     logger: Logger,
+    lifecycle: Arc<Lifecycle>,
     stats: Arc<Stats>,
     buffers: Buffers,
     rate_limiter: Option<Arc<RateLimiter>>,
@@ -59,6 +60,17 @@ pub(super) struct VectorInner {
 impl Vector {
     /// Validates a `vector://` URL and prepares client transport state.
     pub fn new(parsed_url: Url, logger: Logger) -> Result<Self> {
+        let lifecycle = Arc::new(Lifecycle::new(LifeMode::Vector));
+        lifecycle.transition(&logger, LifeState::Starting, LifeReason::Startup);
+        let result = Self::build(parsed_url, logger.clone(), lifecycle.clone());
+        if result.is_err() {
+            lifecycle.transition(&logger, LifeState::Stopped, LifeReason::StartFailed);
+            logger.flush();
+        }
+        result
+    }
+
+    fn build(parsed_url: Url, logger: Logger, lifecycle: Arc<Lifecycle>) -> Result<Self> {
         let config = VectorConfig::from_url(&parsed_url)
             .context("vector::Vector::new: invalid Vector configuration")?;
         let credentials =
@@ -100,6 +112,7 @@ impl Vector {
             inner: Arc::new(VectorInner {
                 config,
                 logger,
+                lifecycle,
                 stats,
                 buffers: Buffers::new(tcp_data_buf_size(), udp_data_buf_size()),
                 rate_limiter,
@@ -117,8 +130,24 @@ impl Vector {
 
     /// Runs SOCKS listeners, transport maintenance, telemetry, and graceful shutdown.
     pub async fn run(self) -> Result<()> {
-        let listeners = socks::listen(&self.inner.config.socks.host, self.inner.config.socks.port)
-            .context("vector::Vector::run: failed to open SOCKS listener")?;
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Starting,
+            LifeReason::Startup,
+        );
+        let mut signals = match ShutdownSignals::new()
+            .context("vector::Vector::run: failed to install shutdown signal handlers")
+        {
+            Ok(signals) => signals,
+            Err(error) => return self.start_failed(error),
+        };
+        let listeners =
+            match socks::listen(&self.inner.config.socks.host, self.inner.config.socks.port)
+                .context("vector::Vector::run: failed to open SOCKS listener")
+            {
+                Ok(listeners) => listeners,
+                Err(error) => return self.start_failed(error),
+            };
         self.inner.logger.info(format_args!(
             "vector::Vector::run: starting: {}",
             self.inner.config.effective_url()
@@ -129,53 +158,123 @@ impl Vector {
             ));
         }
 
-        let mut tasks = JoinSet::new();
-        tasks.spawn(event::event_loop(
-            self.inner.clone(),
-            self.inner.shutdown.clone(),
-        ));
-        if self.inner.config.pool != 0 {
-            tasks.spawn(
-                self.inner
-                    .tls_pool
-                    .clone()
-                    .maintain(self.inner.shutdown.clone()),
-            );
-        }
+        let mut listener_tasks = JoinSet::new();
         for listener in listeners {
-            tasks.spawn(socks::serve_listener(
+            listener_tasks.spawn(socks::serve_listener(
                 self.inner.clone(),
                 listener,
                 self.inner.shutdown.clone(),
             ));
         }
 
-        tokio::select! {
-            result = tokio::signal::ctrl_c() => {
-                result.context("vector::Vector::run: failed to install Ctrl-C handler")?;
-            }
-            _ = self.inner.shutdown.cancelled() => {}
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Ready,
+            LifeReason::Listening,
+        );
+        let mut auxiliary_tasks = JoinSet::new();
+        auxiliary_tasks.spawn(event::event_loop(
+            self.inner.clone(),
+            self.inner.shutdown.clone(),
+        ));
+        if self.inner.config.pool != 0 {
+            auxiliary_tasks.spawn(
+                self.inner
+                    .tls_pool
+                    .clone()
+                    .maintain(self.inner.shutdown.clone()),
+            );
         }
+
+        let (reason, failure) = tokio::select! {
+            signal = signals.recv() => match signal {
+                Ok(reason) => (reason, None),
+                Err(error) => (
+                    LifeReason::SigInt,
+                    Some(error.context("vector::Vector::run: shutdown signal stream failed")),
+                ),
+            },
+            result = listener_tasks.join_next(), if !listener_tasks.is_empty() => (
+                LifeReason::SocksListenerExit,
+                Some(vector_listener_exit_error(result)),
+            ),
+        };
         self.inner.shutdown.cancel();
         let deadline = Instant::now() + shutdown_timeout();
-        if timeout_at(deadline, async {
-            while tasks.join_next().await.is_some() {}
-        })
-        .await
-        .is_err()
-        {
-            tasks.abort_all();
-            while tasks.join_next().await.is_some() {}
+        self.inner
+            .lifecycle
+            .transition(&self.inner.logger, LifeState::Draining, reason);
+
+        let cleanup = async {
+            while listener_tasks.join_next().await.is_some() {}
+            while auxiliary_tasks.join_next().await.is_some() {}
+            self.inner.quic.close(deadline).await;
+        };
+        let outcome = tokio::select! {
+            biased;
+            signal = signals.recv() => {
+                if let Err(error) = signal {
+                    self.inner.logger.error(format_args!(
+                        "vector::Vector::run: shutdown signal stream failed during cleanup: {error}"
+                    ));
+                }
+                LifeReason::Forced
+            }
+            result = timeout_at(deadline, cleanup) => match result {
+                Ok(()) => LifeReason::CleanupComplete,
+                Err(_) => LifeReason::Timeout,
+            }
+        };
+        if outcome != LifeReason::CleanupComplete {
+            listener_tasks.abort_all();
+            auxiliary_tasks.abort_all();
+            while listener_tasks.join_next().await.is_some() {}
+            while auxiliary_tasks.join_next().await.is_some() {}
+            let close_deadline = if outcome == LifeReason::Forced {
+                Instant::now()
+            } else {
+                deadline
+            };
+            self.inner.quic.close(close_deadline).await;
         }
-        self.inner.quic.close(deadline).await;
         if let Some(rate) = &self.inner.rate_limiter {
             rate.reset();
         }
+        self.inner
+            .lifecycle
+            .transition(&self.inner.logger, LifeState::Stopped, outcome);
         self.inner.logger.info(format_args!(
             "vector::Vector::run: Vector shutdown complete"
         ));
         self.inner.logger.flush();
-        Ok(())
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn start_failed(&self, error: anyhow::Error) -> Result<()> {
+        self.inner.lifecycle.transition(
+            &self.inner.logger,
+            LifeState::Stopped,
+            LifeReason::StartFailed,
+        );
+        self.inner.logger.flush();
+        Err(error)
+    }
+}
+
+fn vector_listener_exit_error(
+    result: Option<std::result::Result<(), tokio::task::JoinError>>,
+) -> anyhow::Error {
+    match result {
+        Some(Ok(())) => anyhow::anyhow!("vector::Vector::run: SOCKS listener exited unexpectedly"),
+        Some(Err(error)) => {
+            anyhow::anyhow!("vector::Vector::run: SOCKS listener task failed: {error}")
+        }
+        None => {
+            anyhow::anyhow!("vector::Vector::run: SOCKS listener set became empty unexpectedly")
+        }
     }
 }
 
