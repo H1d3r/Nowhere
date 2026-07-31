@@ -64,3 +64,18 @@ fn flow_setup_timeout_defaults_and_accepts_override() {
     assert_eq!(flow_setup_timeout(), Duration::from_millis(750));
     unsafe { std::env::remove_var("NOW_FLOW_SETUP_TIMEOUT") };
 }
+
+#[test]
+fn telemetry_interval_is_strictly_bounded() {
+    assert_eq!(
+        parse_telemetry_interval(None).unwrap(),
+        Duration::from_secs(1)
+    );
+    assert_eq!(
+        parse_telemetry_interval(Some("250ms")).unwrap(),
+        Duration::from_millis(250)
+    );
+    assert!(parse_telemetry_interval(Some("249ms")).is_err());
+    assert!(parse_telemetry_interval(Some("61s")).is_err());
+    assert!(parse_telemetry_interval(Some("soon")).is_err());
+}

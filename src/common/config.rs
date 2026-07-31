@@ -15,6 +15,12 @@ use url::Url;
 pub const DEFAULT_DIALER_IP: &str = "auto";
 /// Default disabled Mbps limit for inbound and outbound relay directions.
 pub const DEFAULT_RATE_LIMIT: i32 = 0;
+/// Default interval for structured TUI telemetry snapshots.
+pub const DEFAULT_TELEMETRY_INTERVAL: Duration = Duration::from_secs(1);
+/// Fastest supported structured telemetry cadence.
+pub const MIN_TELEMETRY_INTERVAL: Duration = Duration::from_millis(250);
+/// Slowest supported structured telemetry cadence.
+pub const MAX_TELEMETRY_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Parses the first value of each recognized URL query key without treating
 /// `+` as a space. Unknown keys and later duplicates are ignored.
@@ -136,6 +142,34 @@ pub fn flow_setup_timeout() -> Duration {
 /// Interval between event checkpoint log lines.
 pub fn report_interval() -> Duration {
     env_duration("NOW_REPORT_INTERVAL", Duration::from_secs(5))
+}
+
+/// Reads and strictly validates the structured TUI telemetry cadence.
+pub fn telemetry_interval() -> Result<Duration> {
+    let raw = match std::env::var("NOW_TELEMETRY_INTERVAL") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(raw)) => {
+            bail!("NOW_TELEMETRY_INTERVAL is not valid Unicode: {raw:?}")
+        }
+    };
+    parse_telemetry_interval(raw.as_deref())
+}
+
+fn parse_telemetry_interval(raw: Option<&str>) -> Result<Duration> {
+    let value = match raw {
+        Some(raw) => humantime::parse_duration(raw)
+            .with_context(|| format!("invalid NOW_TELEMETRY_INTERVAL={raw:?}"))?,
+        None => DEFAULT_TELEMETRY_INTERVAL,
+    };
+    if !(MIN_TELEMETRY_INTERVAL..=MAX_TELEMETRY_INTERVAL).contains(&value) {
+        bail!(
+            "NOW_TELEMETRY_INTERVAL must be in {}..={}",
+            humantime::format_duration(MIN_TELEMETRY_INTERVAL),
+            humantime::format_duration(MAX_TELEMETRY_INTERVAL)
+        );
+    }
+    Ok(value)
 }
 
 /// Delay used by service-side retry paths.

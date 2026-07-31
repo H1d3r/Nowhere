@@ -9,5 +9,6 @@ compile_error!("Nowhere supports Linux only");
 pub mod common;
 pub mod portal;
 pub mod protocol;
+pub(crate) mod telemetry;
 pub mod transport;
 pub mod vector;
