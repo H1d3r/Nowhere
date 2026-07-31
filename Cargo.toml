@@ -11,15 +11,20 @@ readme = "README.md"
 anyhow = "1.0"
 bytes = "1.11"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+crossterm = "0.29"
 getrandom = "0.3"
 hmac = "0.13"
 humantime = "2.3"
+libc = "0.2"
 percent-encoding = "2.3"
 quinn = { version = "0.11.9", default-features = false, features = ["bloom", "log", "runtime-tokio", "rustls-ring"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29", "layout-cache"] }
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "0.8"
 rustls-pemfile = "2.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sha2 = "0.11"
 socket2 = "0.6"
 subtle = "2.6"
