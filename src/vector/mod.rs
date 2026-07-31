@@ -23,9 +23,12 @@ use url::Url;
 
 use crate::common::{
     LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals, quic_max_streams,
-    rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size, udp_data_buf_size,
+    rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size, telemetry_interval,
+    udp_data_buf_size,
 };
 use crate::protocol::{Credentials, SESSION_ID_LEN};
+use crate::telemetry::TelemetryServer;
+use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
 
 use self::config::VectorConfig;
@@ -44,6 +47,8 @@ pub(super) struct VectorInner {
     config: VectorConfig,
     logger: Logger,
     lifecycle: Arc<Lifecycle>,
+    telemetry: Arc<TelemetryHub>,
+    telemetry_interval: std::time::Duration,
     stats: Arc<Stats>,
     buffers: Buffers,
     rate_limiter: Option<Arc<RateLimiter>>,
@@ -73,6 +78,8 @@ impl Vector {
     fn build(parsed_url: Url, logger: Logger, lifecycle: Arc<Lifecycle>) -> Result<Self> {
         let config = VectorConfig::from_url(&parsed_url)
             .context("vector::Vector::new: invalid Vector configuration")?;
+        let telemetry_interval =
+            telemetry_interval().context("vector::Vector::new: invalid NOW_TELEMETRY_INTERVAL")?;
         let credentials =
             Credentials::new(&parsed_url).context("vector::Vector::new: invalid shared key")?;
         let tls = ClientTls::new(&config)
@@ -81,6 +88,20 @@ impl Vector {
         getrandom::fill(&mut session_id).map_err(|error| {
             anyhow::anyhow!("vector::Vector::new: failed to generate logical session ID: {error}")
         })?;
+        let telemetry_summary = format!(
+            "portal={} up={} down={} pool={} socks={}",
+            config.portal_endpoint(),
+            config.up,
+            config.down,
+            config.pool,
+            config.socks.endpoint(),
+        );
+        let telemetry = TelemetryHub::for_current_process(
+            InstanceRole::Vector,
+            config.socks.endpoint(),
+            telemetry_summary,
+            telemetry_interval,
+        );
         let stats = Arc::new(Stats::default());
         let shutdown = CancellationToken::new();
         let tls_pool = TlsPool::new(
@@ -89,6 +110,7 @@ impl Vector {
             &credentials,
             session_id,
             stats.clone(),
+            telemetry.clone(),
         );
         let quic = QuicManager::new(
             config.clone(),
@@ -96,6 +118,7 @@ impl Vector {
             &credentials,
             session_id,
             stats.clone(),
+            telemetry.clone(),
             shutdown.clone(),
         );
         let tcp_limit = quic_max_streams().max(1) as usize;
@@ -107,12 +130,13 @@ impl Vector {
         let rate_limiter = RateLimiter::new(read_bps, write_bps).map(Arc::new);
         let udp_queue_bytes = crate::common::env_int("NOW_QUIC_UDP_QUEUE_BYTES", 4 * 1024 * 1024)
             .clamp(1, i32::MAX) as usize;
-
         Ok(Self {
             inner: Arc::new(VectorInner {
                 config,
                 logger,
                 lifecycle,
+                telemetry,
+                telemetry_interval,
                 stats,
                 buffers: Buffers::new(tcp_data_buf_size(), udp_data_buf_size()),
                 rate_limiter,
@@ -135,6 +159,10 @@ impl Vector {
             LifeState::Starting,
             LifeReason::Startup,
         );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Starting.to_string(),
+            LifeReason::Startup.to_string(),
+        );
         let mut signals = match ShutdownSignals::new()
             .context("vector::Vector::run: failed to install shutdown signal handlers")
         {
@@ -148,6 +176,20 @@ impl Vector {
                 Ok(listeners) => listeners,
                 Err(error) => return self.start_failed(error),
             };
+        let telemetry_shutdown = CancellationToken::new();
+        let mut telemetry_tasks: JoinSet<()> = JoinSet::new();
+        match TelemetryServer::bind(self.inner.telemetry.clone()) {
+            Ok(server) => {
+                telemetry_tasks.spawn(server.run(telemetry_shutdown.clone()));
+                telemetry_tasks.spawn(event::telemetry_loop(
+                    self.inner.clone(),
+                    telemetry_shutdown.clone(),
+                ));
+            }
+            Err(error) => self.inner.logger.warn(format_args!(
+                "vector::Vector::run: TUI telemetry unavailable; continuing without it: {error:#}"
+            )),
+        }
         self.inner.logger.info(format_args!(
             "vector::Vector::run: starting: {}",
             self.inner.config.effective_url()
@@ -171,6 +213,10 @@ impl Vector {
             &self.inner.logger,
             LifeState::Ready,
             LifeReason::Listening,
+        );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Ready.to_string(),
+            LifeReason::Listening.to_string(),
         );
         let mut auxiliary_tasks = JoinSet::new();
         auxiliary_tasks.spawn(event::event_loop(
@@ -204,6 +250,9 @@ impl Vector {
         self.inner
             .lifecycle
             .transition(&self.inner.logger, LifeState::Draining, reason);
+        self.inner
+            .telemetry
+            .set_lifecycle(LifeState::Draining.to_string(), reason.to_string());
 
         let cleanup = async {
             while listener_tasks.join_next().await.is_some() {}
@@ -243,6 +292,16 @@ impl Vector {
         self.inner
             .lifecycle
             .transition(&self.inner.logger, LifeState::Stopped, outcome);
+        self.inner
+            .telemetry
+            .set_lifecycle(LifeState::Stopped.to_string(), outcome.to_string());
+        let pool = self.inner.tls_pool.idle_count().await as u64;
+        self.inner
+            .telemetry
+            .capture_and_publish(&self.inner.stats, pool);
+        tokio::task::yield_now().await;
+        telemetry_shutdown.cancel();
+        while telemetry_tasks.join_next().await.is_some() {}
         self.inner.logger.info(format_args!(
             "vector::Vector::run: Vector shutdown complete"
         ));
@@ -258,6 +317,10 @@ impl Vector {
             &self.inner.logger,
             LifeState::Stopped,
             LifeReason::StartFailed,
+        );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Stopped.to_string(),
+            LifeReason::StartFailed.to_string(),
         );
         self.inner.logger.flush();
         Err(error)

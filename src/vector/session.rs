@@ -31,6 +31,7 @@ use crate::protocol::{
     OwnedUdpFrame, ReassemblyConfig, ReassemblyOutcome, SessionId, decode_udp_frame_owned,
     encode_auth_frame, encode_udp_close,
 };
+use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetryHub};
 use crate::transport::Stats;
 
 use super::config::VectorConfig;
@@ -87,17 +88,31 @@ impl TlsLane {
 
 pub(super) struct LinkGuard {
     stats: Arc<Stats>,
+    telemetry: Arc<TelemetryHub>,
     quic: bool,
 }
 
 impl LinkGuard {
-    fn new(stats: Arc<Stats>, quic: bool) -> Self {
+    fn new(stats: Arc<Stats>, telemetry: Arc<TelemetryHub>, quic: bool) -> Self {
         if quic {
             stats.link_udp.fetch_add(1, Ordering::Relaxed);
         } else {
             stats.link_tcp.fetch_add(1, Ordering::Relaxed);
         }
-        Self { stats, quic }
+        telemetry.emit_runtime(RuntimeEvent::new(
+            RuntimeLevel::Info,
+            RuntimeKind::Carrier,
+            if quic {
+                "QUIC carrier connected"
+            } else {
+                "TLS/TCP carrier connected"
+            },
+        ));
+        Self {
+            stats,
+            telemetry,
+            quic,
+        }
     }
 }
 
@@ -108,6 +123,15 @@ impl Drop for LinkGuard {
         } else {
             self.stats.link_tcp.fetch_sub(1, Ordering::Relaxed);
         }
+        self.telemetry.emit_runtime(RuntimeEvent::new(
+            RuntimeLevel::Info,
+            RuntimeKind::Carrier,
+            if self.quic {
+                "QUIC carrier disconnected"
+            } else {
+                "TLS/TCP carrier disconnected"
+            },
+        ));
     }
 }
 
@@ -118,6 +142,7 @@ pub(super) struct TlsPool {
     auth_key: AuthKey,
     session_id: SessionId,
     stats: Arc<Stats>,
+    telemetry: Arc<TelemetryHub>,
     idle: Mutex<VecDeque<TlsLane>>,
     preparing: AtomicU64,
     replenish: Notify,
@@ -130,6 +155,7 @@ impl TlsPool {
         credentials: &Credentials,
         session_id: SessionId,
         stats: Arc<Stats>,
+        telemetry: Arc<TelemetryHub>,
     ) -> Arc<Self> {
         Arc::new(Self {
             target: config.pool,
@@ -138,6 +164,7 @@ impl TlsPool {
             auth_key: credentials.auth_key,
             session_id,
             stats,
+            telemetry,
             idle: Mutex::new(VecDeque::with_capacity(config.pool)),
             preparing: AtomicU64::new(0),
             replenish: Notify::new(),
@@ -238,7 +265,7 @@ impl TlsPool {
             stream,
             pending_auth,
             created_at: Instant::now(),
-            _link: LinkGuard::new(self.stats.clone(), false),
+            _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), false),
         })
     }
 
@@ -272,6 +299,7 @@ pub(super) struct QuicManager {
     auth_key: AuthKey,
     session_id: SessionId,
     stats: Arc<Stats>,
+    telemetry: Arc<TelemetryHub>,
     state: Mutex<Option<Arc<QuicSession>>>,
     connect_lock: Mutex<()>,
     retry_after: Mutex<Option<Instant>>,
@@ -286,6 +314,7 @@ impl QuicManager {
         credentials: &Credentials,
         session_id: SessionId,
         stats: Arc<Stats>,
+        telemetry: Arc<TelemetryHub>,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -294,6 +323,7 @@ impl QuicManager {
             auth_key: credentials.auth_key,
             session_id,
             stats,
+            telemetry,
             state: Mutex::new(None),
             connect_lock: Mutex::new(()),
             retry_after: Mutex::new(None),
@@ -408,7 +438,7 @@ impl QuicManager {
             routes: StdMutex::new(HashMap::new()),
             reassembler: StdMutex::new(DatagramReassembler::new(reassembly_config)),
             queue_budget: Arc::new(Semaphore::new(self.queue_bytes)),
-            _link: LinkGuard::new(self.stats.clone(), true),
+            _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), true),
         });
         spawn_datagram_loop(Arc::downgrade(&session), self.shutdown.clone());
         Ok(session)

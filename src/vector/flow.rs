@@ -24,6 +24,7 @@ use crate::protocol::{
     FlowRole, SetupResult, TARGET_MAX_ENCODED_LEN, Target, encode_target_into, read_flow_result,
     write_flow_header,
 };
+use crate::telemetry::{AccessOutcome, AccessSpan, RuntimeEvent, RuntimeKind, RuntimeLevel};
 
 use super::VectorInner;
 use super::config::CarrierMode;
@@ -201,6 +202,7 @@ pub(super) async fn relay_tcp(
     mut tunnel: TcpTunnel,
     client_peer: std::net::SocketAddr,
     target: &SocksAddress,
+    access: AccessSpan,
 ) -> Result<()> {
     vector.stats.add_session(false);
     let _session = SessionGuard::new(vector.clone(), false);
@@ -214,56 +216,61 @@ pub(super) async fn relay_tcp(
         vector.config.socks.endpoint(),
     ));
 
-    let (mut client_read, mut client_write) = client.into_split();
-    let mut up_buffer = vector.buffers.get_tcp_buffer();
-    let mut down_buffer = vector.buffers.get_tcp_buffer();
-    let client_to_portal = async {
-        loop {
-            let read = client_read.read(&mut up_buffer).await?;
-            if read == 0 {
-                tunnel.writer.shutdown().await?;
-                return Ok::<(), anyhow::Error>(());
+    let result = {
+        let (mut client_read, mut client_write) = client.into_split();
+        let mut up_buffer = vector.buffers.get_tcp_buffer();
+        let mut down_buffer = vector.buffers.get_tcp_buffer();
+        let client_to_portal = async {
+            loop {
+                let read = client_read.read(&mut up_buffer).await?;
+                if read == 0 {
+                    tunnel.writer.shutdown().await?;
+                    return Ok::<(), anyhow::Error>(());
+                }
+                if let Some(rate) = &vector.rate_limiter {
+                    rate.wait_read(read as i64).await;
+                }
+                tunnel.writer.write_all(&up_buffer[..read]).await?;
+                access.add_upload(read as u64);
+                vector
+                    .stats
+                    .tcp_rx
+                    .fetch_add(read as u64, Ordering::Relaxed);
+                carrier_counter(&vector, tunnel.uplink, true)
+                    .fetch_add(read as u64, Ordering::Relaxed);
             }
-            if let Some(rate) = &vector.rate_limiter {
-                rate.wait_read(read as i64).await;
+        };
+        let portal_to_client = async {
+            loop {
+                let read = tunnel.reader.read(&mut down_buffer).await?;
+                if read == 0 {
+                    client_write.shutdown().await?;
+                    return Ok::<(), anyhow::Error>(());
+                }
+                if let Some(rate) = &vector.rate_limiter {
+                    rate.wait_write(read as i64).await;
+                }
+                client_write.write_all(&down_buffer[..read]).await?;
+                access.add_download(read as u64);
+                vector
+                    .stats
+                    .tcp_tx
+                    .fetch_add(read as u64, Ordering::Relaxed);
+                carrier_counter(&vector, tunnel.downlink, false)
+                    .fetch_add(read as u64, Ordering::Relaxed);
             }
-            tunnel.writer.write_all(&up_buffer[..read]).await?;
-            vector
-                .stats
-                .tcp_rx
-                .fetch_add(read as u64, Ordering::Relaxed);
-            carrier_counter(&vector, tunnel.uplink, true).fetch_add(read as u64, Ordering::Relaxed);
-        }
-    };
-    let portal_to_client = async {
-        loop {
-            let read = tunnel.reader.read(&mut down_buffer).await?;
-            if read == 0 {
-                client_write.shutdown().await?;
-                return Ok::<(), anyhow::Error>(());
-            }
-            if let Some(rate) = &vector.rate_limiter {
-                rate.wait_write(read as i64).await;
-            }
-            client_write.write_all(&down_buffer[..read]).await?;
-            vector
-                .stats
-                .tcp_tx
-                .fetch_add(read as u64, Ordering::Relaxed);
-            carrier_counter(&vector, tunnel.downlink, false)
-                .fetch_add(read as u64, Ordering::Relaxed);
-        }
-    };
-    tokio::pin!(client_to_portal);
-    tokio::pin!(portal_to_client);
-    let result = tokio::select! {
-        result = &mut client_to_portal => {
-            result?;
-            timeout(tcp_read_timeout(), &mut portal_to_client).await.unwrap_or(Ok(()))
-        }
-        result = &mut portal_to_client => {
-            result?;
-            timeout(tcp_read_timeout(), &mut client_to_portal).await.unwrap_or(Ok(()))
+        };
+        tokio::pin!(client_to_portal);
+        tokio::pin!(portal_to_client);
+        tokio::select! {
+            result = &mut client_to_portal => match result {
+                Ok(()) => timeout(tcp_read_timeout(), &mut portal_to_client).await.unwrap_or(Ok(())),
+                Err(error) => Err(error),
+            },
+            result = &mut portal_to_client => match result {
+                Ok(()) => timeout(tcp_read_timeout(), &mut client_to_portal).await.unwrap_or(Ok(())),
+                Err(error) => Err(error),
+            },
         }
     };
     vector.logger.debug(format_args!(
@@ -273,13 +280,30 @@ pub(super) async fn relay_tcp(
             Err(error) => error.to_string(),
         }
     ));
+    match &result {
+        Ok(()) => access.finish(AccessOutcome::Success, None),
+        Err(error) => {
+            let error = error.to_string();
+            access.finish(access_error_outcome(&error), Some(error));
+        }
+    }
     result
 }
 
 pub(super) async fn open_lane(vector: Arc<VectorInner>, mode: CarrierMode) -> Result<PhysicalLane> {
     match mode {
         CarrierMode::Tcp => {
-            let parts = vector.tls_pool.acquire().await?.into_parts();
+            let parts = match vector.tls_pool.acquire().await {
+                Ok(lane) => lane.into_parts(),
+                Err(error) => {
+                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                        RuntimeLevel::Warn,
+                        RuntimeKind::Reconnect,
+                        format!("TLS/TCP carrier connection failed: {error}"),
+                    ));
+                    return Err(error);
+                }
+            };
             Ok(PhysicalLane {
                 reader: Some(Box::pin(parts.reader)),
                 writer: Some(Box::pin(parts.writer)),
@@ -290,8 +314,28 @@ pub(super) async fn open_lane(vector: Arc<VectorInner>, mode: CarrierMode) -> Re
             })
         }
         CarrierMode::Udp => {
-            let session = vector.quic.get().await?;
-            let (writer, reader, pending_auth) = session.open_bi().await?;
+            let session = match vector.quic.get().await {
+                Ok(session) => session,
+                Err(error) => {
+                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                        RuntimeLevel::Warn,
+                        RuntimeKind::Reconnect,
+                        format!("QUIC carrier connection failed: {error}"),
+                    ));
+                    return Err(error);
+                }
+            };
+            let (writer, reader, pending_auth) = match session.open_bi().await {
+                Ok(stream) => stream,
+                Err(error) => {
+                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                        RuntimeLevel::Warn,
+                        RuntimeKind::Carrier,
+                        format!("QUIC carrier stream open failed: {error}"),
+                    ));
+                    return Err(error);
+                }
+            };
             let pending_quic_auth = pending_auth.is_some();
             Ok(PhysicalLane {
                 reader: Some(Box::pin(reader)),
@@ -432,6 +476,26 @@ impl OpenFlowError {
             Self::Transport(_) => REPLY_NETWORK_UNREACHABLE,
             Self::Protocol(_) => REPLY_GENERAL_FAILURE,
         }
+    }
+
+    pub(super) fn access_outcome(&self) -> AccessOutcome {
+        match self {
+            Self::Setup(SetupResult::InvalidRequest | SetupResult::FlowLimit) => {
+                AccessOutcome::Rejected
+            }
+            Self::Setup(SetupResult::PairTimeout) => AccessOutcome::Timeout,
+            Self::Setup(_) | Self::Transport(_) | Self::Protocol(_) => {
+                access_error_outcome(&self.to_string())
+            }
+        }
+    }
+}
+
+fn access_error_outcome(error: &str) -> AccessOutcome {
+    if error.to_ascii_lowercase().contains("timeout") {
+        AccessOutcome::Timeout
+    } else {
+        AccessOutcome::Error
     }
 }
 

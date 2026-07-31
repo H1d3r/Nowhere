@@ -43,7 +43,7 @@ pub(super) struct UdpTunnel {
 }
 
 impl UdpTunnel {
-    pub(super) async fn send(&mut self, payload: &[u8]) -> Result<()> {
+    pub(super) async fn send(&mut self, payload: &[u8]) -> Result<bool> {
         let delivered = if let Some(writer) = &mut self.writer {
             write_udp_packet(writer, payload).await?;
             true
@@ -56,7 +56,7 @@ impl UdpTunnel {
             bail!("vector::udp_flow::UdpTunnel::send: no uplink carrier");
         };
         if !delivered {
-            return Ok(());
+            return Ok(false);
         }
         self.vector
             .stats
@@ -64,7 +64,7 @@ impl UdpTunnel {
             .fetch_add(payload.len() as u64, Ordering::Relaxed);
         carrier_counter(&self.vector, self.uplink, true)
             .fetch_add(payload.len() as u64, Ordering::Relaxed);
-        Ok(())
+        Ok(true)
     }
 
     pub(super) async fn recv_into(

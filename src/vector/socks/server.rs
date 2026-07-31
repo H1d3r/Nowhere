@@ -24,9 +24,13 @@ use crate::common::socks::{
     authenticate, decode_udp_packet, encode_udp_packet_into, read_request, write_reply,
 };
 use crate::common::{bind_udp_addrs, env_int, handshake_timeout, udp_idle_timeout};
+use crate::telemetry::{
+    AccessOutcome, AccessSpan, AccessStart, RuntimeEvent, RuntimeKind, RuntimeLevel,
+    TrafficProtocol, now_unix_ms,
+};
 
 use super::super::VectorInner;
-use super::super::flow::{carrier_name, open_tcp, relay_tcp};
+use super::super::flow::{carrier, carrier_name, open_tcp, relay_tcp};
 use super::super::udp_flow::{UdpTunnel, open_udp};
 const TCP_LISTEN_BACKLOG: i32 = 1024;
 const SOCKS_UDP_PACKET_MAX: usize = u16::MAX as usize + 3 + 1 + 1 + 255 + 2;
@@ -66,6 +70,14 @@ pub(in crate::vector) async fn serve_listener(
             accepted = listener.accept() => match accepted {
                 Ok((stream, peer)) => {
                     let Ok(admission) = vector.socks_admission.clone().try_acquire_owned() else {
+                        vector.telemetry.emit_runtime(
+                            RuntimeEvent::new(
+                                RuntimeLevel::Warn,
+                                RuntimeKind::Listener,
+                                "SOCKS client limit exceeded",
+                            )
+                            .with_client(peer.to_string()),
+                        );
                         drop(stream);
                         continue;
                     };
@@ -81,6 +93,11 @@ pub(in crate::vector) async fn serve_listener(
                     });
                 }
                 Err(error) => {
+                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                        RuntimeLevel::Error,
+                        RuntimeKind::Listener,
+                        format!("SOCKS accept failed: {error}"),
+                    ));
                     vector.logger.error(format_args!(
                         "vector::socks::serve_listener: accept failed: {error}"
                     ));
@@ -109,8 +126,32 @@ async fn handle_client(
         authenticate(&mut stream, credentials).await?;
         read_request(&mut stream).await
     })
-    .await
-    .map_err(|_| anyhow!("SOCKS5 handshake timeout"))??;
+    .await;
+    let request = match request {
+        Ok(Ok(request)) => request,
+        Ok(Err(error)) => {
+            vector.telemetry.emit_runtime(
+                RuntimeEvent::new(
+                    RuntimeLevel::Warn,
+                    RuntimeKind::Authentication,
+                    format!("SOCKS5 handshake failed: {error}"),
+                )
+                .with_client(peer.to_string()),
+            );
+            return Err(error);
+        }
+        Err(_) => {
+            vector.telemetry.emit_runtime(
+                RuntimeEvent::new(
+                    RuntimeLevel::Warn,
+                    RuntimeKind::Authentication,
+                    "SOCKS5 handshake timed out",
+                )
+                .with_client(peer.to_string()),
+            );
+            return Err(anyhow!("SOCKS5 handshake timeout"));
+        }
+    };
     match request.command {
         COMMAND_CONNECT => {
             if request.address.port() == 0 {
@@ -122,16 +163,23 @@ async fn handle_client(
                 .await?;
                 return Ok(());
             }
+            let access = start_access(
+                &vector,
+                TrafficProtocol::Tcp,
+                Some(peer.to_string()),
+                &request.address,
+            );
             match open_tcp(vector.clone(), &request.address).await {
                 Ok(tunnel) => {
                     let reply = tunnel.socks_reply();
                     write_reply(&mut stream, reply, &SocksAddress::unspecified()).await?;
                     tokio::select! {
-                        result = relay_tcp(vector, stream, tunnel, peer, &request.address) => result,
+                        result = relay_tcp(vector, stream, tunnel, peer, &request.address, access) => result,
                         _ = shutdown.cancelled() => Ok(()),
                     }
                 }
                 Err(error) => {
+                    access.finish(error.access_outcome(), Some(error.to_string()));
                     write_reply(
                         &mut stream,
                         error.socks_reply(),
@@ -301,11 +349,17 @@ async fn open_and_relay_udp_target(
     outbound: mpsc::Receiver<QueuedLocalPacket>,
     shutdown: CancellationToken,
 ) {
+    let source = client_endpoint
+        .lock()
+        .unwrap_or_else(|lock| lock.into_inner())
+        .map(|endpoint| endpoint.to_string());
+    let access = start_access(&vector, TrafficProtocol::Udp, source, &target);
     let tunnel = tokio::select! {
         _ = shutdown.cancelled() => return,
         result = open_udp(vector.clone(), &target) => match result {
             Ok(tunnel) => tunnel,
             Err(error) => {
+                access.finish(error.access_outcome(), Some(error.to_string()));
                 vector.logger.debug(format_args!(
                     "vector::socks::open_and_relay_udp_target: target {target} failed: {error}"
                 ));
@@ -315,12 +369,15 @@ async fn open_and_relay_udp_target(
     };
     relay_udp_target(
         vector,
-        socket,
-        client_endpoint,
+        UdpClientSide {
+            socket,
+            endpoint: client_endpoint,
+        },
         target,
         tunnel,
         outbound,
         shutdown,
+        access,
     )
     .await;
 }
@@ -355,19 +412,25 @@ fn accept_udp_source(
     }
 }
 
+struct UdpClientSide {
+    socket: Arc<UdpSocket>,
+    endpoint: Arc<StdMutex<Option<SocketAddr>>>,
+}
+
 async fn relay_udp_target(
     vector: Arc<VectorInner>,
-    socket: Arc<UdpSocket>,
-    client_endpoint: Arc<StdMutex<Option<SocketAddr>>>,
+    client: UdpClientSide,
     target: SocksAddress,
     mut tunnel: UdpTunnel,
     mut outbound: mpsc::Receiver<QueuedLocalPacket>,
     shutdown: CancellationToken,
+    access: AccessSpan,
 ) {
     let mut inbound = Vec::with_capacity(u16::MAX as usize);
     let mut local_packet = vector.buffers.get_udp_buffer();
     local_packet.clear();
-    let source = client_endpoint
+    let source = client
+        .endpoint
         .lock()
         .unwrap_or_else(|lock| lock.into_inner())
         .map_or_else(|| "<unknown>".to_owned(), |endpoint| endpoint.to_string());
@@ -382,12 +445,13 @@ async fn relay_udp_target(
     ));
     let idle = tokio::time::sleep_until(Instant::now() + udp_idle_timeout());
     tokio::pin!(idle);
-    loop {
+    let completion = loop {
         tokio::select! {
-            _ = shutdown.cancelled() => break,
-            _ = &mut idle => break,
+            _ = shutdown.cancelled() => break UdpCompletion::Cancelled,
+            _ = &mut idle => break UdpCompletion::Timeout,
             payload = outbound.recv() => {
-                let Some(payload) = payload else { break; };
+                let Some(payload) = payload else { break UdpCompletion::Success; };
+                let payload_len = payload.payload.len();
                 let sent = tokio::select! {
                     _ = shutdown.cancelled() => None,
                     _ = &mut idle => None,
@@ -398,13 +462,25 @@ async fn relay_udp_target(
                         tunnel.send(&payload.payload).await
                     } => Some(result),
                 };
-                if !matches!(sent, Some(Ok(()))) { break; }
+                match sent {
+                    Some(Ok(true)) => access.add_upload(payload_len as u64),
+                    Some(Ok(false)) => {}
+                    Some(Err(error)) => break UdpCompletion::Error(error.to_string()),
+                    None => break UdpCompletion::Cancelled,
+                }
                 idle.as_mut().reset(Instant::now() + udp_idle_timeout());
             }
             received = tunnel.recv_into(&mut inbound) => {
-                let Ok(Some(packet)) = received else { break; };
+                let packet = match received {
+                    Ok(Some(packet)) => packet,
+                    Ok(None) => break UdpCompletion::Success,
+                    Err(error) => break UdpCompletion::Error(error.to_string()),
+                };
                 let size = packet.len();
-                let endpoint = *client_endpoint.lock().unwrap_or_else(|lock| lock.into_inner());
+                let endpoint = *client
+                    .endpoint
+                    .lock()
+                    .unwrap_or_else(|lock| lock.into_inner());
                 let Some(endpoint) = endpoint else { continue; };
                 if encode_udp_packet_into(&mut local_packet, &target, packet.payload(&inbound)).is_err() {
                     continue;
@@ -416,18 +492,78 @@ async fn relay_udp_target(
                         if let Some(rate) = &vector.rate_limiter {
                             rate.wait_write(size as i64).await;
                         }
-                        socket.send_to(&local_packet, endpoint).await
+                        client.socket.send_to(&local_packet, endpoint).await
                     } => Some(result),
                 };
-                if !matches!(sent, Some(Ok(_))) { break; }
+                match sent {
+                    Some(Ok(_)) => access.add_download(size as u64),
+                    Some(Err(error)) => break UdpCompletion::Error(error.to_string()),
+                    None => break UdpCompletion::Cancelled,
+                }
                 idle.as_mut().reset(Instant::now() + udp_idle_timeout());
             }
         }
-    }
+    };
     tunnel.close().await;
     vector.logger.debug(format_args!(
         "vector::socks::relay_udp_target: transfer complete: target={target}"
     ));
+    match completion {
+        UdpCompletion::Success => access.finish(AccessOutcome::Success, None),
+        UdpCompletion::Cancelled => access.finish(AccessOutcome::Cancelled, None),
+        UdpCompletion::Timeout => {
+            access.finish(AccessOutcome::Timeout, Some("idle timeout".to_owned()));
+        }
+        UdpCompletion::Error(error) => {
+            let outcome = if error.to_ascii_lowercase().contains("timeout") {
+                AccessOutcome::Timeout
+            } else {
+                AccessOutcome::Error
+            };
+            access.finish(outcome, Some(error));
+        }
+    }
+}
+
+fn start_access(
+    vector: &Arc<VectorInner>,
+    protocol: TrafficProtocol,
+    client: Option<String>,
+    target: &SocksAddress,
+) -> AccessSpan {
+    let uplink = carrier(vector.config.up);
+    let downlink = carrier(vector.config.down);
+    let client_path = client.as_deref().unwrap_or("<unknown>");
+    let target = target.to_string();
+    let path = format!(
+        "UP[{}] {client_path} -> {} -> {} -> {target} | DOWN[{}] {target} -> {} -> {} -> {client_path}",
+        carrier_name(uplink),
+        vector.config.socks.endpoint(),
+        vector.config.portal_endpoint(),
+        carrier_name(downlink),
+        vector.config.portal_endpoint(),
+        vector.config.socks.endpoint(),
+    );
+    let path_peers = client.iter().cloned().collect();
+    vector.telemetry.start_access(AccessStart {
+        id: 0,
+        timestamp_ms: now_unix_ms(),
+        protocol,
+        flow_id: None,
+        client,
+        path_peers,
+        target: target.clone(),
+        uplink: Some(uplink),
+        downlink: Some(downlink),
+        path: Some(path),
+    })
+}
+
+enum UdpCompletion {
+    Success,
+    Cancelled,
+    Timeout,
+    Error(String),
 }
 
 struct QueuedLocalPacket {

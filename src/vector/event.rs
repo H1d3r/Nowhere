@@ -47,3 +47,17 @@ pub(super) async fn event_loop(vector: Arc<VectorInner>, shutdown: CancellationT
         }
     }
 }
+
+pub(super) async fn telemetry_loop(vector: Arc<VectorInner>, shutdown: CancellationToken) {
+    let mut interval = tokio::time::interval(vector.telemetry_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = interval.tick() => {
+                let pool = vector.tls_pool.idle_count().await as u64;
+                vector.telemetry.capture_and_publish(&vector.stats, pool);
+            }
+        }
+    }
+}
