@@ -4,6 +4,10 @@ Nowhere exposes two process roles and one wire contract. Process managers own
 the command URL and lifecycle; applications reach Vector through SOCKS5;
 protocol clients connect directly to Portal.
 
+The local read-only TUI discovers running processes through Linux abstract Unix
+telemetry sockets. This is an observational interface only: process managers
+remain responsible for configuration and lifecycle.
+
 ## Process Management
 
 A service manager should store the complete command URL outside the repository,

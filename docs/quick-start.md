@@ -2,7 +2,7 @@
 
 ## Build
 
-Nowhere uses stable Rust and the 2024 edition:
+Nowhere uses stable Rust and the 2024 edition and must be built for Linux:
 
 ```bash
 git clone https://github.com/NodePassProject/Nowhere.git

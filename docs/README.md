@@ -7,6 +7,9 @@ flows choose their upload and download carriers independently, while the native
 Vector client exposes the complete transport model through a local SOCKS5
 entry point.
 
+The project targets Linux exclusively and uses Linux process, signal, and
+abstract Unix-socket interfaces directly.
+
 ## System Map
 
 | Layer | Responsibility |

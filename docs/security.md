@@ -92,6 +92,22 @@ other hosts. Protect them with RFC1929 credentials and firewall rules.
 Portal outbound SOCKS failures never fall back to direct dialing. When proxying
 is configured, domain targets remain unresolved until they reach the proxy.
 
+## Local TUI Boundary
+
+Each running Portal or Vector exposes read-only structured telemetry through
+an abstract Unix socket. The service verifies the dashboard with
+`SO_PEERCRED`: an unprivileged process must have the same effective UID, while
+root may inspect all visible instances in the same PID and network namespaces.
+The dashboard also verifies the service UID, PID, and process start time before
+accepting its data.
+
+The socket carries no shared keys or SOCKS passwords, but it does expose target
+addresses, traffic counters, process metadata, and client addresses. Client
+masking is a dashboard presentation control; an authorized local process can
+still read the underlying telemetry. Treat root and same-UID processes as
+trusted operators, and use container namespaces when instances need stronger
+isolation.
+
 ## Deployment Checklist
 
 - Use a verified Vector `sni` or a securely distributed `pin` for public
@@ -102,3 +118,5 @@ is configured, domain targets remain unresolved until they reach the proxy.
 - Keep wildcard SOCKS listeners behind authentication and firewall policy.
 - Monitor CHECK_POINT, LINK_STATUS, authentication failures, and restarts.
 - Treat DEBUG access paths as sensitive operational metadata.
+- Treat the root TUI and direct same-UID telemetry access as trusted local
+  operations, not as a confidentiality boundary.

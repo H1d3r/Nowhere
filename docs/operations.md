@@ -65,6 +65,49 @@ Access paths use matching `starting` and `complete` messages. They include the
 selected upload and download carriers plus client, relay, and target endpoints,
 but never shared keys or SOCKS passwords.
 
+## Read-only TUI
+
+Run `nowhere` or `nowhere tui` from an interactive terminal. Each Portal and
+Vector publishes structured telemetry over a Linux abstract Unix socket;
+the dashboard never parses or captures stdout/stderr and cannot start, stop, or
+reconfigure an instance.
+
+An unprivileged dashboard may observe instances owned by its effective UID.
+A root dashboard may observe all Nowhere instances in the same PID and network
+namespaces.
+Container namespaces are isolated unless the dashboard runs inside the same
+container. Multiple dashboards may observe an instance concurrently, up to 16
+read-only clients per service. Abstract socket names include the UID, PID, and
+process start time; the kernel removes them automatically when the process
+exits.
+
+`NOW_TELEMETRY_INTERVAL` controls structured snapshots independently of
+`NOW_REPORT_INTERVAL`. It defaults to one second and accepts values from 250ms
+through 60s. The dashboard retains ten minutes of metrics and only the live
+access/runtime events received while an instance is selected; nothing is
+persisted by the service or dashboard.
+
+TUI metrics and structured access/runtime events are independent of `log=`.
+The existing EVENT and DEBUG text formats remain available to journald,
+OpenCtrl, and other stdout consumers, but are not repeated in the dashboard.
+Client addresses are masked in both live feeds by default; press `p` to reveal
+them locally. Targets remain visible in the access feed.
+
+Every supported size uses two workspaces and keeps Instances in a full-height
+left sidebar. Press `1` for Overview or `2` for Logs. At 120×32 terminal cells
+and above, Overview shows six filled traffic histories plus equal-width
+Selected, Connections, and Carriers/Process cards. The latter cards add hollow
+histories for TCP/UDP connections, TLS and QUIC links, pairs, pool occupancy,
+CPU, and RSS. Medium-width terminals preserve this dashboard with denser chart
+cells. Narrow or portrait terminals prioritize Selected, Connections, and
+Carriers/Process and omit the six large traffic histories.
+
+Logs stacks Access above Runtime to give both feeds the full workspace width;
+the instance sidebar remains full height. Use Tab or BackTab to focus Access or
+Runtime. Up and down scroll records; left and right pan a focused log
+horizontally so every single-line event can be inspected. The minimum supported
+terminal is 72×20 cells.
+
 ## TLS Warm Lanes
 
 Vector uses a warm pool only for `tcp/tcp`. Each prepared lane completes TCP,

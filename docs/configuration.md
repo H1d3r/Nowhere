@@ -3,6 +3,8 @@
 Nowhere runs one command URL per process. `portal://` starts the relay service;
 `vector://` starts the native SOCKS5 client.
 
+All configuration described here applies to the Linux-only binary.
+
 ## URL Rules
 
 The URL username is the percent-decoded shared key and MUST contain `1..255`
@@ -141,6 +143,7 @@ local host.
 | `NOW_UDP_IDLE_TIMEOUT` | `2m` | UDP flow and association target idle timeout |
 | `NOW_HANDSHAKE_TIMEOUT` | `5s` | Per-phase TLS, authentication, and request deadline |
 | `NOW_REPORT_INTERVAL` | `5s` | CHECK_POINT and LINK_STATUS interval |
+| `NOW_TELEMETRY_INTERVAL` | `1s` | Structured TUI snapshot interval; must be `250ms..60s` |
 | `NOW_SERVICE_COOLDOWN` | `3s` | Carrier reconnect delay |
 | `NOW_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown deadline |
 | `NOW_RELOAD_INTERVAL` | `1h` | PEM certificate reload interval |
