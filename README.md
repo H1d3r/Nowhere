@@ -1,119 +1,206 @@
-# Nowhere
+<p align="center">
+  <img src="assets/nowhere.png" width="540" alt="Nowhere">
+</p>
 
-> **One port. Two transports. Split directions.**
+<p align="center">
+  <strong>One port. Two transports. Split directions.</strong>
+</p>
 
-Nowhere brings TLS/TCP and QUIC/UDP together on one service port for both TCP
-and UDP traffic. Each logical flow composes its upload and download paths
-independently, allowing the two directions to use different carriers.
+<p align="center">
+  A Linux-native encrypted relay that composes TLS/TCP and QUIC/UDP<br>
+  independently for upload and download.
+</p>
 
-<div align="center">
-  <img src="assets/nowhere.png" width="640" alt="Nowhere">
-</div>
+<p align="center">
+  <a href="#live-operations">Live operations</a> &middot;
+  <a href="#how-it-works">Architecture</a> &middot;
+  <a href="#quick-start">Quick start</a> &middot;
+  <a href="docs/README.md">Documentation</a> &middot;
+  <a href="docs/protocol.md">Wire protocol</a>
+</p>
 
-## What Nowhere Does
+Nowhere gives one service edge two encrypted carrier families. A local
+**Vector** accepts SOCKS5 traffic; a remote **Portal** authenticates carriers,
+opens targets, and relays data. Every logical flow chooses its uplink and
+downlink independently instead of forcing both directions onto one transport.
 
-- **One service port.** TLS/TCP and QUIC/UDP share the same listener address,
-  service port, credentials, and operational lifecycle.
-- **Independent directions.** Upload and download can use different carriers,
-  so transport selection follows the needs of each direction rather than the
-  whole connection.
-- **TCP and UDP coverage.** TCP uses TLS connections or QUIC streams. UDP uses
-  UoT over TLS/TCP or QUIC DATAGRAM.
-- **Lean wire frames.** A 32-byte connection-auth frame leads into a 5-byte
-  flow header and one-byte setup result. Common QUIC DATAGRAM and UoT packets
-  add only 5 and 2 bytes, respectively.
-- **Efficient hot path.** Stack-encoded headers, binary targets, allocation-free
-  DATAGRAM decoding, reusable buffers, shared QUIC connections, and prepared
-  TLS lanes reduce parsing, copying, allocation, and connection setup work.
-- **Production controls.** Directional rate limits, warm TLS lanes, outbound
-  SOCKS5, source binding, certificate reload, resource limits, access paths,
-  EVENT telemetry, and graceful shutdown are built in.
+| Core property | What it means |
+| --- | --- |
+| One service edge | TLS/TCP and QUIC/UDP share one address, port number, credential, and lifecycle |
+| Split directions | Uplink and downlink independently select TLS/TCP or QUIC/UDP |
+| Complete ingress | SOCKS5 CONNECT carries TCP; UDP ASSOCIATE carries UDP |
+| Local observability | The same binary discovers running instances and renders live telemetry metrics |
 
-## Directional Transport
+## Live operations
 
-The Vector `up` and `down` parameters select carriers independently:
+<p align="center">
+  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing traffic histories, connections, carriers, process resources, access paths, and runtime events">
+</p>
 
-| Vector mode | Upload | Download |
+The built-in TUI turns every visible Portal and Vector into a live operational
+view. It remains deliberately separate from process management: opening or
+closing a dashboard never starts, stops, or owns a service instance.
+
+| View | Signals and controls |
+| --- | --- |
+| **Overview** | Uplink, downlink, TCP, UDP, TLS, and QUIC histories; active connections; carriers; pairs; warm pool; CPU; RSS; selected-instance metadata |
+| **Logs** | Independent Access and Runtime feeds with filtering, pause and resume, paging, horizontal panning, and local privacy masking |
+| **Discovery** | Automatic instance discovery with stable selection and concurrent read-only viewers |
+
+Start it from any terminal in the same Linux environment:
+
+```bash
+nowhere
+# Equivalent explicit form
+nowhere tui
+```
+
+Telemetry uses a local abstract Unix socket. It does not consume or redirect
+stdout and stderr, and history is held only by connected dashboards.
+
+## How it works
+
+```text
+  Application
+   TCP / UDP
+       |
+     SOCKS5
+       |
+       v
++--------------+   Uplink: TLS/TCP or QUIC/UDP    +--------------+
+|              |=================================>|              |
+|    Vector    |                                  |    Portal    |
+|              |<=================================|              |
++--------------+  Downlink: TLS/TCP or QUIC/UDP   +--------------+
+                                                          |
+                                                  direct or SOCKS5
+                                                          |
+                                                          v
+                                                    +------------+
+                                                    |   Target   |
+                                                    +------------+
+```
+
+Portal defaults to `net=mix`, accepting both carrier families on the same port
+number. `net=tcp` and `net=udp` intentionally restrict the listener when an
+operator wants only one carrier family.
+
+### One flow, two transport decisions
+
+Vector's `up` and `down` parameters form four first-class modes:
+
+| Mode | Uplink | Downlink |
 | --- | --- | --- |
 | `tcp/tcp` | TLS/TCP | TLS/TCP |
 | `tcp/udp` | TLS/TCP | QUIC/UDP |
 | `udp/tcp` | QUIC/UDP | TLS/TCP |
 | `udp/udp` | QUIC/UDP | QUIC/UDP |
 
-For TCP traffic, the QUIC carrier is a bidirectional stream. For UDP traffic,
-the TLS/TCP carrier uses length-prefixed UoT and the QUIC carrier uses
-DATAGRAM. Split flows are joined by their authenticated session and flow
-identity, not by source address.
+TCP application traffic uses a TLS connection or a bidirectional QUIC stream.
+UDP application traffic uses length-prefixed UoT over TLS/TCP or QUIC
+DATAGRAM. Split paths rejoin through authenticated session and flow identity,
+never by source address.
 
-Portal `net=mix`, the default, accepts both carrier families on the same port.
-`net=tcp` and `net=udp` are available when an operator intentionally wants only
-one listener transport.
+## Engineered for a small data path
 
-## Data Path
+| Area | Design |
+| --- | --- |
+| Framing | 32-byte connection authentication, 5-byte flow header, and one-byte setup result |
+| UDP overhead | 5 bytes for common QUIC DATAGRAM packets and 2 bytes for UoT packets |
+| Hot path | Stack-encoded headers, binary targets, allocation-free DATAGRAM decoding, and reusable buffers |
+| Reuse | Shared QUIC connections carry many streams and UDP flows; warm TLS lanes reduce `tcp/tcp` setup work |
+| Authentication | Credentials are bound to each TLS or QUIC connection through a TLS exporter |
+| Resource control | Explicit bounds cover connections, flows, queues, reassembly, rate limits, and idle state |
 
-Authentication is bound to each TLS or QUIC connection through a TLS exporter.
-A shared QUIC connection can carry many streams and UDP flows, while the
-`tcp/tcp` warm pool can prepare authenticated TLS lanes before an application
-requests them. Binary target addressing and compact setup metadata keep relay
-work direct, and explicit limits keep connection, flow, queue, and reassembly
-state bounded.
+Certificate reload, graceful shutdown, outbound SOCKS5, source binding,
+directional rate limits, access paths, and EVENT logging are part of the core
+runtime rather than external wrappers.
 
-## Components
+## Quick start
 
-- `portal://` accepts encrypted carriers and dials target endpoints.
-- `vector://` connects to Portal and serves a local SOCKS5 endpoint.
+Nowhere requires Linux and a stable Rust toolchain.
 
-## Quick Start
-
-Build with a stable Rust toolchain:
+### 1. Build
 
 ```bash
 cargo build --release --locked
 ```
 
-Start a local Portal:
+### 2. Start Portal
+
+The default `net=mix` mode accepts TLS/TCP and QUIC/UDP on port `2077`:
 
 ```bash
 ./target/release/nowhere 'portal://change-me@127.0.0.1:2077'
 ```
 
-Start Vector with TLS/TCP in both directions and five prepared lanes:
+### 3. Start Vector
+
+This Vector exposes SOCKS5 on `127.0.0.1:1080`, uses TLS/TCP in both
+directions, and keeps five authenticated TLS lanes warm:
 
 ```bash
 ./target/release/nowhere \
   'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=127.0.0.1:1080'
 ```
 
-Or use QUIC/UDP for upload and TLS/TCP for download:
+To split the carriers, change the directional parameters:
 
 ```bash
 ./target/release/nowhere \
   'vector://change-me@127.0.0.1:2077?up=udp&down=tcp&socks=127.0.0.1:1080'
 ```
 
-The local examples omit `sni`, which disables certificate verification. For a
-public Portal, install a CA-trusted certificate and enable strict verification:
+### 4. Inspect
+
+Open another terminal and run:
+
+```bash
+./target/release/nowhere tui
+```
+
+## Before public deployment
+
+The local examples omit `sni`, which disables certificate verification. A
+public Portal should use a CA-trusted certificate with strict verification:
 
 ```bash
 nowhere 'portal://change-me@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
 nowhere 'vector://change-me@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
 ```
 
-Alternatively, set `pin` to the lowercase `CERT_SHA256` value printed by Portal.
-Certificate pinning takes priority over `sni` certificate-chain and name checks.
-
-Portal and Vector default to ALPN `now/1`. A custom `alpn` must match on both
+Alternatively, set `pin` to the lowercase `CERT_SHA256` value printed by
+Portal. Pinning takes priority over `sni` certificate-chain and name checks.
+Portal and Vector default to ALPN `now/1`; custom ALPN values must match at both
 ends.
 
-## Documentation
+Read the [security model](docs/security.md) before exposing a Portal outside a
+trusted environment.
 
-- [Documentation index](docs/README.md)
-- [Quick start](docs/quick-start.md)
-- [Configuration reference](docs/configuration.md)
-- [Operations guide](docs/operations.md)
-- [Security model](docs/security.md)
-- [Protocol specification](docs/protocol.md)
-- [Integration guide](docs/integrations.md)
+## Operational boundaries
+
+| Boundary | Behavior |
+| --- | --- |
+| Platform | Linux only; runtime, signals, process metrics, discovery, and telemetry use Linux APIs directly |
+| Visibility | An unprivileged TUI sees instances owned by its effective UID; root sees all instances visible in its PID and network namespaces |
+| Ownership | The TUI is read-only and has no service lifecycle or configuration authority |
+| Concurrency | Multiple TUIs may observe one instance at the same time |
+| Logging | stdout and stderr remain independent from structured TUI telemetry |
+| Persistence | TUI metric history and feeds begin at connection time and are not persisted |
+
+Containers provide the portability boundary for non-Linux hosts while keeping
+the Linux process and IPC model intact inside each environment.
+
+## Documentation map
+
+| Guide | Start here when you need to |
+| --- | --- |
+| [Quick start](docs/quick-start.md) | Build a local Portal and Vector |
+| [Configuration](docs/configuration.md) | Review command URLs, defaults, identity, limits, and environment variables |
+| [Operations](docs/operations.md) | Operate logs, telemetry, pools, reconnection, certificates, and shutdown |
+| [Security](docs/security.md) | Understand trust boundaries, authentication, permissions, and resource controls |
+| [Wire protocol](docs/protocol.md) | Implement authentication, flow setup, framing, and lifecycles |
+| [Integrations](docs/integrations.md) | Connect process managers, SOCKS5 clients, OpenCtrl, and other tooling |
 
 ## Development
 
@@ -124,8 +211,8 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
-Protocol changes must update the normative document and wire-vector tests in
-the same change.
+Protocol changes must update the normative wire document and protocol-vector
+tests in the same change.
 
 ## License
 
