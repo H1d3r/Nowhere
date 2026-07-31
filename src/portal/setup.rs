@@ -17,6 +17,7 @@ use crate::common::{
     query_first, rate_limit_bytes_per_second,
 };
 use crate::protocol::Credentials;
+use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
 
 use super::listener::{configure_transport, format_endpoint_addr};
@@ -118,6 +119,20 @@ impl Portal {
             max_flows: runtime.max_udp_flows,
             queue_bytes: runtime.udp_queue_bytes,
         };
+        let telemetry_summary = format!(
+            "net={network_mode} tls={tls_mode} alpn={alpn} rate={rate_limit} etar={etar_limit} dial={} socks={}",
+            dialer_ip,
+            socks
+                .as_ref()
+                .map(SocksConfig::endpoint)
+                .unwrap_or_else(|| "none".to_owned()),
+        );
+        let telemetry = TelemetryHub::for_current_process(
+            InstanceRole::Portal,
+            endpoint_addr.clone(),
+            telemetry_summary,
+            runtime.telemetry_interval,
+        );
 
         Ok(Self {
             inner: Arc::new(PortalInner {
@@ -133,6 +148,7 @@ impl Portal {
                 etar_limit,
                 logger,
                 lifecycle,
+                telemetry,
                 drain: CancellationToken::new(),
                 runtime,
                 stats: Arc::new(Stats::default()),

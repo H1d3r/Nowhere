@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 use bytes::Bytes;
 use tokio_util::sync::CancellationToken;
@@ -65,14 +65,14 @@ impl PortalSession {
         request: DatagramReadyRequest,
         shutdown: &CancellationToken,
     ) {
-        let waker = Waker::from(Arc::new(DatagramReadyWake));
+        let waker = Waker::noop();
         let deadline = tokio::time::Instant::now() + self.portal.runtime.handshake_timeout;
         let mut drained = 0usize;
         loop {
             let polled = {
                 let read = self.conn.read_datagram();
                 tokio::pin!(read);
-                let mut context = Context::from_waker(&waker);
+                let mut context = Context::from_waker(waker);
                 std::future::Future::poll(read.as_mut(), &mut context)
             };
             match polled {
@@ -206,10 +206,4 @@ impl PortalSession {
             ));
         }
     }
-}
-
-struct DatagramReadyWake;
-
-impl Wake for DatagramReadyWake {
-    fn wake(self: Arc<Self>) {}
 }

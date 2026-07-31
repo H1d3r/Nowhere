@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use socket2::SockRef;
@@ -22,6 +22,7 @@ use crate::protocol::{
     AuthTransport, Carrier, FlowErrorCode, FlowKind, FlowResult, FlowRole, read_auth_frame,
     read_flow_header, read_request, write_flow_result,
 };
+use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
 
 use super::auth::{authentication_deadline, wait_for_auth_deadline};
 use crate::portal::PortalInner;
@@ -117,6 +118,14 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
             }
             drop(tls_stream);
             drop(admission);
+            portal.telemetry.emit_runtime(
+                RuntimeEvent::new(
+                    RuntimeLevel::Warn,
+                    RuntimeKind::Authentication,
+                    format!("TLS/TCP authentication failed: {err}"),
+                )
+                .with_client(peer.to_string()),
+            );
             portal.logger.debug(format_args!(
                 "portal::conn::handle_tcp_incoming: authentication failed: {err}"
             ));
@@ -172,6 +181,14 @@ pub(super) async fn handle_tcp_incoming_with_pool_ttl(
                     }
                 };
                 if input == InputAvailability::Pending {
+                    portal.telemetry.emit_runtime(
+                        RuntimeEvent::new(
+                            RuntimeLevel::Warn,
+                            RuntimeKind::Pool,
+                            "TLS/TCP idle pool saturated; carrier rejected",
+                        )
+                        .with_client(peer.to_string()),
+                    );
                     return;
                 }
                 None
@@ -404,18 +421,11 @@ enum InputAvailability {
     Closed,
 }
 
-struct NoopWake;
-
-impl Wake for NoopWake {
-    fn wake(self: Arc<Self>) {}
-}
-
 fn poll_input<R>(reader: &mut BufReader<R>) -> io::Result<InputAvailability>
 where
     R: AsyncRead + Unpin,
 {
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     match Pin::new(reader).poll_fill_buf(&mut context) {
         Poll::Ready(Ok([])) => Ok(InputAvailability::Closed),
         Poll::Ready(Ok(_)) => Ok(InputAvailability::Available),

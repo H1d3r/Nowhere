@@ -40,3 +40,19 @@ pub(super) async fn event_loop(portal: Arc<PortalInner>, shutdown: CancellationT
         }
     }
 }
+
+pub(super) async fn telemetry_loop(portal: Arc<PortalInner>, shutdown: CancellationToken) {
+    let mut interval = tokio::time::interval(portal.runtime.telemetry_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = interval.tick() => {
+                portal.telemetry.capture_and_publish(
+                    &portal.stats,
+                    portal.pool_active.load(Ordering::Relaxed),
+                );
+            }
+        }
+    }
+}

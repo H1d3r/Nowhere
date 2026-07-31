@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::common::{Lifecycle, Logger, OutboundDialer, TLSMode};
 use crate::protocol::Credentials;
+use crate::telemetry::TelemetryHub;
 use crate::transport::{Buffers, RateLimiter, Stats};
 
 use self::config::PortalRuntimeConfig;
@@ -57,6 +58,7 @@ struct PortalInner {
     etar_limit: i32,
     logger: Logger,
     lifecycle: Arc<Lifecycle>,
+    telemetry: Arc<TelemetryHub>,
     /// Cancels only work that has not committed a v1 READY result yet.
     drain: CancellationToken,
     runtime: PortalRuntimeConfig,

@@ -11,6 +11,7 @@ use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
 use crate::common::{LifeReason, LifeState, ShutdownSignals};
+use crate::telemetry::TelemetryServer;
 
 use super::listener::{accept_endpoint_loop, accept_tcp_loop, listen_endpoint, listen_tcp};
 use super::{Portal, event};
@@ -45,6 +46,10 @@ impl Portal {
             LifeState::Starting,
             LifeReason::Startup,
         );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Starting.to_string(),
+            LifeReason::Startup.to_string(),
+        );
 
         let mut signals = match ShutdownSignals::new()
             .context("portal::run: failed to install shutdown signal handlers")
@@ -60,6 +65,20 @@ impl Portal {
             Ok(listeners) => listeners,
             Err(error) => return self.start_failed(error),
         };
+        let telemetry_shutdown = CancellationToken::new();
+        let mut telemetry_tasks: JoinSet<()> = JoinSet::new();
+        match TelemetryServer::bind(self.inner.telemetry.clone()) {
+            Ok(server) => {
+                telemetry_tasks.spawn(server.run(telemetry_shutdown.clone()));
+                telemetry_tasks.spawn(event::telemetry_loop(
+                    self.inner.clone(),
+                    telemetry_shutdown.clone(),
+                ));
+            }
+            Err(error) => self.inner.logger.warn(format_args!(
+                "portal::run: TUI telemetry unavailable; continuing without it: {error:#}"
+            )),
+        }
 
         self.log_info("starting");
         let stop_accepting = CancellationToken::new();
@@ -89,6 +108,10 @@ impl Portal {
             &self.inner.logger,
             LifeState::Ready,
             LifeReason::Listening,
+        );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Ready.to_string(),
+            LifeReason::Listening.to_string(),
         );
         let mut auxiliary_tasks = JoinSet::new();
         auxiliary_tasks.spawn(event::event_loop(
@@ -134,6 +157,9 @@ impl Portal {
         self.inner
             .lifecycle
             .transition(&self.inner.logger, LifeState::Draining, trigger.reason);
+        self.inner
+            .telemetry
+            .set_lifecycle(LifeState::Draining.to_string(), trigger.reason.to_string());
 
         let drain = async {
             self.inner.pairing.begin_drain().await;
@@ -222,6 +248,19 @@ impl Portal {
             LifeState::Stopped,
             outcome.life_reason(),
         );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Stopped.to_string(),
+            outcome.life_reason().to_string(),
+        );
+        self.inner.telemetry.capture_and_publish(
+            &self.inner.stats,
+            self.inner
+                .pool_active
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+        tokio::task::yield_now().await;
+        telemetry_shutdown.cancel();
+        while telemetry_tasks.join_next().await.is_some() {}
         self.inner
             .logger
             .info(format_args!("portal::run: portal shutdown complete"));
@@ -238,6 +277,10 @@ impl Portal {
             &self.inner.logger,
             LifeState::Stopped,
             LifeReason::StartFailed,
+        );
+        self.inner.telemetry.set_lifecycle(
+            LifeState::Stopped.to_string(),
+            LifeReason::StartFailed.to_string(),
         );
         self.inner.logger.flush();
         Err(error)

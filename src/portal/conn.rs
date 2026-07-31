@@ -25,6 +25,7 @@ pub(super) use self::tcp::handle_tcp_incoming;
 use super::PortalInner;
 use super::admission::UnauthenticatedGuard;
 use crate::common::rate_limit_bytes_per_second;
+use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
 
 pub(super) async fn handle_incoming(
     portal: Arc<PortalInner>,
@@ -40,6 +41,11 @@ pub(super) async fn handle_incoming(
     } {
         Ok(Ok(conn)) => conn,
         Ok(Err(err)) => {
+            portal.telemetry.emit_runtime(RuntimeEvent::new(
+                RuntimeLevel::Warn,
+                RuntimeKind::Carrier,
+                format!("QUIC TLS handshake failed: {err}"),
+            ));
             portal.logger.debug(format_args!(
                 "portal::conn::handle_incoming: QUIC TLS handshake failed: {err}"
             ));
@@ -68,6 +74,14 @@ async fn handle_connection(
                 let (code, reason) = authentication_failure_close();
                 conn.close(code, reason);
                 drop(admission);
+                portal.telemetry.emit_runtime(
+                    RuntimeEvent::new(
+                        RuntimeLevel::Warn,
+                        RuntimeKind::Authentication,
+                        format!("QUIC authentication failed: {err}"),
+                    )
+                    .with_client(conn.remote_address().to_string()),
+                );
                 portal.logger.error(format_args!(
                     "portal::conn::handle_connection: authentication failed: {err}"
                 ));
@@ -97,6 +111,14 @@ async fn handle_connection(
         .await;
     session.set_quic_generation(link_guard.quic_generation());
     let _link_guard = link_guard;
+    portal.telemetry.emit_runtime(
+        RuntimeEvent::new(
+            RuntimeLevel::Info,
+            RuntimeKind::Carrier,
+            "QUIC carrier connected",
+        )
+        .with_client(conn.remote_address().to_string()),
+    );
 
     let etar_bps = rate_limit_bytes_per_second(portal.etar_limit);
     if etar_bps > 0 {
@@ -118,6 +140,14 @@ async fn handle_connection(
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = link_replaced.cancelled() => {
+                portal.telemetry.emit_runtime(
+                    RuntimeEvent::new(
+                        RuntimeLevel::Warn,
+                        RuntimeKind::Carrier,
+                        "QUIC carrier replaced",
+                    )
+                    .with_client(conn.remote_address().to_string()),
+                );
                 portal.logger.debug(format_args!(
                     "portal::conn::handle_connection: authenticated QUIC carrier replaced"
                 ));
@@ -134,6 +164,11 @@ async fn handle_connection(
                     }
                     Err(err) => {
                         if !shutdown.is_cancelled() {
+                            portal.telemetry.emit_runtime(RuntimeEvent::new(
+                                RuntimeLevel::Warn,
+                                RuntimeKind::Carrier,
+                                format!("QUIC carrier stream loop closed: {err}"),
+                            ));
                             portal.logger.debug(format_args!("portal::conn::handle_connection: bidirectional stream accept loop closed: {err}"));
                         }
                         break;
@@ -146,6 +181,14 @@ async fn handle_connection(
     session.close();
     datagram_task.abort();
     let _ = datagram_task.await;
+    portal.telemetry.emit_runtime(
+        RuntimeEvent::new(
+            RuntimeLevel::Info,
+            RuntimeKind::Carrier,
+            "QUIC carrier disconnected",
+        )
+        .with_client(conn.remote_address().to_string()),
+    );
     conn.close(VarInt::from_u32(0), b"");
 }
 

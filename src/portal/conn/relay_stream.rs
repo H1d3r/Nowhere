@@ -11,6 +11,7 @@ use tokio::time::timeout;
 
 use crate::portal::PortalInner;
 use crate::protocol::Carrier;
+use crate::telemetry::AccessSpan;
 
 /// Relays both directions until one side closes or either direction errors.
 pub(super) async fn relay_stream<R, W>(
@@ -18,14 +19,15 @@ pub(super) async fn relay_stream<R, W>(
     client_read: &mut R,
     client_write: &mut W,
     target_conn: tokio::net::TcpStream,
-    mut buffer1: Vec<u8>,
-    mut buffer2: Vec<u8>,
+    buffers: (Vec<u8>, Vec<u8>),
     carriers: Option<(Carrier, Carrier)>,
+    access: &AccessSpan,
 ) -> anyhow::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
+    let (mut buffer1, mut buffer2) = buffers;
     let (mut target_read, mut target_write) = target_conn.into_split();
 
     let client_to_target = async {
@@ -35,6 +37,7 @@ where
                 target_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
             }
+            access.add_upload(n as u64);
             portal.stats.tcp_rx.fetch_add(n as u64, Ordering::Relaxed);
             if let Some((uplink, _)) = carriers {
                 match uplink {
@@ -63,6 +66,7 @@ where
             }
             client_write.write_all(&buffer2[..n]).await?;
             client_write.flush().await?;
+            access.add_download(n as u64);
             portal.stats.tcp_tx.fetch_add(n as u64, Ordering::Relaxed);
             if let Some((_, downlink)) = carriers {
                 match downlink {

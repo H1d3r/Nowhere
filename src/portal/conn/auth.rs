@@ -4,7 +4,7 @@
 //! Connection-bound QUIC authentication and pre-authentication hardening.
 
 use std::sync::Arc;
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 use quinn::{Connection, RecvStream, SendStream, VarInt};
 use tokio::time::{Instant, sleep_until};
@@ -129,12 +129,6 @@ pub(super) async fn authenticate_connection(
     }
 }
 
-struct DatagramDrainWake;
-
-impl Wake for DatagramDrainWake {
-    fn wake(self: Arc<Self>) {}
-}
-
 enum PreAuthDrainOutcome {
     Complete,
     Deadline,
@@ -147,13 +141,13 @@ async fn drain_pre_auth_datagrams(
     shutdown: &CancellationToken,
     drain: &CancellationToken,
 ) -> PreAuthDrainOutcome {
-    let waker = Waker::from(Arc::new(DatagramDrainWake));
+    let waker = Waker::noop();
     let mut drained = 0usize;
     loop {
         let polled = {
             let read = conn.read_datagram();
             tokio::pin!(read);
-            let mut context = Context::from_waker(&waker);
+            let mut context = Context::from_waker(waker);
             std::future::Future::poll(read.as_mut(), &mut context)
         };
         match polled {

@@ -514,6 +514,7 @@ impl PairingRegistry {
                 }
             };
             return Ok(Some(PairedTcp {
+                flow_id: header.flow_id,
                 target: target.expect("duplex target validated"),
                 uplink,
                 downlink,
@@ -689,6 +690,7 @@ impl PairingRegistry {
                     }
                 };
                 break 'install TcpInstallOutcome::Paired(Box::new(PairedTcp {
+                    flow_id: key.flow_id,
                     target: complete.target.take().expect("TCP target paired"),
                     uplink: complete.uplink.take().expect("TCP uplink paired"),
                     downlink: complete.downlink.take().expect("TCP downlink paired"),

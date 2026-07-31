@@ -183,6 +183,7 @@ pub(in crate::portal) struct PairedUdp {
 }
 
 pub(in crate::portal) struct PairedTcp {
+    pub(in crate::portal) flow_id: u32,
     pub(in crate::portal) target: Target,
     pub(in crate::portal) uplink: BoxReader,
     pub(in crate::portal) downlink: BoxWriter,

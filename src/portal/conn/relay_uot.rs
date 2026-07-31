@@ -19,8 +19,12 @@ use crate::protocol::{
     Carrier, FlowErrorCode, FlowResult, encode_udp_close, read_udp_packet_into, write_flow_result,
     write_udp_packet,
 };
+use crate::telemetry::{AccessOutcome, AccessStart, TrafficProtocol, now_unix_ms};
 
-use super::{SessionGuard, UDP_TRANSFER_COMPLETE, UDP_TRANSFER_STARTING, paired_exchange_path};
+use super::{
+    SessionGuard, UDP_TRANSFER_COMPLETE, UDP_TRANSFER_STARTING, access_exchange_path,
+    paired_exchange_path,
+};
 
 const FLOW_RESULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const FLOW_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -39,27 +43,57 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         _flow_lease,
     } = paired;
     let target_addr = target.to_string();
+    let access = portal.telemetry.start_access(AccessStart {
+        id: 0,
+        timestamp_ms: now_unix_ms(),
+        protocol: TrafficProtocol::Udp,
+        flow_id: Some(flow_id),
+        client: Some(uplink_path.peer.clone()),
+        path_peers: vec![uplink_path.peer.clone(), downlink_path.peer.clone()],
+        target: target_addr.clone(),
+        uplink: Some(uplink_carrier),
+        downlink: Some(downlink_carrier),
+        path: Some(access_exchange_path(
+            uplink_carrier,
+            &uplink_path,
+            &target_addr,
+            downlink_carrier,
+            &downlink_path,
+        )),
+    });
     let cancel = _flow_lease.cancellation_token();
-    let socket = match tokio::select! {
+    let dial = tokio::select! {
         biased;
-        _ = cancel.cancelled() => {
+        _ = cancel.cancelled() => UdpTargetDial::Cancelled,
+        _ = portal.drain.cancelled() => UdpTargetDial::Draining,
+        result = portal.outbound.dial_udp_target(&target, portal.runtime.udp_dial_timeout) => {
+            match result {
+                Ok(socket) => UdpTargetDial::Connected(socket),
+                Err(error) => UdpTargetDial::Failed(error),
+            }
+        },
+    };
+    let socket = match dial {
+        UdpTargetDial::Connected(socket) => socket,
+        UdpTargetDial::Cancelled => {
             let _ = send_udp_result_bounded(
                 &mut downlink,
                 FlowResult::Reject(FlowErrorCode::SessionReplaced),
-            ).await;
+            )
+            .await;
+            access.finish(AccessOutcome::Cancelled, None);
             return;
-        },
-        _ = portal.drain.cancelled() => {
+        }
+        UdpTargetDial::Draining => {
             let _ = send_udp_result_bounded(
                 &mut downlink,
                 FlowResult::Reject(FlowErrorCode::FlowLimit),
-            ).await;
+            )
+            .await;
+            access.finish(AccessOutcome::Rejected, Some("portal draining".to_owned()));
             return;
-        },
-        result = portal.outbound.dial_udp_target(&target, portal.runtime.udp_dial_timeout) => result,
-    } {
-        Ok(socket) => socket,
-        Err(err) => {
+        }
+        UdpTargetDial::Failed(err) => {
             let code = if cancel.is_cancelled() {
                 FlowErrorCode::SessionReplaced
             } else if portal.drain.is_cancelled() {
@@ -71,35 +105,50 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
             portal.logger.debug(format_args!(
                 "portal::conn::relay_paired_udp: target dial failed: {err}"
             ));
+            let error = err.to_string();
+            access.finish(error_outcome(&error), Some(error));
             return;
         }
     };
     if let UdpUp::Quic(receiver) = &mut uplink {
-        let prepared = tokio::select! {
+        let preparation = tokio::select! {
             biased;
-            _ = cancel.cancelled() => {
+            _ = cancel.cancelled() => Preparation::Cancelled,
+            _ = portal.drain.cancelled() => Preparation::Draining,
+            prepared = receiver.prepare_ready() => Preparation::Prepared(prepared),
+        };
+        match preparation {
+            Preparation::Prepared(true) => {}
+            Preparation::Cancelled => {
                 let _ = send_udp_result_bounded(
                     &mut downlink,
                     FlowResult::Reject(FlowErrorCode::SessionReplaced),
-                ).await;
+                )
+                .await;
+                access.finish(AccessOutcome::Cancelled, None);
                 return;
             }
-            _ = portal.drain.cancelled() => {
+            Preparation::Draining => {
                 let _ = send_udp_result_bounded(
                     &mut downlink,
                     FlowResult::Reject(FlowErrorCode::FlowLimit),
-                ).await;
+                )
+                .await;
+                access.finish(AccessOutcome::Rejected, Some("portal draining".to_owned()));
                 return;
             }
-            prepared = receiver.prepare_ready() => prepared,
-        };
-        if !prepared {
-            let _ = send_udp_result_bounded(
-                &mut downlink,
-                FlowResult::Reject(FlowErrorCode::InternalError),
-            )
-            .await;
-            return;
+            Preparation::Prepared(false) => {
+                let _ = send_udp_result_bounded(
+                    &mut downlink,
+                    FlowResult::Reject(FlowErrorCode::InternalError),
+                )
+                .await;
+                access.finish(
+                    AccessOutcome::Error,
+                    Some("QUIC datagram route preparation failed".to_owned()),
+                );
+                return;
+            }
         }
     }
     match commit_udp_ready(&cancel, &portal.ready_gate, &mut downlink).await {
@@ -111,7 +160,17 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                 receiver.activate();
             }
         }
-        Ok(false) | Err(_) => return,
+        Ok(false) => {
+            access.finish(
+                AccessOutcome::Rejected,
+                Some("flow setup rejected".to_owned()),
+            );
+            return;
+        }
+        Err(error) => {
+            access.finish(AccessOutcome::Error, Some(error.to_string()));
+            return;
+        }
     }
     if portal.logger.debug_enabled() {
         let target_local = socket
@@ -145,7 +204,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
     tokio::pin!(idle_sleep);
     let activity = Notify::new();
     let mut downlink_frame_incomplete = false;
-    let complete_reason = {
+    let completion = {
         let uplink_pipeline = async {
             loop {
                 let n = match &mut uplink {
@@ -171,6 +230,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                         socket.send(&payload, &mut target_packet).await?
                     }
                 };
+                access.add_upload(n as u64);
                 portal.stats.udp_rx.fetch_add(n as u64, Ordering::Relaxed);
                 match uplink_carrier {
                     Carrier::TlsTcp => &portal.stats.up_tcp,
@@ -203,6 +263,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                 };
                 match outcome {
                     UdpDatagramSend::Sent => {
+                        access.add_download(n as u64);
                         portal.stats.udp_tx.fetch_add(n as u64, Ordering::Relaxed);
                         match downlink_carrier {
                             Carrier::TlsTcp => &portal.stats.down_tcp,
@@ -220,7 +281,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         loop {
             tokio::select! {
                 biased;
-                _ = cancel.cancelled() => break "cancelled".to_string(),
+                _ = cancel.cancelled() => break UdpCompletion::Cancelled,
                 _ = async {
                     if let Some(liveness) = &mut downlink_liveness {
                         let mut byte = [0u8; 1];
@@ -228,29 +289,80 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                     } else {
                         pending::<()>().await;
                     }
-                } => break "downlink closed".to_string(),
+                } => break UdpCompletion::Success("downlink closed"),
                 result = &mut uplink_pipeline => break match result {
-                    Ok(()) => "uplink closed".to_string(),
-                    Err(err) => format!("uplink or target write error: {err}"),
+                    Ok(()) => UdpCompletion::Success("uplink closed"),
+                    Err(err) => UdpCompletion::Error(format!("uplink or target write error: {err}")),
                 },
                 result = &mut downlink_pipeline => break match result {
-                    Ok(()) => "downlink closed".to_string(),
-                    Err(err) => format!("target read or downlink write error: {err}"),
+                    Ok(()) => UdpCompletion::Success("downlink closed"),
+                    Err(err) => UdpCompletion::Error(format!("target read or downlink write error: {err}")),
                 },
                 _ = activity.notified() => {
                     idle_sleep
                         .as_mut()
                         .reset(Instant::now() + portal.runtime.udp_idle_timeout);
                 }
-                _ = &mut idle_sleep => break "idle timeout".to_string(),
+                _ = &mut idle_sleep => break UdpCompletion::Timeout,
             }
         }
     };
     finish_udp_downlink(&mut downlink, flow_id, downlink_frame_incomplete).await;
     portal.logger.debug(format_args!(
-        "portal::conn::relay_paired_udp: {}: {complete_reason}",
-        UDP_TRANSFER_COMPLETE
+        "portal::conn::relay_paired_udp: {}: {}",
+        UDP_TRANSFER_COMPLETE,
+        completion.reason(),
     ));
+    match completion {
+        UdpCompletion::Success(_) => access.finish(AccessOutcome::Success, None),
+        UdpCompletion::Cancelled => access.finish(AccessOutcome::Cancelled, None),
+        UdpCompletion::Timeout => {
+            access.finish(AccessOutcome::Timeout, Some("idle timeout".to_owned()));
+        }
+        UdpCompletion::Error(error) => {
+            let outcome = error_outcome(&error);
+            access.finish(outcome, Some(error));
+        }
+    }
+}
+
+enum UdpTargetDial<T> {
+    Connected(T),
+    Cancelled,
+    Draining,
+    Failed(anyhow::Error),
+}
+
+enum Preparation {
+    Prepared(bool),
+    Cancelled,
+    Draining,
+}
+
+enum UdpCompletion {
+    Success(&'static str),
+    Cancelled,
+    Timeout,
+    Error(String),
+}
+
+impl UdpCompletion {
+    fn reason(&self) -> &str {
+        match self {
+            Self::Success(reason) => reason,
+            Self::Cancelled => "cancelled",
+            Self::Timeout => "idle timeout",
+            Self::Error(error) => error,
+        }
+    }
+}
+
+fn error_outcome(error: &str) -> AccessOutcome {
+    if error.to_ascii_lowercase().contains("timeout") {
+        AccessOutcome::Timeout
+    } else {
+        AccessOutcome::Error
+    }
 }
 
 async fn send_udp_result(downlink: &mut UdpDown, result: FlowResult) -> anyhow::Result<()> {

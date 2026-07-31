@@ -11,15 +11,20 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::portal::PortalInner;
 use crate::portal::pairing::PairedTcp;
 use crate::protocol::{FlowErrorCode, FlowResult, write_flow_result};
+use crate::telemetry::{AccessOutcome, AccessStart, TrafficProtocol, now_unix_ms};
 
 use super::stream::relay_stream;
-use super::{SessionGuard, TCP_EXCHANGE_COMPLETE, TCP_EXCHANGE_STARTING, paired_exchange_path};
+use super::{
+    SessionGuard, TCP_EXCHANGE_COMPLETE, TCP_EXCHANGE_STARTING, access_exchange_path,
+    paired_exchange_path,
+};
 
 const FLOW_RESULT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Relays a TCP target through independently selected upload and download halves.
 pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired: PairedTcp) {
     let PairedTcp {
+        flow_id,
         target,
         uplink: mut client_read,
         downlink: mut client_write,
@@ -31,29 +36,63 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
         _flow_lease,
     } = paired;
     let target_addr = target.to_string();
+    let access = portal.telemetry.start_access(AccessStart {
+        id: 0,
+        timestamp_ms: now_unix_ms(),
+        protocol: TrafficProtocol::Tcp,
+        flow_id: Some(flow_id),
+        client: Some(uplink_path.peer.clone()),
+        path_peers: vec![uplink_path.peer.clone(), downlink_path.peer.clone()],
+        target: target_addr.clone(),
+        uplink: Some(uplink),
+        downlink: Some(downlink),
+        path: Some(access_exchange_path(
+            uplink,
+            &uplink_path,
+            &target_addr,
+            downlink,
+            &downlink_path,
+        )),
+    });
     let cancel = _flow_lease.cancellation_token();
-    let target_conn = match tokio::select! {
+    let dial = tokio::select! {
         biased;
         _ = cancel.cancelled() => {
+            TargetDial::Cancelled
+        },
+        _ = portal.drain.cancelled() => {
+            TargetDial::Draining
+        },
+        result = portal.outbound.dial_tcp_target(&target, portal.runtime.tcp_dial_timeout) => {
+            match result {
+                Ok(conn) => TargetDial::Connected(conn),
+                Err(error) => TargetDial::Failed(error),
+            }
+        },
+    };
+    let target_conn = match dial {
+        TargetDial::Connected(conn) => conn,
+        TargetDial::Cancelled => {
             let _ = write_flow_result_bounded(
                 &mut client_write,
                 FlowResult::Reject(FlowErrorCode::SessionReplaced),
                 true,
-            ).await;
+            )
+            .await;
+            access.finish(AccessOutcome::Cancelled, None);
             return;
-        },
-        _ = portal.drain.cancelled() => {
+        }
+        TargetDial::Draining => {
             let _ = write_flow_result_bounded(
                 &mut client_write,
                 FlowResult::Reject(FlowErrorCode::FlowLimit),
                 true,
-            ).await;
+            )
+            .await;
+            access.finish(AccessOutcome::Rejected, Some("portal draining".to_owned()));
             return;
-        },
-        result = portal.outbound.dial_tcp_target(&target, portal.runtime.tcp_dial_timeout) => result,
-    } {
-        Ok(conn) => conn,
-        Err(err) => {
+        }
+        TargetDial::Failed(err) => {
             let code = if cancel.is_cancelled() {
                 FlowErrorCode::SessionReplaced
             } else if portal.drain.is_cancelled() {
@@ -66,12 +105,24 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             portal.logger.debug(format_args!(
                 "portal::conn::relay_paired_tcp: target dial failed: {err}"
             ));
+            let error = err.to_string();
+            access.finish(error_outcome(&error), Some(error));
             return;
         }
     };
     match commit_ready(&cancel, &portal.ready_gate, &mut client_write).await {
         Ok(true) => {}
-        Ok(false) | Err(_) => return,
+        Ok(false) => {
+            access.finish(
+                AccessOutcome::Rejected,
+                Some("flow setup rejected".to_owned()),
+            );
+            return;
+        }
+        Err(error) => {
+            access.finish(AccessOutcome::Error, Some(error.to_string()));
+            return;
+        }
     }
     portal.stats.add_session(false);
     let _done = SessionGuard::new(portal.clone(), false);
@@ -94,38 +145,76 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
         ));
     }
 
-    let relay = relay_stream(
-        portal.clone(),
-        &mut client_read,
-        &mut client_write,
-        target_conn,
-        portal.buffers.get_tcp_buffer(),
-        portal.buffers.get_tcp_buffer(),
-        Some((uplink, downlink)),
-    );
-    tokio::pin!(relay);
-    let result = if let Some(mut liveness) = downlink_liveness {
-        let mut byte = [0u8; 1];
-        tokio::select! {
-            result = &mut relay => Some(result),
-            _ = cancel.cancelled() => None,
-            _ = liveness.read(&mut byte) => None,
-        }
-    } else {
-        tokio::select! {
-            result = &mut relay => Some(result),
-            _ = cancel.cancelled() => None,
+    let completion = {
+        let relay = relay_stream(
+            portal.clone(),
+            &mut client_read,
+            &mut client_write,
+            target_conn,
+            (
+                portal.buffers.get_tcp_buffer(),
+                portal.buffers.get_tcp_buffer(),
+            ),
+            Some((uplink, downlink)),
+            &access,
+        );
+        tokio::pin!(relay);
+        if let Some(mut liveness) = downlink_liveness {
+            let mut byte = [0u8; 1];
+            tokio::select! {
+                result = &mut relay => RelayCompletion::Relay(result),
+                _ = cancel.cancelled() => RelayCompletion::Cancelled,
+                _ = liveness.read(&mut byte) => RelayCompletion::DownlinkClosed,
+            }
+        } else {
+            tokio::select! {
+                result = &mut relay => RelayCompletion::Relay(result),
+                _ = cancel.cancelled() => RelayCompletion::Cancelled,
+            }
         }
     };
     portal.logger.debug(format_args!(
         "portal::conn::relay_paired_tcp: {}: {}",
         TCP_EXCHANGE_COMPLETE,
-        match result {
-            Some(Ok(())) => "EOF".to_string(),
-            Some(Err(err)) => err.to_string(),
-            None => "cancelled".to_string(),
+        match &completion {
+            RelayCompletion::Relay(Ok(())) => "EOF".to_string(),
+            RelayCompletion::Relay(Err(err)) => err.to_string(),
+            RelayCompletion::Cancelled | RelayCompletion::DownlinkClosed => {
+                "cancelled".to_string()
+            }
         }
     ));
+    match completion {
+        RelayCompletion::Relay(Ok(())) | RelayCompletion::DownlinkClosed => {
+            access.finish(AccessOutcome::Success, None);
+        }
+        RelayCompletion::Relay(Err(error)) => {
+            let error = error.to_string();
+            access.finish(error_outcome(&error), Some(error));
+        }
+        RelayCompletion::Cancelled => access.finish(AccessOutcome::Cancelled, None),
+    }
+}
+
+enum TargetDial<T> {
+    Connected(T),
+    Cancelled,
+    Draining,
+    Failed(anyhow::Error),
+}
+
+enum RelayCompletion {
+    Relay(anyhow::Result<()>),
+    Cancelled,
+    DownlinkClosed,
+}
+
+fn error_outcome(error: &str) -> AccessOutcome {
+    if error.to_ascii_lowercase().contains("timeout") {
+        AccessOutcome::Timeout
+    } else {
+        AccessOutcome::Error
+    }
 }
 
 /// Commits the single setup result. Cancellation is sampled before the READY

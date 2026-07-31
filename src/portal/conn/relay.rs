@@ -47,6 +47,26 @@ fn paired_exchange_path(
     )
 }
 
+fn access_exchange_path(
+    uplink: Carrier,
+    uplink_path: &LinkPath,
+    target: &str,
+    downlink: Carrier,
+    downlink_path: &LinkPath,
+) -> String {
+    format!(
+        "UP[{}] {} -> {} -> {} | DOWN[{}] {} -> {} -> {}",
+        carrier_name(uplink),
+        uplink_path.peer,
+        uplink_path.local,
+        target,
+        carrier_name(downlink),
+        target,
+        downlink_path.local,
+        downlink_path.peer,
+    )
+}
+
 fn carrier_name(carrier: Carrier) -> &'static str {
     match carrier {
         Carrier::TlsTcp => "TCP",
