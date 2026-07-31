@@ -3,6 +3,9 @@
 
 //! Library entry point for the Nowhere Portal and Vector runtimes.
 
+#[cfg(not(target_os = "linux"))]
+compile_error!("Nowhere supports Linux only");
+
 pub mod common;
 pub mod portal;
 pub mod protocol;

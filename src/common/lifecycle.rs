@@ -108,51 +108,32 @@ impl Lifecycle {
 
 /// Reusable signal receiver so a second signal can force an in-progress shutdown.
 pub(crate) struct ShutdownSignals {
-    #[cfg(unix)]
     interrupt: tokio::signal::unix::Signal,
-    #[cfg(unix)]
     terminate: tokio::signal::unix::Signal,
 }
 
 impl ShutdownSignals {
     pub(crate) fn new() -> Result<Self> {
-        #[cfg(unix)]
-        {
-            use tokio::signal::unix::{SignalKind, signal};
+        use tokio::signal::unix::{SignalKind, signal};
 
-            Ok(Self {
-                interrupt: signal(SignalKind::interrupt())
-                    .context("common::lifecycle: failed to install SIGINT handler")?,
-                terminate: signal(SignalKind::terminate())
-                    .context("common::lifecycle: failed to install SIGTERM handler")?,
-            })
-        }
-        #[cfg(not(unix))]
-        {
-            Ok(Self {})
-        }
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt())
+                .context("common::lifecycle: failed to install SIGINT handler")?,
+            terminate: signal(SignalKind::terminate())
+                .context("common::lifecycle: failed to install SIGTERM handler")?,
+        })
     }
 
     pub(crate) async fn recv(&mut self) -> Result<LifeReason> {
-        #[cfg(unix)]
-        {
-            tokio::select! {
-                value = self.interrupt.recv() => {
-                    value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGINT stream closed"))?;
-                    Ok(LifeReason::SigInt)
-                }
-                value = self.terminate.recv() => {
-                    value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGTERM stream closed"))?;
-                    Ok(LifeReason::SigTerm)
-                }
+        tokio::select! {
+            value = self.interrupt.recv() => {
+                value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGINT stream closed"))?;
+                Ok(LifeReason::SigInt)
             }
-        }
-        #[cfg(not(unix))]
-        {
-            tokio::signal::ctrl_c()
-                .await
-                .context("common::lifecycle: failed to install Ctrl-C handler")?;
-            Ok(LifeReason::SigInt)
+            value = self.terminate.recv() => {
+                value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGTERM stream closed"))?;
+                Ok(LifeReason::SigTerm)
+            }
         }
     }
 }
