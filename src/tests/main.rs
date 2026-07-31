@@ -9,6 +9,7 @@ use super::*;
 fn help_text_documents_usage_and_configuration_surface() {
     for expected in [
         "Usage:",
+        "nowhere tui",
         "nowhere <portal-or-vector-url>",
         "-h, --help",
         "-v, --version",
@@ -32,6 +33,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "NOW_FLOW_PAIR_TIMEOUT",
         "NOW_FLOW_SETUP_TIMEOUT",
         "NOW_HANDSHAKE_TIMEOUT",
+        "NOW_TELEMETRY_INTERVAL",
         "NOW_SERVICE_COOLDOWN",
         "Password credentials are not supported.",
         "tls=0 is not supported.",

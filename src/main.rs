@@ -4,6 +4,7 @@
 //! Command-line entry point for running a Nowhere Portal or Vector.
 
 use std::env;
+use std::io::IsTerminal;
 
 use anyhow::{Context, Result, bail};
 use nowhere::common::{LogLevel, Logger, query_first};
@@ -14,11 +15,14 @@ use url::{ParseError, Url};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HELP_TEXT: &str = "\
 Usage:
+  nowhere
+  nowhere tui
   nowhere <portal-or-vector-url>
   nowhere -h | --help
   nowhere -v | --version
 
 Commands:
+  tui              Open the read-only multi-instance TUI.
   <portal-url>     Run the Portal relay service.
   <vector-url>     Run the Vector native SOCKS5 client.
   -h, --help       Print this help message.
@@ -114,6 +118,7 @@ Environment:
   NOW_UDP_IDLE_TIMEOUT      QUIC and DATAGRAM/UoT flow idle timeout.
   NOW_HANDSHAKE_TIMEOUT     Per-phase TLS, authentication, and request deadline.
   NOW_REPORT_INTERVAL       Local CHECK_POINT and LINK_STATUS report interval.
+  NOW_TELEMETRY_INTERVAL    Local TUI telemetry interval (250ms..60s; default 1s).
   NOW_SERVICE_COOLDOWN      Transport reconnect retry delay.
   NOW_SHUTDOWN_TIMEOUT      Graceful shutdown wait.
   NOW_RELOAD_INTERVAL       Minimum PEM certificate reload interval.";
@@ -132,8 +137,8 @@ async fn main() {
 }
 
 async fn start(args: Vec<String>) -> Result<()> {
-    if args.len() < 2 {
-        bail!("main::start: missing configuration URL argument");
+    if args.len() == 1 {
+        return run_tui().await;
     }
     if args.len() > 2 {
         bail!("main::start: expected exactly one configuration URL");
@@ -152,6 +157,7 @@ async fn start(args: Vec<String>) -> Result<()> {
             );
             return Ok(());
         }
+        "tui" => return run_tui().await,
         _ => {}
     }
 
@@ -188,6 +194,13 @@ async fn start(args: Vec<String>) -> Result<()> {
         }
         _ => bail!("main::start: unknown URL scheme: {}", scheme),
     }
+}
+
+async fn run_tui() -> Result<()> {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        bail!("main::run_tui: an interactive terminal is required")
+    }
+    nowhere::tui::run().await
 }
 
 fn print_help() {

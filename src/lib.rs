@@ -11,4 +11,5 @@ pub mod portal;
 pub mod protocol;
 pub(crate) mod telemetry;
 pub mod transport;
+pub mod tui;
 pub mod vector;
