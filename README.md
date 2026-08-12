@@ -35,7 +35,7 @@ downlink independently instead of forcing both directions onto one transport.
 ## Live operations
 
 <p align="center">
-  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing traffic histories, connections, carriers, process resources, access paths, and runtime events">
+  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing six live traffic histories, native Portal chaining, upstream RTT, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
 </p>
 
 The built-in TUI turns every visible Portal and Vector into a live operational
