@@ -29,6 +29,7 @@ downlink independently instead of forcing both directions onto one transport.
 | One service edge | TLS/TCP and QUIC/UDP share one address, port number, credential, and lifecycle |
 | Split directions | Uplink and downlink independently select TLS/TCP or QUIC/UDP |
 | Complete ingress | SOCKS5 CONNECT carries TCP; UDP ASSOCIATE carries UDP |
+| Native chaining | A Portal can forward directly to another Portal without a loopback SOCKS5 conversion |
 | Local observability | The same binary discovers running instances and renders live telemetry metrics |
 
 ## Live operations
@@ -115,6 +116,22 @@ never by source address.
 Certificate reload, graceful shutdown, outbound SOCKS5, source binding,
 directional rate limits, access paths, and EVENT logging are part of the core
 runtime rather than external wrappers.
+
+### Native Portal chaining
+
+A relay Portal can terminate the incoming TLS/QUIC carrier and open the next
+Nowhere flow directly with the same transport engine used by Vector:
+
+```bash
+nowhere \
+  'portal://relay-key@:2077?next=origin-key@origin.example:2077&up=udp&down=udp'
+```
+
+`next` is mutually exclusive with outbound `socks`. It is lazy, so an
+unavailable upstream never prevents the relay listener from becoming ready.
+TCP and UDP payloads remain in the native binary flow path—there is no local
+SOCKS listener, SOCKS framing, or per-packet connection setup between Portals.
+Native forwarding is bounded to seven Portal hops.
 
 ## Quick start
 

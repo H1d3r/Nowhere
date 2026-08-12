@@ -14,7 +14,7 @@ abstract Unix-socket interfaces directly.
 
 | Layer | Responsibility |
 | --- | --- |
-| Portal | Authenticate carriers, pair directions, dial targets, and relay data |
+| Portal | Authenticate carriers, pair directions, dial targets or a native upstream Portal, and relay data |
 | Vector | Accept SOCKS5 CONNECT and UDP ASSOCIATE requests and open flows |
 | TLS/TCP | Carry TCP stream bytes or length-prefixed UDP packets |
 | QUIC/UDP | Carry TCP stream bytes or QUIC DATAGRAM packets |
@@ -41,6 +41,7 @@ abstract Unix-socket interfaces directly.
 - **Bundle** is a set of carriers sharing one authenticated session ID.
 - **UoT** carries individual UDP packets over a TLS/TCP stream.
 - **rate** limits uplink traffic; **etar** limits downlink traffic.
+- **next** selects a native upstream Portal without a SOCKS5 conversion.
 
 Operators should start with Quick Start, Configuration, Security, and
 Operations. Client implementers should start with Wire Protocol and then read

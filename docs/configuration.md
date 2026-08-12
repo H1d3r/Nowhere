@@ -22,7 +22,7 @@ Query parsing follows these rules:
 ## Portal
 
 ```text
-portal://<shared-key>@<listen-host>:<port>?net=...&tls=...&crt=...&key=...&alpn=...&rate=...&etar=...&dial=...&socks=...&log=...
+portal://<shared-key>@<listen-host>:<port>?net=...&tls=...&crt=...&key=...&alpn=...&rate=...&etar=...&dial=...&socks=...&next=...&up=...&down=...&pool=...&sni=...&pin=...&log=...
 ```
 
 An empty listen host binds separate IPv4 and IPv6 wildcard sockets. An IP
@@ -37,14 +37,20 @@ literal binds only that family. A hostname resolves to its first address.
 | `alpn` | `now/1` | Nonempty decoded value, at most 255 bytes |
 | `rate` | `0` | Client-to-target Mbps; nonnegative integer |
 | `etar` | `0` | Target-to-client Mbps; nonnegative integer |
-| `dial` | `auto` | `auto` or a local IP literal |
+| `dial` | `auto` | `auto` or a local IP literal for direct, SOCKS5, and native Portal egress |
 | `socks` | `none` | Outbound SOCKS5 endpoint or `none` |
+| `next` | `none` | Native upstream Portal as `shared-key@host:port`; mutually exclusive with enabled `socks` |
+| `up` | `udp` | Native upstream upload carrier; ignored without `next` |
+| `down` | `udp` | Native upstream download carrier; ignored without `next` |
+| `pool` | `5` for native `tcp/tcp` | Native upstream TLS pool, capped at 256; ignored without `next` |
+| `sni` | `none` | Native upstream certificate DNS name; ignored without `next` |
+| `pin` | `none` | Native upstream certificate SHA-256; ignored without `next` |
 | `log` | `info` | `none`, `debug`, `info`, `warn`, `error`, or `event` |
 
 Portal prints its effective settings in this order:
 
 ```text
-net -> tls -> alpn -> rate -> etar -> dial -> socks
+net -> tls -> alpn -> rate -> etar -> dial -> socks -> next -> up -> down -> pool -> sni -> pin
 ```
 
 Rate conversion is `Mbps * 125000` bytes per second. Zero disables the
@@ -63,6 +69,31 @@ credentials, it offers only no-auth. CONNECT handles TCP targets; each UDP flow
 owns one UDP ASSOCIATE control connection. Proxy failure never falls back to a
 direct route. `socks=` is invalid; omit the parameter or use `socks=none`.
 
+### Native upstream Portal
+
+`next` forwards TCP and UDP flows directly through another Portal:
+
+```text
+portal://relay-key@:2077?next=origin-key@origin.example:2077
+portal://relay-key@:2077?next=origin-key@[2001:db8::20]:2077&up=tcp&down=tcp&pool=5&sni=origin.example
+```
+
+The separator between key and endpoint is the last literal `@`; reserved
+characters inside the key must be percent-encoded. Effective URLs and
+telemetry include only the upstream endpoint, never its shared key.
+
+Native upstream transport defaults and validation match Vector. `udp/udp`
+uses `pool=0`; explicit `tcp/tcp` defaults to five warm lanes. Other carrier
+pairs ignore `pool`, including an otherwise invalid value. When `next` is
+omitted or `none`, all five upstream-only parameters are ignored even if their
+values are invalid. `next=` is always invalid.
+
+The Portal's `alpn` value is shared by its listener and native upstream client;
+there is no second upstream ALPN setting. Native carriers connect lazily and do
+not gate listener readiness. An upstream setup rejection is returned unchanged
+to the incoming flow. Forwarding initializes a seven-hop budget and never
+falls back to SOCKS5 or direct target dialing.
+
 ### Portal Examples
 
 ```text
@@ -70,6 +101,7 @@ portal://secret@:2077
 portal://secret@0.0.0.0:2077?net=tcp
 portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem
 portal://secret@:2077?alpn=now%2Fprivate&rate=100&etar=200
+portal://relay-key@:2077?next=origin-key@origin.example:2077&up=udp&down=tcp
 ```
 
 ## Vector

@@ -56,6 +56,26 @@ up=udp&down=udp
 Split combinations require Portal `net=mix`, which is the default. The warm
 pool applies only to `tcp/tcp`; every other pair reports `pool=0`.
 
+## Add a Native Relay Portal
+
+Run the final Portal with its own key:
+
+```bash
+nowhere 'portal://origin-key@127.0.0.1:3077'
+```
+
+Then run one relay process whose upstream is that Portal:
+
+```bash
+nowhere \
+  'portal://relay-key@127.0.0.1:2077?next=origin-key@127.0.0.1:3077&up=udp&down=udp'
+```
+
+Point Vector at port 2077 with `relay-key`. The relay terminates its incoming
+TLS/QUIC connection and opens a native flow to port 3077 without a local
+SOCKS5 conversion. Use `tcp/tcp`, `tcp/udp`, `udp/tcp`, or `udp/udp` exactly as
+you would on Vector.
+
 ## Use a Trusted Certificate
 
 Portal:
