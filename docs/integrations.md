@@ -66,6 +66,7 @@ A direct client MUST implement the complete wire protocol described in
 - TLS 1.3 and matching ALPN;
 - TLS-exporter-bound authentication on every physical connection;
 - the 5-byte flow header and its role/carrier validation;
+- zero-origin, seven-step HOPS handling for native Portal forwarding;
 - binary IPv4, IPv6, and domain targets;
 - the 1-byte setup result;
 - 5-byte DATA/CLOSE and 13-byte FRAGMENT QUIC DATAGRAM headers;

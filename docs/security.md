@@ -92,6 +92,18 @@ other hosts. Protect them with RFC1929 credentials and firewall rules.
 Portal outbound SOCKS failures never fall back to direct dialing. When proxying
 is configured, domain targets remain unresolved until they reach the proxy.
 
+## Native Portal Chain Boundary
+
+Each `next` edge is a new authenticated TLS/QUIC trust boundary with its own
+upstream shared key and certificate policy. The upstream key is accepted only
+in the command URL and is redacted from effective URLs, logs, and local
+telemetry. Protect the complete command URL as a secret.
+
+`next` and outbound `socks` cannot be enabled together, and failure never falls
+back to a different route. The three-bit HOPS field limits native forwarding to
+seven Portal transitions; every Portal in the chain must run an implementation
+that enforces this field.
+
 ## Local TUI Boundary
 
 Each running Portal or Vector exposes read-only structured telemetry through

@@ -15,7 +15,8 @@ This document is the normative wire specification. The words **MUST**,
 - Byte counts in frame diagrams describe the encoded wire length.
 - Readers consume fields from left to right and leave following payload bytes
   untouched.
-- Reserved bits MUST be zero when sent and MUST be rejected when received.
+- Bits documented as reserved MUST be zero when sent and MUST be rejected when
+  received. The flow header currently has no reserved bits.
 - Unknown enum values, zero identifiers where forbidden, truncated fields, and
   lengths outside their declared bounds are protocol errors.
 
@@ -194,7 +195,7 @@ flow state has been released.
 ```text
   7       5   4       3       2       1       0
 +-----------+-------+-------+-------+---------------+
-| RESERVED  | DOWN  | UP    | KIND  | ROLE          |
+| HOPS      | DOWN  | UP    | KIND  | ROLE          |
 +-----------+-------+-------+-------+---------------+
 | 3 bits    | 1 bit | 1 bit | 1 bit | 2 bits        |
 +-----------+-------+-------+-------+---------------+
@@ -212,6 +213,18 @@ flow state has been released.
 | UP | `1` | QUIC uplink |
 | DOWN | `0` | TLS/TCP downlink |
 | DOWN | `1` | QUIC downlink |
+| HOPS | `0..7` | Remaining native Portal forwarding budget |
+
+Vector-originated flows MUST set HOPS to zero. A Portal that forwards such a
+flow to its configured native upstream initializes HOPS to seven. A forwarding
+Portal receiving a nonzero value MUST decrement it by one. A Portal MAY
+terminate a flow received with HOPS equal to one, but MUST reject an attempt to
+forward it with `FLOW_LIMIT`. OPEN and ATTACH halves MUST carry the same HOPS
+value; a mismatch is `METADATA_CONFLICT`.
+
+These bits bound a native chain to seven Portal-to-Portal transitions without
+changing the five-byte header or ALPN. Every Portal participating in a native
+chain must implement this HOPS definition.
 
 ### 4.2 Roles
 
