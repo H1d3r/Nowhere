@@ -221,12 +221,26 @@ the Linux process and IPC model intact inside each environment.
 
 ## Development
 
+On Linux:
+
 ```bash
 cargo fmt --all -- --check
 cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
+
+On macOS with [Apple Container](https://github.com/apple/container), run the
+same Linux checks through the reusable, cache-backed environment:
+
+```bash
+./scripts/check-linux.sh
+```
+
+The script pins Rust 1.95.0 by default, mounts the source read-only, and keeps
+Cargo, rustup, and target caches in named volumes. Override its resources or
+toolchain with `NOWHERE_CONTAINER_CPUS`, `NOWHERE_CONTAINER_MEMORY`,
+`NOWHERE_LINUX_IMAGE`, and `NOWHERE_RUST_TOOLCHAIN`.
 
 Protocol changes must update the normative wire document and protocol-vector
 tests in the same change.

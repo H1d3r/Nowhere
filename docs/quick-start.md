@@ -12,6 +12,13 @@ cargo build --release --locked
 ./target/release/nowhere --help
 ```
 
+On macOS with Apple Container, the repository provides a pinned Linux check
+environment instead:
+
+```bash
+./scripts/check-linux.sh
+```
+
 ## Start a Local Portal
 
 ```bash
