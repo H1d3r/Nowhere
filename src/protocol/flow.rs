@@ -15,7 +15,9 @@ const ROLE_MASK: u8 = 0b0000_0011;
 const KIND_BIT: u8 = 0b0000_0100;
 const UPLINK_BIT: u8 = 0b0000_1000;
 const DOWNLINK_BIT: u8 = 0b0001_0000;
-const RESERVED_MASK: u8 = 0b1110_0000;
+const HOPS_SHIFT: u8 = 5;
+/// Largest remaining Portal-to-Portal hop budget representable in the header.
+pub const MAX_PORTAL_HOPS: u8 = 7;
 
 pub type SessionId = [u8; SESSION_ID_LEN];
 /// Flow identifier scoped to one logical session.
@@ -57,11 +59,17 @@ pub struct FlowHeader {
     pub kind: FlowKind,
     pub uplink: Carrier,
     pub downlink: Carrier,
+    /// Remaining Portal-to-Portal forwarding budget. Vector-originated flows
+    /// use zero; the first forwarding Portal initializes the budget.
+    pub hops: u8,
 }
 
 impl FlowHeader {
     /// Validates role, ID, and carrier invariants independent of the current lane.
     pub fn validate(self) -> Result<()> {
+        if self.hops > MAX_PORTAL_HOPS {
+            bail!("protocol::flow::FlowHeader::validate: hop budget exceeds {MAX_PORTAL_HOPS}")
+        }
         if self.flow_id == 0 {
             bail!("protocol::flow::FlowHeader::validate: zero flow id");
         }
@@ -110,7 +118,8 @@ pub fn write_flow_header(header: FlowHeader) -> [u8; FLOW_HEADER_LEN] {
     let flags = header.role as u8
         | (header.kind as u8) << 2
         | (header.uplink as u8) << 3
-        | (header.downlink as u8) << 4;
+        | (header.downlink as u8) << 4
+        | header.hops << HOPS_SHIFT;
     let mut output = [0; FLOW_HEADER_LEN];
     output[0] = flags;
     output[1..].copy_from_slice(&header.flow_id.to_be_bytes());
@@ -126,9 +135,6 @@ pub fn decode_flow_header(bytes: &[u8]) -> Result<FlowHeader> {
         );
     }
     let flags = bytes[0];
-    if flags & RESERVED_MASK != 0 {
-        bail!("protocol::flow::decode_flow_header: reserved flags are non-zero");
-    }
     let role = match flags & ROLE_MASK {
         0 => FlowRole::Duplex,
         1 => FlowRole::Open,
@@ -156,6 +162,7 @@ pub fn decode_flow_header(bytes: &[u8]) -> Result<FlowHeader> {
         kind,
         uplink,
         downlink,
+        hops: flags >> HOPS_SHIFT,
     };
     header.validate()?;
     Ok(header)

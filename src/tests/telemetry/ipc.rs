@@ -4,7 +4,9 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::telemetry::{InstanceDescriptor, InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel};
+use crate::telemetry::{
+    InstanceDescriptor, InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetrySnapshot,
+};
 use crate::transport::Stats;
 
 #[test]
@@ -21,6 +23,19 @@ fn parses_only_exact_v1_socket_names() {
     assert!(parse_socket_path("@nowhere.v2.1000.42.900").is_none());
     assert!(parse_socket_path("@nowhere.v1.1000.42").is_none());
     assert!(parse_socket_path("@nowhere.v1.1000.42.900.extra").is_none());
+}
+
+#[test]
+fn v1_snapshot_without_ping_defaults_to_zero() {
+    let mut encoded = serde_json::to_value(TelemetrySnapshot {
+        ping_ms: 23,
+        ..TelemetrySnapshot::default()
+    })
+    .unwrap();
+    encoded.as_object_mut().unwrap().remove("ping_ms");
+
+    let decoded: TelemetrySnapshot = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.ping_ms, 0);
 }
 
 #[tokio::test]
@@ -160,7 +175,7 @@ async fn multiple_clients_can_read_and_change_subscriptions() {
         ServerMessage::RuntimeEvent(_)
     ));
 
-    hub.capture_and_publish(&Stats::default(), 0);
+    hub.capture_and_publish(&Stats::default(), 0, 0);
     assert!(matches!(
         tokio::time::timeout(Duration::from_secs(1), summary_reader.next_message())
             .await

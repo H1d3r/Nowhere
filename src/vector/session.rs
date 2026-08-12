@@ -23,8 +23,9 @@ use tokio_rustls::client::TlsStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::{
-    BudgetedDatagram, UdpDatagramSend, handshake_timeout, reserve_udp_budget, send_quic_udp_packet,
-    service_cooldown, udp_idle_timeout,
+    BudgetedDatagram, LatencyGuard, LatencyTracker, UdpDatagramSend, filter_addrs,
+    handshake_timeout, parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown,
+    udp_idle_timeout,
 };
 use crate::protocol::{
     AuthFrame, AuthKey, AuthTransport, Credentials, DatagramReassembler, FlowId, OwnedUdpFragment,
@@ -34,7 +35,7 @@ use crate::protocol::{
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetryHub};
 use crate::transport::Stats;
 
-use super::config::VectorConfig;
+use super::config::PortalClientConfig;
 use super::tls::{ClientTls, EXPORTER_LABEL};
 
 const WARM_LANE_TTL: Duration = Duration::from_secs(30);
@@ -43,11 +44,33 @@ const QUIC_STREAM_RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
 const QUIC_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
 const QUIC_SEND_WINDOW: u64 = 32 * 1024 * 1024;
 
+#[derive(Clone)]
+pub(super) struct ClientSignals {
+    stats: Arc<Stats>,
+    telemetry: Arc<TelemetryHub>,
+    latency: Arc<LatencyTracker>,
+}
+
+impl ClientSignals {
+    pub(super) fn new(
+        stats: Arc<Stats>,
+        telemetry: Arc<TelemetryHub>,
+        latency: Arc<LatencyTracker>,
+    ) -> Self {
+        Self {
+            stats,
+            telemetry,
+            latency,
+        }
+    }
+}
+
 pub(super) struct TlsLane {
     pub(super) stream: TlsStream<tokio::net::TcpStream>,
     pending_auth: Option<AuthFrame>,
     created_at: Instant,
     _link: LinkGuard,
+    latency: LatencyGuard,
 }
 
 pub(super) struct TlsLaneParts {
@@ -55,6 +78,7 @@ pub(super) struct TlsLaneParts {
     pub(super) writer: tokio::io::WriteHalf<TlsStream<tokio::net::TcpStream>>,
     pub(super) pending_auth: Option<AuthFrame>,
     pub(super) link: LinkGuard,
+    pub(super) latency: LatencyGuard,
 }
 
 impl TlsLane {
@@ -75,6 +99,7 @@ impl TlsLane {
             pending_auth,
             created_at: _,
             _link,
+            latency,
         } = self;
         let (reader, writer) = tokio::io::split(stream);
         TlsLaneParts {
@@ -82,6 +107,7 @@ impl TlsLane {
             writer,
             pending_auth,
             link: _link,
+            latency,
         }
     }
 }
@@ -138,11 +164,13 @@ impl Drop for LinkGuard {
 pub(super) struct TlsPool {
     target: usize,
     endpoint: String,
+    dialer_ip: String,
     tls: ClientTls,
     auth_key: AuthKey,
     session_id: SessionId,
     stats: Arc<Stats>,
     telemetry: Arc<TelemetryHub>,
+    latency: Arc<LatencyTracker>,
     idle: Mutex<VecDeque<TlsLane>>,
     preparing: AtomicU64,
     replenish: Notify,
@@ -150,21 +178,22 @@ pub(super) struct TlsPool {
 
 impl TlsPool {
     pub(super) fn new(
-        config: &VectorConfig,
+        config: &PortalClientConfig,
         tls: ClientTls,
         credentials: &Credentials,
         session_id: SessionId,
-        stats: Arc<Stats>,
-        telemetry: Arc<TelemetryHub>,
+        signals: ClientSignals,
     ) -> Arc<Self> {
         Arc::new(Self {
             target: config.pool,
-            endpoint: config.portal_endpoint(),
+            endpoint: config.endpoint(),
+            dialer_ip: config.dialer_ip.clone(),
             tls,
             auth_key: credentials.auth_key,
             session_id,
-            stats,
-            telemetry,
+            stats: signals.stats,
+            telemetry: signals.telemetry,
+            latency: signals.latency,
             idle: Mutex::new(VecDeque::with_capacity(config.pool)),
             preparing: AtomicU64::new(0),
             replenish: Notify::new(),
@@ -180,6 +209,7 @@ impl TlsPool {
             match candidate {
                 Some(mut lane) if !lane.expired() => {
                     if lane.usable() {
+                        lane.latency.update_tcp(lane.stream.get_ref().0);
                         self.replenish.notify_one();
                         return Ok(lane);
                     }
@@ -245,7 +275,12 @@ impl TlsPool {
     }
 
     async fn connect_lane(&self, authenticate_now: bool) -> Result<TlsLane> {
-        let (mut stream, exporter) = self.tls.connect_tcp(&self.endpoint).await?;
+        let (mut stream, exporter) = self
+            .tls
+            .connect_tcp(&self.endpoint, &self.dialer_ip)
+            .await?;
+        let latency = self.latency.register();
+        latency.update_tcp(stream.get_ref().0);
         let auth = encode_auth_frame(
             self.auth_key,
             AuthTransport::TlsTcp,
@@ -266,11 +301,23 @@ impl TlsPool {
             pending_auth,
             created_at: Instant::now(),
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), false),
+            latency,
         })
     }
 
     pub(super) async fn idle_count(&self) -> usize {
         self.idle.lock().await.len()
+    }
+
+    pub(super) async fn refresh_latency(&self) {
+        let idle = self.idle.lock().await;
+        for lane in idle.iter() {
+            lane.latency.update_tcp(lane.stream.get_ref().0);
+        }
+    }
+
+    pub(super) async fn clear(&self) {
+        self.idle.lock().await.clear();
     }
 }
 
@@ -294,12 +341,13 @@ fn idle_stream_usable<R: AsyncRead + Unpin>(reader: &mut R) -> bool {
 
 /// Lazily created, reconnecting shared QUIC session.
 pub(super) struct QuicManager {
-    config: VectorConfig,
+    config: PortalClientConfig,
     tls: ClientTls,
     auth_key: AuthKey,
     session_id: SessionId,
     stats: Arc<Stats>,
     telemetry: Arc<TelemetryHub>,
+    latency: Arc<LatencyTracker>,
     state: Mutex<Option<Arc<QuicSession>>>,
     connect_lock: Mutex<()>,
     retry_after: Mutex<Option<Instant>>,
@@ -309,12 +357,11 @@ pub(super) struct QuicManager {
 
 impl QuicManager {
     pub(super) fn new(
-        config: VectorConfig,
+        config: PortalClientConfig,
         tls: ClientTls,
         credentials: &Credentials,
         session_id: SessionId,
-        stats: Arc<Stats>,
-        telemetry: Arc<TelemetryHub>,
+        signals: ClientSignals,
         shutdown: CancellationToken,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -322,8 +369,9 @@ impl QuicManager {
             tls,
             auth_key: credentials.auth_key,
             session_id,
-            stats,
-            telemetry,
+            stats: signals.stats,
+            telemetry: signals.telemetry,
+            latency: signals.latency,
             state: Mutex::new(None),
             connect_lock: Mutex::new(()),
             retry_after: Mutex::new(None),
@@ -380,7 +428,7 @@ impl QuicManager {
         .await
         .map_err(|_| anyhow!("vector::session::QuicManager::connect: Portal DNS timeout"))?
         .context("vector::session::QuicManager::connect: Portal DNS failed")?;
-        let addresses: Vec<_> = resolved.collect();
+        let addresses = filter_addrs(resolved, parse_local_ip(&self.config.dialer_ip));
         if addresses.is_empty() {
             bail!("vector::session::QuicManager::connect: no Portal address resolved");
         }
@@ -395,10 +443,12 @@ impl QuicManager {
     }
 
     async fn connect_address(&self, address: SocketAddr) -> Result<Arc<QuicSession>> {
-        let bind = if address.is_ipv4() {
-            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
-        } else {
-            SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0)
+        let bind = match parse_local_ip(&self.config.dialer_ip) {
+            Some(ip) => SocketAddr::new(ip, 0),
+            None if address.is_ipv4() => {
+                SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+            }
+            None => SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), 0),
         };
         let mut endpoint = Endpoint::client(bind)
             .with_context(|| format!("vector::session::QuicManager: bind {bind} failed"))?;
@@ -431,6 +481,8 @@ impl QuicManager {
             max_bytes: self.queue_bytes,
             ttl: Duration::from_secs(10),
         };
+        let latency = self.latency.register();
+        latency.update(connection.rtt());
         let session = Arc::new(QuicSession {
             _endpoint: endpoint,
             connection,
@@ -439,6 +491,7 @@ impl QuicManager {
             reassembler: StdMutex::new(DatagramReassembler::new(reassembly_config)),
             queue_budget: Arc::new(Semaphore::new(self.queue_bytes)),
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), true),
+            latency,
         });
         spawn_datagram_loop(Arc::downgrade(&session), self.shutdown.clone());
         Ok(session)
@@ -448,6 +501,12 @@ impl QuicManager {
         if let Some(session) = self.state.lock().await.take() {
             session.connection.close(VarInt::from_u32(0), b"");
             let _ = timeout_at(deadline, session.connection.closed()).await;
+        }
+    }
+
+    pub(super) async fn refresh_latency(&self) {
+        if let Some(session) = self.live_session().await {
+            session.latency.update(session.connection.rtt());
         }
     }
 }
@@ -460,6 +519,7 @@ pub(super) struct QuicSession {
     reassembler: StdMutex<DatagramReassembler<OwnedSemaphorePermit>>,
     queue_budget: Arc<Semaphore>,
     _link: LinkGuard,
+    latency: LatencyGuard,
 }
 
 pub(super) type QueuedDatagram = BudgetedDatagram;

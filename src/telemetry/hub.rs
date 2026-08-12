@@ -109,7 +109,7 @@ impl TelemetryHub {
 
     /// Atomically captures the existing transport counters plus local process
     /// resources, then wakes every connected summary/detail subscriber.
-    pub(crate) fn capture_and_publish(&self, stats: &Stats, pool_active: u64) {
+    pub(crate) fn capture_and_publish(&self, stats: &Stats, pool_active: u64, ping_ms: u64) {
         let process = self
             .process_sampler
             .lock()
@@ -141,6 +141,7 @@ impl TelemetryHub {
             down_tcp: stats.down_tcp.load(Ordering::Relaxed),
             down_udp: stats.down_udp.load(Ordering::Relaxed),
             pool_active,
+            ping_ms,
             cpu_percent: process.cpu_percent,
             rss_bytes: process.rss_bytes,
             open_fds: process.open_fds,

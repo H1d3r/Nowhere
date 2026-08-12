@@ -13,37 +13,68 @@ use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use crate::common::socks::SocksAddress;
 use crate::common::{UdpDatagramSend, handshake_timeout};
-use crate::protocol::{Carrier, FlowHeader, FlowKind, FlowRole, write_udp_packet};
+use crate::protocol::{Carrier, FlowHeader, FlowKind, FlowRole, Target, write_udp_packet};
 
-use super::VectorInner;
+use super::PortalClient;
 use super::config::CarrierMode;
 use super::flow::{
-    BoxReader, BoxWriter, OpenFlowError, PhysicalLane, SessionGuard, carrier, carrier_counter,
-    open_lane, read_ready, to_target, write_header, write_open_request,
+    BoxReader, BoxWriter, OpenFlowError, PhysicalLane, SessionGuard, carrier, open_lane,
+    read_ready, write_header, write_open_request,
 };
 use super::flow_id::FlowLease;
 use super::session::{QueuedDatagram, QuicSession};
-pub(super) struct UdpTunnel {
+pub(crate) struct UdpTunnel {
     flow_id: u32,
-    reader: Option<BoxReader>,
-    writer: Option<BoxWriter>,
-    down_datagrams: Option<mpsc::Receiver<QueuedDatagram>>,
     quic: Option<Arc<QuicSession>>,
-    packet_id: u32,
-    uot_read: UotReadState,
     pub(super) uplink: Carrier,
     pub(super) downlink: Carrier,
-    vector: Arc<VectorInner>,
+    sender: UdpTunnelSender,
+    receiver: UdpTunnelReceiver,
     _lanes: Vec<PhysicalLane>,
     _lease: FlowLease,
-    _session: SessionGuard,
+    _session: Option<SessionGuard>,
     _flow_permit: OwnedSemaphorePermit,
 }
 
 impl UdpTunnel {
-    pub(super) async fn send(&mut self, payload: &[u8]) -> Result<bool> {
+    pub(crate) fn carriers(&self) -> (Carrier, Carrier) {
+        (self.uplink, self.downlink)
+    }
+    pub(crate) async fn send(&mut self, payload: &[u8]) -> Result<bool> {
+        self.sender.send(payload).await
+    }
+
+    pub(crate) async fn recv_into(
+        &mut self,
+        payload: &mut Vec<u8>,
+    ) -> Result<Option<ReceivedUdpPacket>> {
+        self.receiver.recv_into(payload).await
+    }
+
+    pub(crate) fn split_mut(&mut self) -> (&mut UdpTunnelSender, &mut UdpTunnelReceiver) {
+        (&mut self.sender, &mut self.receiver)
+    }
+
+    pub(crate) async fn close(&mut self) {
+        self.sender.close().await;
+        if let Some(quic) = &self.quic {
+            quic.close_udp(self.flow_id);
+        }
+    }
+}
+
+pub(crate) struct UdpTunnelSender {
+    flow_id: u32,
+    writer: Option<BoxWriter>,
+    quic: Option<Arc<QuicSession>>,
+    packet_id: u32,
+    uplink: Carrier,
+    client: Arc<PortalClient>,
+}
+
+impl UdpTunnelSender {
+    pub(crate) async fn send(&mut self, payload: &[u8]) -> Result<bool> {
         let delivered = if let Some(writer) = &mut self.writer {
             write_udp_packet(writer, payload).await?;
             true
@@ -58,16 +89,34 @@ impl UdpTunnel {
         if !delivered {
             return Ok(false);
         }
-        self.vector
-            .stats
-            .udp_rx
-            .fetch_add(payload.len() as u64, Ordering::Relaxed);
-        carrier_counter(&self.vector, self.uplink, true)
-            .fetch_add(payload.len() as u64, Ordering::Relaxed);
+        if self.client.account_stats {
+            self.client
+                .stats
+                .udp_rx
+                .fetch_add(payload.len() as u64, Ordering::Relaxed);
+            client_carrier_counter(&self.client, self.uplink, true)
+                .fetch_add(payload.len() as u64, Ordering::Relaxed);
+        }
         Ok(true)
     }
 
-    pub(super) async fn recv_into(
+    async fn close(&mut self) {
+        if let Some(writer) = &mut self.writer {
+            let _ = timeout(handshake_timeout(), writer.shutdown()).await;
+        }
+    }
+}
+
+pub(crate) struct UdpTunnelReceiver {
+    reader: Option<BoxReader>,
+    down_datagrams: Option<mpsc::Receiver<QueuedDatagram>>,
+    uot_read: UotReadState,
+    downlink: Carrier,
+    client: Arc<PortalClient>,
+}
+
+impl UdpTunnelReceiver {
+    pub(crate) async fn recv_into(
         &mut self,
         payload: &mut Vec<u8>,
     ) -> Result<Option<ReceivedUdpPacket>> {
@@ -85,22 +134,15 @@ impl UdpTunnel {
             bail!("vector::udp_flow::UdpTunnel::recv: no downlink carrier");
         };
         let size = packet.len();
-        self.vector
-            .stats
-            .udp_tx
-            .fetch_add(size as u64, Ordering::Relaxed);
-        carrier_counter(&self.vector, self.downlink, false)
-            .fetch_add(size as u64, Ordering::Relaxed);
+        if self.client.account_stats {
+            self.client
+                .stats
+                .udp_tx
+                .fetch_add(size as u64, Ordering::Relaxed);
+            client_carrier_counter(&self.client, self.downlink, false)
+                .fetch_add(size as u64, Ordering::Relaxed);
+        }
         Ok(Some(packet))
-    }
-
-    pub(super) async fn close(&mut self) {
-        if let Some(writer) = &mut self.writer {
-            let _ = timeout(handshake_timeout(), writer.shutdown()).await;
-        }
-        if let Some(quic) = &self.quic {
-            quic.close_udp(self.flow_id);
-        }
     }
 }
 
@@ -110,20 +152,20 @@ fn quic_datagram_delivered(outcome: UdpDatagramSend) -> bool {
 
 /// A UoT packet already in the reusable read buffer, or an owned zero-copy
 /// slice received from Quinn.
-pub(super) enum ReceivedUdpPacket {
+pub(crate) enum ReceivedUdpPacket {
     Buffered(usize),
     Owned(Bytes),
 }
 
 impl ReceivedUdpPacket {
-    pub(super) fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Buffered(size) => *size,
             Self::Owned(payload) => payload.len(),
         }
     }
 
-    pub(super) fn payload<'a>(&'a self, buffered: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn payload<'a>(&'a self, buffered: &'a [u8]) -> &'a [u8] {
         match self {
             Self::Buffered(size) => &buffered[..*size],
             Self::Owned(payload) => payload,
@@ -139,34 +181,34 @@ impl Drop for UdpTunnel {
     }
 }
 
-pub(super) async fn open_udp(
-    vector: Arc<VectorInner>,
-    address: &SocksAddress,
+pub(crate) async fn open_udp(
+    client: Arc<PortalClient>,
+    target: &Target,
+    hops: u8,
 ) -> std::result::Result<UdpTunnel, OpenFlowError> {
-    let target = to_target(address).map_err(OpenFlowError::Protocol)?;
-    let flow_permit = vector
+    let flow_permit = client
         .udp_flow_permits
         .clone()
         .try_acquire_owned()
         .map_err(|_| OpenFlowError::Setup(crate::protocol::SetupResult::FlowLimit))?;
-    let lease = vector
+    let lease = client
         .flow_ids
         .allocate()
         .map_err(OpenFlowError::Protocol)?;
     let flow_id = lease.id();
-    let uplink = carrier(vector.config.up);
-    let downlink = carrier(vector.config.down);
+    let uplink = carrier(client.config.up);
+    let downlink = carrier(client.config.down);
 
     let mut lanes = if uplink == downlink {
         vec![
-            open_lane(vector.clone(), vector.config.up)
+            open_lane(client.clone(), client.config.up)
                 .await
                 .map_err(OpenFlowError::Transport)?,
         ]
     } else {
         let (uplink_lane, downlink_lane) = tokio::join!(
-            open_lane(vector.clone(), vector.config.up),
-            open_lane(vector.clone(), vector.config.down),
+            open_lane(client.clone(), client.config.up),
+            open_lane(client.clone(), client.config.down),
         );
         vec![
             uplink_lane.map_err(OpenFlowError::Transport)?,
@@ -175,7 +217,7 @@ pub(super) async fn open_udp(
     };
 
     let quic = lanes.iter().find_map(|lane| lane._quic.clone());
-    let mut down_datagrams = if vector.config.down == CarrierMode::Udp {
+    let mut down_datagrams = if client.config.down == CarrierMode::Udp {
         Some(
             quic.as_ref()
                 .expect("QUIC downlink has session")
@@ -187,7 +229,7 @@ pub(super) async fn open_udp(
     };
 
     if let Err(error) =
-        setup_udp_lanes(&vector, &mut lanes, flow_id, uplink, downlink, &target).await
+        setup_udp_lanes(&client, &mut lanes, flow_id, uplink, downlink, target, hops).await
     {
         if let Some(quic) = &quic {
             quic.remove_udp(flow_id);
@@ -206,31 +248,44 @@ pub(super) async fn open_udp(
         return Err(OpenFlowError::Transport(error));
     }
 
-    let writer = if vector.config.up == CarrierMode::Tcp {
+    let writer = if client.config.up == CarrierMode::Tcp {
         Some(lanes[0].take_writer())
     } else {
         None
     };
     let down_index = usize::from(uplink != downlink);
-    let reader = if vector.config.down == CarrierMode::Tcp {
+    let reader = if client.config.down == CarrierMode::Tcp {
         Some(lanes[down_index].take_reader())
     } else {
         None
     };
-    vector.stats.add_session(true);
+    if client.account_stats {
+        client.stats.add_session(true);
+    }
     Ok(UdpTunnel {
         flow_id,
-        reader,
-        writer,
-        down_datagrams: down_datagrams.take(),
-        quic,
-        packet_id: 1,
-        uot_read: UotReadState::default(),
         uplink,
         downlink,
-        _session: SessionGuard::new(vector.clone(), true),
+        sender: UdpTunnelSender {
+            flow_id,
+            writer,
+            quic: quic.clone(),
+            packet_id: 1,
+            uplink,
+            client: client.clone(),
+        },
+        receiver: UdpTunnelReceiver {
+            reader,
+            down_datagrams: down_datagrams.take(),
+            uot_read: UotReadState::default(),
+            downlink,
+            client: client.clone(),
+        },
+        quic,
+        _session: client
+            .account_stats
+            .then(|| SessionGuard::new(client.stats.clone(), true)),
         _flow_permit: flow_permit,
-        vector,
         _lanes: lanes,
         _lease: lease,
     })
@@ -290,12 +345,13 @@ impl UotReadState {
 }
 
 async fn setup_udp_lanes(
-    vector: &VectorInner,
+    client: &PortalClient,
     lanes: &mut [PhysicalLane],
     flow_id: u32,
     uplink: Carrier,
     downlink: Carrier,
     target: &crate::protocol::Target,
+    hops: u8,
 ) -> std::result::Result<(), OpenFlowError> {
     let open = FlowHeader {
         role: if uplink == downlink {
@@ -307,6 +363,7 @@ async fn setup_udp_lanes(
         kind: FlowKind::Udp,
         uplink,
         downlink,
+        hops,
     };
     let pending_auth = lanes[0].take_pending_auth();
     write_open_request(
@@ -332,7 +389,7 @@ async fn setup_udp_lanes(
         .map_err(OpenFlowError::Transport)?;
         lanes[1].mark_auth_sent();
     }
-    if vector.config.up == CarrierMode::Udp {
+    if client.config.up == CarrierMode::Udp {
         timeout(
             handshake_timeout(),
             lanes[0]
@@ -350,7 +407,7 @@ async fn setup_udp_lanes(
         .map_err(|error| OpenFlowError::Transport(error.into()))?;
     }
     let down_index = usize::from(uplink != downlink);
-    if vector.config.down == CarrierMode::Udp && down_index != 0 {
+    if client.config.down == CarrierMode::Udp && down_index != 0 {
         timeout(
             handshake_timeout(),
             lanes[down_index]
@@ -370,6 +427,19 @@ async fn setup_udp_lanes(
     read_ready(lanes[down_index].reader.as_mut().expect("downlink reader"))
         .await
         .map_err(OpenFlowError::Setup)
+}
+
+fn client_carrier_counter(
+    client: &PortalClient,
+    carrier: Carrier,
+    uplink: bool,
+) -> &std::sync::atomic::AtomicU64 {
+    match (carrier, uplink) {
+        (Carrier::TlsTcp, true) => &client.stats.up_tcp,
+        (Carrier::Quic, true) => &client.stats.up_udp,
+        (Carrier::TlsTcp, false) => &client.stats.down_tcp,
+        (Carrier::Quic, false) => &client.stats.down_udp,
+    }
 }
 
 #[cfg(test)]

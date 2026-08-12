@@ -6,6 +6,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -18,7 +19,7 @@ use crate::common::socks::{
     REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE, REPLY_HOST_UNREACHABLE,
     REPLY_NETWORK_UNREACHABLE, REPLY_SUCCEEDED, REPLY_TTL_EXPIRED, SocksAddress,
 };
-use crate::common::{flow_setup_timeout, handshake_timeout, tcp_read_timeout};
+use crate::common::{LatencyGuard, flow_setup_timeout, handshake_timeout, tcp_read_timeout};
 use crate::protocol::{
     AUTH_FRAME_LEN, AuthFrame, Carrier, FLOW_HEADER_LEN, FlowHeader, FlowKind, FlowResult,
     FlowRole, SetupResult, TARGET_MAX_ENCODED_LEN, Target, encode_target_into, read_flow_result,
@@ -26,12 +27,12 @@ use crate::protocol::{
 };
 use crate::telemetry::{AccessOutcome, AccessSpan, RuntimeEvent, RuntimeKind, RuntimeLevel};
 
-use super::VectorInner;
 use super::config::CarrierMode;
 use super::flow_id::FlowLease;
 use super::session::{LinkGuard, QuicSession};
-pub(super) type BoxReader = Pin<Box<dyn AsyncRead + Send>>;
-pub(super) type BoxWriter = Pin<Box<dyn AsyncWrite + Send>>;
+use super::{PortalClient, VectorInner};
+pub(crate) type BoxReader = Pin<Box<dyn AsyncRead + Send>>;
+pub(crate) type BoxWriter = Pin<Box<dyn AsyncWrite + Send>>;
 
 pub(super) struct PhysicalLane {
     pub(super) reader: Option<BoxReader>,
@@ -39,6 +40,7 @@ pub(super) struct PhysicalLane {
     pending_auth: Option<AuthFrame>,
     pending_quic_auth: bool,
     _link: Option<LinkGuard>,
+    _latency: Option<LatencyGuard>,
     pub(super) _quic: Option<Arc<QuicSession>>,
 }
 
@@ -72,7 +74,7 @@ impl Drop for PhysicalLane {
     }
 }
 
-pub(super) struct TcpTunnel {
+pub(crate) struct TcpTunnel {
     reader: BoxReader,
     writer: BoxWriter,
     _lanes: Vec<PhysicalLane>,
@@ -82,32 +84,94 @@ pub(super) struct TcpTunnel {
     _flow_permit: OwnedSemaphorePermit,
 }
 
+pub(crate) struct TcpTunnelGuard {
+    _lanes: Vec<PhysicalLane>,
+    _lease: FlowLease,
+    _flow_permit: OwnedSemaphorePermit,
+}
+
 impl TcpTunnel {
     pub(super) fn socks_reply(&self) -> u8 {
         REPLY_SUCCEEDED
     }
+
+    pub(crate) fn carriers(&self) -> (Carrier, Carrier) {
+        (self.uplink, self.downlink)
+    }
+
+    pub(crate) fn into_parts(self) -> (BoxReader, BoxWriter, TcpTunnelGuard) {
+        let Self {
+            reader,
+            writer,
+            _lanes,
+            _lease,
+            uplink: _,
+            downlink: _,
+            _flow_permit,
+        } = self;
+        (
+            reader,
+            writer,
+            TcpTunnelGuard {
+                _lanes,
+                _lease,
+                _flow_permit,
+            },
+        )
+    }
 }
 
-pub(super) async fn open_tcp(
-    vector: Arc<VectorInner>,
-    target: &SocksAddress,
+impl AsyncRead for TcpTunnel {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.reader.as_mut().poll_read(cx, buffer)
+    }
+}
+
+impl AsyncWrite for TcpTunnel {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.writer.as_mut().poll_write(cx, buffer)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        self.writer.as_mut().poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.writer.as_mut().poll_shutdown(cx)
+    }
+}
+
+pub(crate) async fn open_tcp(
+    client: Arc<PortalClient>,
+    target: &Target,
+    hops: u8,
 ) -> std::result::Result<TcpTunnel, OpenFlowError> {
-    let target = to_target(target).map_err(OpenFlowError::Protocol)?;
-    let flow_permit = vector
+    let flow_permit = client
         .tcp_flow_permits
         .clone()
         .try_acquire_owned()
         .map_err(|_| OpenFlowError::Setup(SetupResult::FlowLimit))?;
-    let lease = vector
+    let lease = client
         .flow_ids
         .allocate()
         .map_err(OpenFlowError::Protocol)?;
     let flow_id = lease.id();
-    let uplink = carrier(vector.config.up);
-    let downlink = carrier(vector.config.down);
+    let uplink = carrier(client.config.up);
+    let downlink = carrier(client.config.down);
 
     if uplink == downlink {
-        let mut lane = open_lane(vector.clone(), vector.config.up)
+        let mut lane = open_lane(client.clone(), client.config.up)
             .await
             .map_err(OpenFlowError::Transport)?;
         let header = FlowHeader {
@@ -116,13 +180,14 @@ pub(super) async fn open_tcp(
             kind: FlowKind::Tcp,
             uplink,
             downlink,
+            hops,
         };
         let pending_auth = lane.take_pending_auth();
         write_open_request(
             lane.writer.as_mut().expect("lane writer"),
             pending_auth,
             header,
-            &target,
+            target,
         )
         .await
         .map_err(OpenFlowError::Transport)?;
@@ -144,8 +209,8 @@ pub(super) async fn open_tcp(
     }
 
     let (uplink_result, downlink_result) = tokio::join!(
-        open_lane(vector.clone(), vector.config.up),
-        open_lane(vector.clone(), vector.config.down),
+        open_lane(client.clone(), client.config.up),
+        open_lane(client.clone(), client.config.down),
     );
     let mut uplink_lane = uplink_result.map_err(OpenFlowError::Transport)?;
     let mut downlink_lane = downlink_result.map_err(OpenFlowError::Transport)?;
@@ -155,6 +220,7 @@ pub(super) async fn open_tcp(
         kind: FlowKind::Tcp,
         uplink,
         downlink,
+        hops,
     };
     let attach_header = FlowHeader {
         role: FlowRole::Attach,
@@ -165,7 +231,7 @@ pub(super) async fn open_tcp(
         uplink_lane.writer.as_mut().expect("uplink writer"),
         pending_auth,
         open_header,
-        &target,
+        target,
     )
     .await
     .map_err(OpenFlowError::Transport)?;
@@ -205,7 +271,7 @@ pub(super) async fn relay_tcp(
     access: AccessSpan,
 ) -> Result<()> {
     vector.stats.add_session(false);
-    let _session = SessionGuard::new(vector.clone(), false);
+    let _session = SessionGuard::new(vector.stats.clone(), false);
     vector.logger.debug(format_args!(
         "vector::flow::relay_tcp: exchange starting: UP[{}] {client_peer} -> {} -> {} -> {target} | DOWN[{}] {target} -> {} -> {} -> {client_peer}",
         carrier_name(tunnel.uplink),
@@ -290,13 +356,16 @@ pub(super) async fn relay_tcp(
     result
 }
 
-pub(super) async fn open_lane(vector: Arc<VectorInner>, mode: CarrierMode) -> Result<PhysicalLane> {
+pub(super) async fn open_lane(
+    client: Arc<PortalClient>,
+    mode: CarrierMode,
+) -> Result<PhysicalLane> {
     match mode {
         CarrierMode::Tcp => {
-            let parts = match vector.tls_pool.acquire().await {
+            let parts = match client.tls_pool.acquire().await {
                 Ok(lane) => lane.into_parts(),
                 Err(error) => {
-                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                    client.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Warn,
                         RuntimeKind::Reconnect,
                         format!("TLS/TCP carrier connection failed: {error}"),
@@ -310,14 +379,15 @@ pub(super) async fn open_lane(vector: Arc<VectorInner>, mode: CarrierMode) -> Re
                 pending_auth: parts.pending_auth,
                 pending_quic_auth: false,
                 _link: Some(parts.link),
+                _latency: Some(parts.latency),
                 _quic: None,
             })
         }
         CarrierMode::Udp => {
-            let session = match vector.quic.get().await {
+            let session = match client.quic.get().await {
                 Ok(session) => session,
                 Err(error) => {
-                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                    client.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Warn,
                         RuntimeKind::Reconnect,
                         format!("QUIC carrier connection failed: {error}"),
@@ -328,7 +398,7 @@ pub(super) async fn open_lane(vector: Arc<VectorInner>, mode: CarrierMode) -> Re
             let (writer, reader, pending_auth) = match session.open_bi().await {
                 Ok(stream) => stream,
                 Err(error) => {
-                    vector.telemetry.emit_runtime(RuntimeEvent::new(
+                    client.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Warn,
                         RuntimeKind::Carrier,
                         format!("QUIC carrier stream open failed: {error}"),
@@ -343,6 +413,7 @@ pub(super) async fn open_lane(vector: Arc<VectorInner>, mode: CarrierMode) -> Re
                 pending_auth,
                 pending_quic_auth,
                 _link: None,
+                _latency: None,
                 _quic: Some(session),
             })
         }
@@ -458,7 +529,7 @@ pub(super) fn carrier_counter(
     }
 }
 
-pub(super) enum OpenFlowError {
+pub(crate) enum OpenFlowError {
     Setup(SetupResult),
     Transport(anyhow::Error),
     Protocol(anyhow::Error),
@@ -489,6 +560,13 @@ impl OpenFlowError {
             }
         }
     }
+
+    pub(crate) fn setup_result(&self) -> Option<SetupResult> {
+        match self {
+            Self::Setup(result) => Some(*result),
+            Self::Transport(_) | Self::Protocol(_) => None,
+        }
+    }
 }
 
 fn access_error_outcome(error: &str) -> AccessOutcome {
@@ -509,19 +587,19 @@ impl std::fmt::Display for OpenFlowError {
 }
 
 pub(super) struct SessionGuard {
-    vector: Arc<VectorInner>,
+    stats: Arc<crate::transport::Stats>,
     udp: bool,
 }
 
 impl SessionGuard {
-    pub(super) fn new(vector: Arc<VectorInner>, udp: bool) -> Self {
-        Self { vector, udp }
+    pub(super) fn new(stats: Arc<crate::transport::Stats>, udp: bool) -> Self {
+        Self { stats, udp }
     }
 }
 
 impl Drop for SessionGuard {
     fn drop(&mut self) {
-        self.vector.stats.done_session(self.udp);
+        self.stats.done_session(self.udp);
     }
 }
 

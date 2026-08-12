@@ -49,6 +49,7 @@ async fn setup_quic_udp(
         kind: FlowKind::Udp,
         uplink: Carrier::Quic,
         downlink: Carrier::Quic,
+        hops: 0,
     }))
     .await
     .unwrap();
@@ -147,6 +148,7 @@ async fn quic_carrier_mismatch_returns_invalid_request() {
         kind: FlowKind::Tcp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::TlsTcp,
+        hops: 0,
     }))
     .await
     .unwrap();
@@ -186,6 +188,7 @@ async fn first_stream_carries_auth_and_flow_while_pre_auth_datagrams_are_dropped
         kind: FlowKind::Udp,
         uplink: Carrier::Quic,
         downlink: Carrier::Quic,
+        hops: 0,
     }))
     .await
     .unwrap();

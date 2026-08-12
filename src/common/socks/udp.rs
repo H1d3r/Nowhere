@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use tokio::net::{TcpStream, UdpSocket};
 
 use super::protocol::parse_udp_header;
+use crate::common::LatencyGuard;
 
 /// UDP socket facade that preserves payload-only send/receive semantics.
 pub(crate) enum OutboundUdpSocket {
@@ -49,6 +50,7 @@ pub(crate) struct SocksUdpAssociation {
     pub(super) control: TcpStream,
     pub(super) socket: UdpSocket,
     pub(super) target_header: Vec<u8>,
+    pub(super) _latency: LatencyGuard,
 }
 
 impl SocksUdpAssociation {

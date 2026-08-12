@@ -30,7 +30,7 @@ use crate::telemetry::{
 };
 
 use super::super::VectorInner;
-use super::super::flow::{carrier, carrier_name, open_tcp, relay_tcp};
+use super::super::flow::{carrier, carrier_name, open_tcp, relay_tcp, to_target};
 use super::super::udp_flow::{UdpTunnel, open_udp};
 const TCP_LISTEN_BACKLOG: i32 = 1024;
 const SOCKS_UDP_PACKET_MAX: usize = u16::MAX as usize + 3 + 1 + 1 + 255 + 2;
@@ -169,7 +169,8 @@ async fn handle_client(
                 Some(peer.to_string()),
                 &request.address,
             );
-            match open_tcp(vector.clone(), &request.address).await {
+            let target = to_target(&request.address)?;
+            match open_tcp(vector.client.clone(), &target, 0).await {
                 Ok(tunnel) => {
                     let reply = tunnel.socks_reply();
                     write_reply(&mut stream, reply, &SocksAddress::unspecified()).await?;
@@ -354,9 +355,16 @@ async fn open_and_relay_udp_target(
         .unwrap_or_else(|lock| lock.into_inner())
         .map(|endpoint| endpoint.to_string());
     let access = start_access(&vector, TrafficProtocol::Udp, source, &target);
+    let protocol_target = match to_target(&target) {
+        Ok(target) => target,
+        Err(error) => {
+            access.finish(AccessOutcome::Error, Some(error.to_string()));
+            return;
+        }
+    };
     let tunnel = tokio::select! {
         _ = shutdown.cancelled() => return,
-        result = open_udp(vector.clone(), &target) => match result {
+        result = open_udp(vector.client.clone(), &protocol_target, 0) => match result {
             Ok(tunnel) => tunnel,
             Err(error) => {
                 access.finish(error.access_outcome(), Some(error.to_string()));

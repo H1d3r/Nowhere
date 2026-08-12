@@ -135,3 +135,44 @@ fn normalizes_ipv6_portal_authority() {
     assert_eq!(config.remote_host, "::1");
     assert_eq!(config.portal_endpoint(), "[::1]:2077");
 }
+
+#[test]
+fn upstream_authority_decodes_reserved_key_bytes_and_ipv6() {
+    let query = HashMap::from([
+        ("up".to_owned(), "tcp".to_owned()),
+        ("down".to_owned(), "tcp".to_owned()),
+    ]);
+    let (config, credentials) = PortalClientConfig::from_upstream_authority(
+        "part%40key@[::1]:2080",
+        &query,
+        "private/1",
+        "::2",
+    )
+    .unwrap();
+
+    assert_eq!(config.endpoint(), "[::1]:2080");
+    assert_eq!(config.pool, 5);
+    assert_eq!(config.alpn, "private/1");
+    assert_eq!(config.dialer_ip, "::2");
+    assert_eq!(
+        credentials,
+        crate::protocol::Credentials::from_shared_key(b"part@key").unwrap()
+    );
+}
+
+#[test]
+fn upstream_authority_requires_unambiguous_key_endpoint_separator() {
+    let query = HashMap::new();
+    for authority in [
+        "missing-separator.example:2080",
+        "part@key@origin.example:2080",
+        "secret@origin.example",
+        "@origin.example:2080",
+    ] {
+        assert!(
+            PortalClientConfig::from_upstream_authority(authority, &query, "now/1", "auto")
+                .is_err(),
+            "authority accepted: {authority}"
+        );
+    }
+}

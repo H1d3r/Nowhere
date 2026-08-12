@@ -118,6 +118,11 @@ impl Portal {
             self.inner.clone(),
             force_shutdown.clone(),
         ));
+        if let Some(client) = self.inner.outbound.portal_client()
+            && client.pool_size() != 0
+        {
+            auxiliary_tasks.spawn(client.clone().maintain(force_shutdown.clone()));
+        }
 
         let trigger = tokio::select! {
             signal = signals.recv() => match signal {
@@ -187,6 +192,7 @@ impl Portal {
         // No new setup is possible now. End physical carriers and auxiliary
         // work; READY relays have either completed or are being forced below.
         force_shutdown.cancel();
+        self.inner.outbound.close(deadline).await;
         for endpoint in &endpoints {
             endpoint.close(VarInt::from_u32(0), b"");
         }
@@ -257,6 +263,7 @@ impl Portal {
             self.inner
                 .pool_active
                 .load(std::sync::atomic::Ordering::Relaxed),
+            self.inner.outbound.ping_ms(),
         );
         tokio::task::yield_now().await;
         telemetry_shutdown.cancel();
@@ -295,8 +302,8 @@ impl Portal {
 
     /// Returns the effective startup URL that is logged for operators.
     pub(super) fn effective_url(&self) -> String {
-        format!(
-            "portal://{}?net={}&tls={}&alpn={}&rate={}&etar={}&dial={}&socks={}",
+        let base = format!(
+            "portal://{}?net={}&tls={}&alpn={}&rate={}&etar={}&dial={}&socks={}&next={}",
             self.inner.endpoint_addr,
             self.inner.network_mode,
             self.inner.tls_mode,
@@ -304,8 +311,15 @@ impl Portal {
             self.inner.rate_limit,
             self.inner.etar_limit,
             self.inner.outbound.dialer_ip(),
-            self.inner.outbound.socks_endpoint()
-        )
+            self.inner.outbound.socks_endpoint(),
+            self.inner.outbound.next_endpoint(),
+        );
+        self.inner
+            .outbound
+            .next_transport()
+            .map_or(base.clone(), |transport| {
+                format!("{base}&{}", transport.replace(' ', "&"))
+            })
     }
 
     /// Opens QUIC endpoints for network modes that accept UDP service.

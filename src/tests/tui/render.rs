@@ -44,6 +44,7 @@ fn app_with_instance() -> App {
             link_udp: 1,
             link_pairs: 1,
             pool_active: 4,
+            ping_ms: 17,
             cpu_percent: Some(2.5),
             rss_bytes: Some(42 << 20),
             open_fds: Some(33),

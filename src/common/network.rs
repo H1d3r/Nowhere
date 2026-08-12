@@ -95,7 +95,7 @@ pub async fn dial_udp_from_local_ip(
         .map_err(|_| anyhow!("common::util::dial_udp_from_local_ip: dial timeout"))?
 }
 
-pub(super) fn parse_local_ip(dialer_ip: &str) -> Option<IpAddr> {
+pub(crate) fn parse_local_ip(dialer_ip: &str) -> Option<IpAddr> {
     if dialer_ip == DEFAULT_DIALER_IP {
         None
     } else {
@@ -103,7 +103,7 @@ pub(super) fn parse_local_ip(dialer_ip: &str) -> Option<IpAddr> {
     }
 }
 
-pub(super) fn filter_addrs(
+pub(crate) fn filter_addrs(
     addrs: impl Iterator<Item = SocketAddr>,
     local_ip: Option<IpAddr>,
 ) -> Vec<SocketAddr> {

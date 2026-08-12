@@ -12,9 +12,11 @@ use super::PortalInner;
 
 pub(super) async fn event_loop(portal: Arc<PortalInner>, shutdown: CancellationToken) {
     loop {
+        portal.outbound.refresh_latency().await;
         portal.logger.event(format_args!(
-            "CHECK_POINT|MODE={}|PING=0ms|POOL={}|TCPS={}|UDPS={}|TCPRX={}|TCPTX={}|UDPRX={}|UDPTX={}",
+            "CHECK_POINT|MODE={}|PING={}ms|POOL={}|TCPS={}|UDPS={}|TCPRX={}|TCPTX={}|UDPRX={}|UDPTX={}",
             portal.network_mode.checkpoint_value(),
+            portal.outbound.ping_ms(),
             portal.pool_active.load(Ordering::Relaxed),
             portal.stats.tcp_active.load(Ordering::Relaxed),
             portal.stats.udp_active.load(Ordering::Relaxed),
@@ -48,9 +50,11 @@ pub(super) async fn telemetry_loop(portal: Arc<PortalInner>, shutdown: Cancellat
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = interval.tick() => {
+                portal.outbound.refresh_latency().await;
                 portal.telemetry.capture_and_publish(
                     &portal.stats,
                     portal.pool_active.load(Ordering::Relaxed),
+                    portal.outbound.ping_ms(),
                 );
             }
         }

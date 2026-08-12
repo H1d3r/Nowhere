@@ -5,12 +5,14 @@
 
 mod config;
 mod datagram;
+mod latency;
 mod lifecycle;
 mod logger;
 mod network;
 pub(crate) mod socks;
 mod tls;
 
+pub(crate) use config::first_raw_query_value;
 pub use config::{
     DEFAULT_DIALER_IP, DEFAULT_RATE_LIMIT, DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL,
     MIN_TELEMETRY_INTERVAL, env_duration, env_int, flow_setup_timeout, handshake_timeout,
@@ -21,10 +23,12 @@ pub use config::{
 pub(crate) use datagram::{
     BudgetedDatagram, UdpDatagramSend, reserve_udp_budget, send_quic_udp_packet,
 };
+pub(crate) use latency::{LatencyGuard, LatencyTracker};
 pub(crate) use lifecycle::{LifeMode, LifeReason, LifeState, Lifecycle, ShutdownSignals};
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
-pub(crate) use socks::{OutboundDialer, SocksConfig};
+pub(crate) use network::{filter_addrs, parse_local_ip};
+pub(crate) use socks::{OutboundDialer, OutboundTcpStream, OutboundUdpSocket, SocksConfig};
 pub(crate) use tls::certificate_sha256;
 pub(crate) use tls::new_server_configs_with_reload_interval;
 pub use tls::{TLSMode, new_server_configs};

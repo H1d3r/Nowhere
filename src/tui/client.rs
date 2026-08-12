@@ -419,6 +419,7 @@ fn snapshot_ui_value(value: WireSnapshot) -> TelemetrySnapshot {
         down_tcp: value.down_tcp,
         down_udp: value.down_udp,
         pool_active: value.pool_active,
+        ping_ms: value.ping_ms,
         cpu_percent: value.cpu_percent,
         rss_bytes: value.rss_bytes,
         open_fds: value.open_fds,

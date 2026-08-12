@@ -81,6 +81,7 @@ impl InstanceView {
                     quic_links: snapshot.link_udp,
                     pairs: snapshot.link_pairs,
                     pool_active: snapshot.pool_active,
+                    ping_ms: snapshot.ping_ms,
                     cpu_percent: snapshot.cpu_percent.unwrap_or_default().max(0.0),
                     rss_bytes: snapshot.rss_bytes.unwrap_or_default(),
                 });

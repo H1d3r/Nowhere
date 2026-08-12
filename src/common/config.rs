@@ -42,6 +42,18 @@ pub fn query_first(parsed_url: &Url, allowed: &[&str]) -> Result<HashMap<String,
     Ok(values)
 }
 
+/// Returns the first raw value for one decoded query key. Delimiters inside
+/// the value remain percent-encoded so nested authority syntax stays safe.
+pub(crate) fn first_raw_query_value<'a>(parsed_url: &'a Url, name: &str) -> Option<&'a str> {
+    let query = parsed_url.query()?;
+    query.split('&').find_map(|pair| {
+        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
+        decode_query_component(raw_key, "query key")
+            .is_ok_and(|key| key == name)
+            .then_some(raw_value)
+    })
+}
+
 fn decode_query_component(raw: &str, name: &str) -> Result<String> {
     let bytes = raw.as_bytes();
     let mut index = 0;

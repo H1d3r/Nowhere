@@ -33,6 +33,7 @@ fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
         kind,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::TlsTcp,
+        hops: 0,
     })
     .to_vec();
     setup.extend_from_slice(&write_request_frame(&test_target(target)).unwrap());
@@ -478,6 +479,7 @@ async fn tls_tcp_carrier_mismatch_returns_invalid_request() {
         kind: FlowKind::Tcp,
         uplink: Carrier::Quic,
         downlink: Carrier::Quic,
+        hops: 0,
     }));
     tls.write_all(&bootstrap).await.unwrap();
 
@@ -527,6 +529,7 @@ async fn mismatched_open_leaves_invalid_request_for_later_attach() {
         kind: FlowKind::Tcp,
         uplink: Carrier::Quic,
         downlink: Carrier::TlsTcp,
+        hops: 0,
     };
     let mut first = connect_test_tls(listen_addr).await;
     let mut bootstrap = tls_auth_frame(&portal, &first, session_id).to_vec();

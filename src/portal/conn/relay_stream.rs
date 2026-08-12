@@ -14,11 +14,11 @@ use crate::protocol::Carrier;
 use crate::telemetry::AccessSpan;
 
 /// Relays both directions until one side closes or either direction errors.
-pub(super) async fn relay_stream<R, W>(
+pub(super) async fn relay_stream<R, W, TR, TW>(
     portal: Arc<PortalInner>,
     client_read: &mut R,
     client_write: &mut W,
-    target_conn: tokio::net::TcpStream,
+    target: (TR, TW),
     buffers: (Vec<u8>, Vec<u8>),
     carriers: Option<(Carrier, Carrier)>,
     access: &AccessSpan,
@@ -26,9 +26,11 @@ pub(super) async fn relay_stream<R, W>(
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
+    TR: AsyncRead + Unpin,
+    TW: AsyncWrite + Unpin,
 {
     let (mut buffer1, mut buffer2) = buffers;
-    let (mut target_read, mut target_write) = target_conn.into_split();
+    let (mut target_read, mut target_write) = target;
 
     let client_to_target = async {
         loop {

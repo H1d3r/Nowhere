@@ -20,6 +20,7 @@ async fn cold_lane_coalesces_auth_flow_and_target() {
         kind: FlowKind::Tcp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::TlsTcp,
+        hops: 0,
     };
     let target = Target::ip(SocketAddr::from(([127, 0, 0, 1], 443))).unwrap();
 
@@ -50,6 +51,7 @@ async fn cold_attach_lane_coalesces_auth_and_flow_header() {
         kind: FlowKind::Udp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::Quic,
+        hops: 0,
     };
 
     write_header(&mut writer, Some(auth), header).await.unwrap();

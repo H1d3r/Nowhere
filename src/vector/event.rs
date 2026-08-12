@@ -14,6 +14,7 @@ use super::VectorInner;
 
 pub(super) async fn event_loop(vector: Arc<VectorInner>, shutdown: CancellationToken) {
     loop {
+        vector.client.refresh_latency().await;
         let tcp_links = vector.stats.link_tcp.load(Ordering::Relaxed);
         let udp_links = vector.stats.link_udp.load(Ordering::Relaxed);
         vector.stats.link_pairs.store(
@@ -21,9 +22,10 @@ pub(super) async fn event_loop(vector: Arc<VectorInner>, shutdown: CancellationT
             Ordering::Relaxed,
         );
         vector.logger.event(format_args!(
-            "CHECK_POINT|MODE={}|PING=0ms|POOL={}|TCPS={}|UDPS={}|TCPRX={}|TCPTX={}|UDPRX={}|UDPTX={}",
+            "CHECK_POINT|MODE={}|PING={}ms|POOL={}|TCPS={}|UDPS={}|TCPRX={}|TCPTX={}|UDPRX={}|UDPTX={}",
             vector.config.checkpoint_mode(),
-            vector.tls_pool.idle_count().await,
+            vector.client.ping_ms(),
+            vector.client.idle_count().await,
             vector.stats.tcp_active.load(Ordering::Relaxed),
             vector.stats.udp_active.load(Ordering::Relaxed),
             vector.stats.tcp_rx.load(Ordering::Relaxed),
@@ -55,8 +57,13 @@ pub(super) async fn telemetry_loop(vector: Arc<VectorInner>, shutdown: Cancellat
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = interval.tick() => {
-                let pool = vector.tls_pool.idle_count().await as u64;
-                vector.telemetry.capture_and_publish(&vector.stats, pool);
+                vector.client.refresh_latency().await;
+                let pool = vector.client.idle_count().await as u64;
+                vector.telemetry.capture_and_publish(
+                    &vector.stats,
+                    pool,
+                    vector.client.ping_ms(),
+                );
             }
         }
     }

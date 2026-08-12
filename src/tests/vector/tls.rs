@@ -5,9 +5,14 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
 use crate::common::certificate_sha256;
+use crate::vector::config::VectorConfig;
 
-fn config(raw: &str) -> VectorConfig {
+fn vector_config(raw: &str) -> VectorConfig {
     VectorConfig::from_url(&url::Url::parse(raw).unwrap()).unwrap()
+}
+
+fn config(raw: &str) -> PortalClientConfig {
+    vector_config(raw).portal_client_config()
 }
 
 #[test]
@@ -17,7 +22,7 @@ fn missing_sni_uses_unverified_policy() {
     ))
     .unwrap();
     assert_eq!(
-        config("vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080").sni,
+        vector_config("vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080").sni,
         None
     );
     assert_eq!(tls.quic_server_name(), "127.0.0.1");
@@ -84,7 +89,7 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
     raw.push_str("socks=127.0.0.1:1080");
 
     let result = ClientTls::new(&config(&raw))?
-        .connect_tcp(&endpoint.to_string())
+        .connect_tcp(&endpoint.to_string(), "auto")
         .await
         .map(|_| ());
     let _ = tokio::time::timeout(Duration::from_secs(1), server_task).await;

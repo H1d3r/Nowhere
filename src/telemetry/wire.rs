@@ -112,6 +112,8 @@ pub(crate) struct TelemetrySnapshot {
     pub(crate) down_tcp: u64,
     pub(crate) down_udp: u64,
     pub(crate) pool_active: u64,
+    #[serde(default)]
+    pub(crate) ping_ms: u64,
     pub(crate) cpu_percent: Option<f64>,
     pub(crate) rss_bytes: Option<u64>,
     pub(crate) open_fds: Option<u64>,

@@ -38,6 +38,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         mut downlink,
         uplink_carrier,
         downlink_carrier,
+        hops,
         uplink_path,
         downlink_path,
         _flow_lease,
@@ -66,14 +67,14 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         biased;
         _ = cancel.cancelled() => UdpTargetDial::Cancelled,
         _ = portal.drain.cancelled() => UdpTargetDial::Draining,
-        result = portal.outbound.dial_udp_target(&target, portal.runtime.udp_dial_timeout) => {
+        result = portal.outbound.dial_udp_target(&target, hops, portal.runtime.udp_dial_timeout) => {
             match result {
                 Ok(socket) => UdpTargetDial::Connected(socket),
                 Err(error) => UdpTargetDial::Failed(error),
             }
         },
     };
-    let socket = match dial {
+    let mut socket = match dial {
         UdpTargetDial::Connected(socket) => socket,
         UdpTargetDial::Cancelled => {
             let _ = send_udp_result_bounded(
@@ -98,6 +99,8 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                 FlowErrorCode::SessionReplaced
             } else if portal.drain.is_cancelled() {
                 FlowErrorCode::FlowLimit
+            } else if let Some(result) = err.setup_result() {
+                FlowErrorCode::try_from(result).unwrap_or(FlowErrorCode::InternalError)
             } else {
                 FlowErrorCode::DialFailed
             };
@@ -173,10 +176,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         }
     }
     if portal.logger.debug_enabled() {
-        let target_local = socket
-            .local_addr()
-            .map(|address| address.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
+        let target_local = socket.local_label();
         portal.logger.debug(format_args!(
             "portal::conn::relay_paired_udp: {}: {}",
             UDP_TRANSFER_STARTING,
@@ -205,6 +205,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
     let activity = Notify::new();
     let mut downlink_frame_incomplete = false;
     let completion = {
+        let (mut target_send, mut target_recv) = socket.split_mut();
         let uplink_pipeline = async {
             loop {
                 let n = match &mut uplink {
@@ -216,7 +217,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                         if let Some(limiter) = &portal.rate_limiter {
                             limiter.wait_read(length as i64).await;
                         }
-                        socket
+                        target_send
                             .send(&uot_packet[..length], &mut target_packet)
                             .await?
                     }
@@ -227,7 +228,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                         if let Some(limiter) = &portal.rate_limiter {
                             limiter.wait_read(payload.len() as i64).await;
                         }
-                        socket.send(&payload, &mut target_packet).await?
+                        target_send.send(&payload, &mut target_packet).await?
                     }
                 };
                 access.add_upload(n as u64);
@@ -242,11 +243,12 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
         };
         let downlink_pipeline = async {
             loop {
-                let range = match socket.recv(&mut target_buf).await {
-                    Ok(range) => range,
+                let packet = match target_recv.recv(&mut target_buf).await {
+                    Ok(Some(packet)) => packet,
+                    Ok(None) => return Ok(()),
                     Err(err) => return Err::<(), anyhow::Error>(err),
                 };
-                let payload = &target_buf[range];
+                let payload = packet.payload(&target_buf);
                 let n = payload.len();
                 if let Some(limiter) = &portal.rate_limiter {
                     limiter.wait_write(n as i64).await;
@@ -307,6 +309,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
             }
         }
     };
+    socket.close().await;
     finish_udp_downlink(&mut downlink, flow_id, downlink_frame_incomplete).await;
     portal.logger.debug(format_args!(
         "portal::conn::relay_paired_udp: {}: {}",
@@ -330,7 +333,7 @@ enum UdpTargetDial<T> {
     Connected(T),
     Cancelled,
     Draining,
-    Failed(anyhow::Error),
+    Failed(crate::portal::outbound::OutboundError),
 }
 
 enum Preparation {

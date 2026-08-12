@@ -166,6 +166,7 @@ fn header(
         kind,
         uplink,
         downlink,
+        hops: 0,
     }
 }
 

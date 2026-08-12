@@ -5,12 +5,12 @@
 
 mod config;
 mod event;
-mod flow;
+pub(crate) mod flow;
 mod flow_id;
 mod session;
 mod socks;
 mod tls;
-mod udp_flow;
+pub(crate) mod udp_flow;
 
 use std::sync::Arc;
 
@@ -22,18 +22,19 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals, quic_max_streams,
-    rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size, telemetry_interval,
-    udp_data_buf_size,
+    LatencyTracker, LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals,
+    quic_max_streams, rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size,
+    telemetry_interval, udp_data_buf_size,
 };
 use crate::protocol::{Credentials, SESSION_ID_LEN};
 use crate::telemetry::TelemetryServer;
 use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
 
+pub(crate) use self::config::PortalClientConfig;
 use self::config::VectorConfig;
 use self::flow_id::FlowIdAllocator;
-use self::session::{QuicManager, TlsPool};
+use self::session::{ClientSignals, QuicManager, TlsPool};
 use self::tls::ClientTls;
 
 const DEFAULT_MAX_UDP_FLOWS: usize = 256;
@@ -52,14 +53,135 @@ pub(super) struct VectorInner {
     stats: Arc<Stats>,
     buffers: Buffers,
     rate_limiter: Option<Arc<RateLimiter>>,
+    client: Arc<PortalClient>,
+    local_udp_budget: Arc<Semaphore>,
+    socks_admission: Arc<Semaphore>,
+    shutdown: CancellationToken,
+}
+
+/// Authenticated, transport-only Portal client shared by Vector and chained
+/// Portal egress. It owns no listener and performs no SOCKS conversion.
+pub(crate) struct PortalClient {
+    config: PortalClientConfig,
+    telemetry: Arc<TelemetryHub>,
+    stats: Arc<Stats>,
+    account_stats: bool,
+    latency: Arc<LatencyTracker>,
     flow_ids: Arc<FlowIdAllocator>,
     tcp_flow_permits: Arc<Semaphore>,
     udp_flow_permits: Arc<Semaphore>,
-    local_udp_budget: Arc<Semaphore>,
-    socks_admission: Arc<Semaphore>,
     tls_pool: Arc<TlsPool>,
     quic: Arc<QuicManager>,
     shutdown: CancellationToken,
+}
+
+impl PortalClient {
+    pub(crate) fn new(
+        config: PortalClientConfig,
+        credentials: &Credentials,
+        stats: Arc<Stats>,
+        account_stats: bool,
+        telemetry: Arc<TelemetryHub>,
+        shutdown: CancellationToken,
+    ) -> Result<Arc<Self>> {
+        let tls = ClientTls::new(&config)
+            .context("vector::PortalClient::new: failed to build client TLS policy")?;
+        let mut session_id = [0u8; SESSION_ID_LEN];
+        getrandom::fill(&mut session_id).map_err(|error| {
+            anyhow::anyhow!(
+                "vector::PortalClient::new: failed to generate logical session ID: {error}"
+            )
+        })?;
+        let latency = LatencyTracker::new();
+        let signals = ClientSignals::new(stats.clone(), telemetry.clone(), latency.clone());
+        let tls_pool = TlsPool::new(
+            &config,
+            tls.clone(),
+            credentials,
+            session_id,
+            signals.clone(),
+        );
+        let quic = QuicManager::new(
+            config.clone(),
+            tls,
+            credentials,
+            session_id,
+            signals,
+            shutdown.clone(),
+        );
+        let tcp_limit = quic_max_streams().max(1) as usize;
+        let udp_limit =
+            crate::common::env_int("NOW_QUIC_MAX_UDP_FLOWS", DEFAULT_MAX_UDP_FLOWS as i32)
+                .clamp(1, DEFAULT_MAX_UDP_FLOWS as i32) as usize;
+        Ok(Arc::new(Self {
+            config,
+            telemetry,
+            stats,
+            account_stats,
+            latency,
+            flow_ids: FlowIdAllocator::new(tcp_limit.saturating_add(udp_limit)),
+            tcp_flow_permits: Arc::new(Semaphore::new(tcp_limit)),
+            udp_flow_permits: Arc::new(Semaphore::new(udp_limit)),
+            tls_pool,
+            quic,
+            shutdown,
+        }))
+    }
+
+    pub(crate) fn endpoint(&self) -> String {
+        self.config.endpoint()
+    }
+
+    pub(crate) fn dialer_ip(&self) -> &str {
+        &self.config.dialer_ip
+    }
+
+    pub(crate) fn pool_size(&self) -> usize {
+        self.config.pool
+    }
+
+    pub(crate) fn effective_transport(&self) -> String {
+        self.config.effective_transport()
+    }
+
+    pub(crate) async fn open_tcp(
+        self: &Arc<Self>,
+        target: &crate::protocol::Target,
+        hops: u8,
+    ) -> std::result::Result<flow::TcpTunnel, flow::OpenFlowError> {
+        flow::open_tcp(self.clone(), target, hops).await
+    }
+
+    pub(crate) async fn open_udp(
+        self: &Arc<Self>,
+        target: &crate::protocol::Target,
+        hops: u8,
+    ) -> std::result::Result<udp_flow::UdpTunnel, flow::OpenFlowError> {
+        udp_flow::open_udp(self.clone(), target, hops).await
+    }
+
+    pub(crate) async fn idle_count(&self) -> usize {
+        self.tls_pool.idle_count().await
+    }
+
+    pub(crate) async fn maintain(self: Arc<Self>, shutdown: CancellationToken) {
+        self.tls_pool.clone().maintain(shutdown).await;
+    }
+
+    pub(crate) async fn refresh_latency(&self) {
+        self.tls_pool.refresh_latency().await;
+        self.quic.refresh_latency().await;
+    }
+
+    pub(crate) fn ping_ms(&self) -> u64 {
+        self.latency.current_ms()
+    }
+
+    pub(crate) async fn close(&self, deadline: Instant) {
+        self.shutdown.cancel();
+        self.tls_pool.clear().await;
+        self.quic.close(deadline).await;
+    }
 }
 
 impl Vector {
@@ -82,12 +204,6 @@ impl Vector {
             telemetry_interval().context("vector::Vector::new: invalid NOW_TELEMETRY_INTERVAL")?;
         let credentials =
             Credentials::new(&parsed_url).context("vector::Vector::new: invalid shared key")?;
-        let tls = ClientTls::new(&config)
-            .context("vector::Vector::new: failed to build client TLS policy")?;
-        let mut session_id = [0u8; SESSION_ID_LEN];
-        getrandom::fill(&mut session_id).map_err(|error| {
-            anyhow::anyhow!("vector::Vector::new: failed to generate logical session ID: {error}")
-        })?;
         let telemetry_summary = format!(
             "portal={} up={} down={} pool={} socks={}",
             config.portal_endpoint(),
@@ -104,23 +220,6 @@ impl Vector {
         );
         let stats = Arc::new(Stats::default());
         let shutdown = CancellationToken::new();
-        let tls_pool = TlsPool::new(
-            &config,
-            tls.clone(),
-            &credentials,
-            session_id,
-            stats.clone(),
-            telemetry.clone(),
-        );
-        let quic = QuicManager::new(
-            config.clone(),
-            tls.clone(),
-            &credentials,
-            session_id,
-            stats.clone(),
-            telemetry.clone(),
-            shutdown.clone(),
-        );
         let tcp_limit = quic_max_streams().max(1) as usize;
         let udp_limit =
             crate::common::env_int("NOW_QUIC_MAX_UDP_FLOWS", DEFAULT_MAX_UDP_FLOWS as i32)
@@ -130,6 +229,14 @@ impl Vector {
         let rate_limiter = RateLimiter::new(read_bps, write_bps).map(Arc::new);
         let udp_queue_bytes = crate::common::env_int("NOW_QUIC_UDP_QUEUE_BYTES", 4 * 1024 * 1024)
             .clamp(1, i32::MAX) as usize;
+        let client = PortalClient::new(
+            config.portal_client_config(),
+            &credentials,
+            stats.clone(),
+            true,
+            telemetry.clone(),
+            shutdown.clone(),
+        )?;
         Ok(Self {
             inner: Arc::new(VectorInner {
                 config,
@@ -140,13 +247,9 @@ impl Vector {
                 stats,
                 buffers: Buffers::new(tcp_data_buf_size(), udp_data_buf_size()),
                 rate_limiter,
-                flow_ids: FlowIdAllocator::new(tcp_limit.saturating_add(udp_limit)),
-                tcp_flow_permits: Arc::new(Semaphore::new(tcp_limit)),
-                udp_flow_permits: Arc::new(Semaphore::new(udp_limit)),
+                client,
                 local_udp_budget: Arc::new(Semaphore::new(udp_queue_bytes)),
                 socks_admission: Arc::new(Semaphore::new(tcp_limit.saturating_add(udp_limit))),
-                tls_pool,
-                quic,
                 shutdown,
             }),
         })
@@ -226,7 +329,7 @@ impl Vector {
         if self.inner.config.pool != 0 {
             auxiliary_tasks.spawn(
                 self.inner
-                    .tls_pool
+                    .client
                     .clone()
                     .maintain(self.inner.shutdown.clone()),
             );
@@ -257,7 +360,7 @@ impl Vector {
         let cleanup = async {
             while listener_tasks.join_next().await.is_some() {}
             while auxiliary_tasks.join_next().await.is_some() {}
-            self.inner.quic.close(deadline).await;
+            self.inner.client.close(deadline).await;
         };
         let outcome = tokio::select! {
             biased;
@@ -284,7 +387,7 @@ impl Vector {
             } else {
                 deadline
             };
-            self.inner.quic.close(close_deadline).await;
+            self.inner.client.close(close_deadline).await;
         }
         if let Some(rate) = &self.inner.rate_limiter {
             rate.reset();
@@ -295,10 +398,12 @@ impl Vector {
         self.inner
             .telemetry
             .set_lifecycle(LifeState::Stopped.to_string(), outcome.to_string());
-        let pool = self.inner.tls_pool.idle_count().await as u64;
-        self.inner
-            .telemetry
-            .capture_and_publish(&self.inner.stats, pool);
+        let pool = self.inner.client.idle_count().await as u64;
+        self.inner.telemetry.capture_and_publish(
+            &self.inner.stats,
+            pool,
+            self.inner.client.ping_ms(),
+        );
         tokio::task::yield_now().await;
         telemetry_shutdown.cancel();
         while telemetry_tasks.join_next().await.is_some() {}

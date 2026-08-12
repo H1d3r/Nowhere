@@ -28,6 +28,7 @@ pub(in crate::portal) struct Metadata {
     pub(in crate::portal) kind: FlowKind,
     pub(in crate::portal) uplink: crate::protocol::Carrier,
     pub(in crate::portal) downlink: crate::protocol::Carrier,
+    pub(in crate::portal) hops: u8,
 }
 
 pub(in crate::portal) struct PendingTcp {
@@ -177,6 +178,7 @@ pub(in crate::portal) struct PairedUdp {
     pub(in crate::portal) downlink: UdpDown,
     pub(in crate::portal) uplink_carrier: crate::protocol::Carrier,
     pub(in crate::portal) downlink_carrier: crate::protocol::Carrier,
+    pub(in crate::portal) hops: u8,
     pub(in crate::portal) uplink_path: LinkPath,
     pub(in crate::portal) downlink_path: LinkPath,
     pub(in crate::portal) _flow_lease: FlowLease,
@@ -190,6 +192,7 @@ pub(in crate::portal) struct PairedTcp {
     pub(in crate::portal) downlink_liveness: Option<BoxReader>,
     pub(in crate::portal) uplink_carrier: crate::protocol::Carrier,
     pub(in crate::portal) downlink_carrier: crate::protocol::Carrier,
+    pub(in crate::portal) hops: u8,
     pub(in crate::portal) uplink_path: LinkPath,
     pub(in crate::portal) downlink_path: LinkPath,
     pub(in crate::portal) _flow_lease: FlowLease,

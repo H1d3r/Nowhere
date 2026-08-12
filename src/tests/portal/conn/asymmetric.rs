@@ -142,6 +142,7 @@ async fn asymmetric_tcp_flows_pair_in_both_directions() {
             kind: FlowKind::Tcp,
             uplink,
             downlink,
+            hops: 0,
         };
         let attach = FlowHeader {
             role: FlowRole::Attach,
@@ -221,6 +222,7 @@ async fn asymmetric_udp_flows_pair_in_both_directions() {
         kind: FlowKind::Udp,
         uplink: Carrier::Quic,
         downlink: Carrier::TlsTcp,
+        hops: 0,
     };
     let mut tls = connect_tls_from_separate_loopback(port).await;
     let mut bootstrap = tls_auth_frame(&portal, &tls, session).to_vec();
@@ -261,6 +263,7 @@ async fn asymmetric_udp_flows_pair_in_both_directions() {
         kind: FlowKind::Udp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::Quic,
+        hops: 0,
     };
     let attach = FlowHeader {
         role: FlowRole::Attach,

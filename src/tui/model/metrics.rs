@@ -28,6 +28,7 @@ pub struct TelemetrySnapshot {
     pub down_tcp: u64,
     pub down_udp: u64,
     pub pool_active: u64,
+    pub ping_ms: u64,
     pub cpu_percent: Option<f64>,
     pub rss_bytes: Option<u64>,
     pub open_fds: Option<u64>,
@@ -96,6 +97,7 @@ pub struct HistoryPoint {
     pub quic_links: u64,
     pub pairs: u64,
     pub pool_active: u64,
+    pub ping_ms: u64,
     pub cpu_percent: f64,
     pub rss_bytes: u64,
 }

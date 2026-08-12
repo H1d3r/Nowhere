@@ -61,9 +61,10 @@ fn snapshot_contains_existing_transport_counters() {
     let stats = Stats::default();
     stats.tcp_rx.store(42, Ordering::Relaxed);
     stats.link_tcp.store(2, Ordering::Relaxed);
-    hub.capture_and_publish(&stats, 3);
+    hub.capture_and_publish(&stats, 3, 17);
     let snapshot = hub.snapshots.borrow().clone();
     assert_eq!(snapshot.tcp_rx, 42);
     assert_eq!(snapshot.link_tcp, 2);
     assert_eq!(snapshot.pool_active, 3);
+    assert_eq!(snapshot.ping_ms, 17);
 }

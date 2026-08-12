@@ -18,10 +18,10 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
-use crate::common::{certificate_sha256, handshake_timeout};
+use crate::common::{certificate_sha256, dial_tcp_from_local_ip, handshake_timeout};
 use crate::protocol::{TLS_EXPORTER_LEN, TlsExporter};
 
-use super::config::VectorConfig;
+use super::config::PortalClientConfig;
 
 pub(super) const EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 
@@ -33,7 +33,7 @@ pub(super) struct ClientTls {
 }
 
 impl ClientTls {
-    pub(super) fn new(config: &VectorConfig) -> Result<Self> {
+    pub(super) fn new(config: &PortalClientConfig) -> Result<Self> {
         let provider = Arc::new(ring::default_provider());
         let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13])
@@ -108,10 +108,10 @@ impl ClientTls {
     pub(super) async fn connect_tcp(
         &self,
         endpoint: &str,
+        dialer_ip: &str,
     ) -> Result<(TlsStream<TcpStream>, TlsExporter)> {
-        let stream = timeout(handshake_timeout(), TcpStream::connect(endpoint))
+        let stream = dial_tcp_from_local_ip(dialer_ip, endpoint, handshake_timeout())
             .await
-            .map_err(|_| anyhow!("vector::tls::connect_tcp: TCP dial timeout"))?
             .with_context(|| format!("vector::tls::connect_tcp: failed to dial {endpoint}"))?;
         stream
             .set_nodelay(true)

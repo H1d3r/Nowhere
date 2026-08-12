@@ -16,7 +16,7 @@ pub(crate) use config::{
     SocksConfig, SocksCredentials, first_raw_socks_value, format_host_port, parse_host_port,
     parse_socks_value,
 };
-pub(crate) use outbound::OutboundDialer;
+pub(crate) use outbound::{OutboundDialer, OutboundTcpStream};
 pub(crate) use protocol::{
     COMMAND_BIND, COMMAND_CONNECT, COMMAND_UDP_ASSOCIATE, REPLY_ADDRESS_NOT_SUPPORTED,
     REPLY_COMMAND_NOT_SUPPORTED, REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE,
@@ -24,6 +24,7 @@ pub(crate) use protocol::{
     SocksAddress, authenticate, decode_udp_packet, encode_udp_packet_into, read_request,
     write_reply,
 };
+pub(crate) use udp::OutboundUdpSocket;
 
 #[cfg(test)]
 #[path = "../tests/common/socks.rs"]

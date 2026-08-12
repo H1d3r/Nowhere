@@ -45,6 +45,26 @@ fn calculates_bits_per_second_and_trims_history() {
 }
 
 #[test]
+fn retains_ping_in_the_ten_minute_history() {
+    let mut app = App::default();
+    let mut first = snapshot(1_000, 0, 0);
+    first.ping_ms = 7;
+    app.apply(UiEvent::Upsert {
+        meta: meta("one", 1),
+        lifecycle: Lifecycle::Ready,
+        snapshot: Some(first),
+    });
+    let mut second = snapshot(2_000, 0, 0);
+    second.ping_ms = 11;
+    app.apply(UiEvent::Snapshot {
+        id: "one".to_owned(),
+        snapshot: second,
+    });
+
+    assert_eq!(app.selected().unwrap().latest_history().ping_ms, 11);
+}
+
+#[test]
 fn counter_reset_clears_history_without_negative_rate() {
     let mut view = InstanceView::new(
         meta("one", 1),

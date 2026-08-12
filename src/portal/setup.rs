@@ -13,19 +13,24 @@ use url::Url;
 
 use crate::common::{
     DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, OutboundDialer,
-    SocksConfig, bind_udp_addrs, init_dialer_ip, new_server_configs_with_reload_interval,
-    query_first, rate_limit_bytes_per_second,
+    SocksConfig, bind_udp_addrs, first_raw_query_value, init_dialer_ip,
+    new_server_configs_with_reload_interval, query_first, rate_limit_bytes_per_second,
 };
 use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
+use crate::vector::{PortalClient, PortalClientConfig};
 
 use super::listener::{configure_transport, format_endpoint_addr};
-use super::{DEFAULT_ALPN, NetworkMode, Portal, PortalInner, UdpFlowLimits, admission};
+use super::{
+    DEFAULT_ALPN, NetworkMode, Portal, PortalInner, UdpFlowLimits, admission,
+    outbound::PortalOutbound,
+};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "log",
+    "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "next", "log",
 ];
+const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "pool", "sni", "pin"];
 
 impl Portal {
     /// Builds a portal using the listen host encoded in the URL.
@@ -70,7 +75,7 @@ impl Portal {
         if !parsed_url.path().is_empty() {
             anyhow::bail!("portal::new: URL paths are not supported");
         }
-        let query = query_first(&parsed_url, PORTAL_QUERY_PARAMETERS)
+        let mut query = query_first(&parsed_url, PORTAL_QUERY_PARAMETERS)
             .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
         validate_query(&query).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
         let port = parsed_url
@@ -107,6 +112,25 @@ impl Portal {
         let socks = SocksConfig::from_url(&parsed_url).map_err(|e| {
             anyhow::anyhow!("portal::new: failed to parse socks configuration: {e}")
         })?;
+        let next = match query.get("next").map(String::as_str) {
+            None | Some("none") => None,
+            Some("") => anyhow::bail!("portal::new: empty next parameter"),
+            Some(_) => {
+                query.extend(
+                    query_first(&parsed_url, PORTAL_UPSTREAM_PARAMETERS)
+                        .map_err(|e| anyhow::anyhow!("portal::new: {e}"))?,
+                );
+                let raw = first_raw_query_value(&parsed_url, "next")
+                    .expect("decoded next came from the raw query");
+                Some(
+                    PortalClientConfig::from_upstream_authority(raw, &query, &alpn, &dialer_ip)
+                        .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?,
+                )
+            }
+        };
+        if socks.is_some() && next.is_some() {
+            anyhow::bail!("portal::new: socks and next are mutually exclusive");
+        }
         let rate_limit = parse_rate(&query, "rate")?;
         let etar_limit = parse_rate(&query, "etar")?;
 
@@ -119,13 +143,22 @@ impl Portal {
             max_flows: runtime.max_udp_flows,
             queue_bytes: runtime.udp_queue_bytes,
         };
+        let socks_endpoint = socks
+            .as_ref()
+            .map(SocksConfig::endpoint)
+            .unwrap_or_else(|| "none".to_owned());
+        let next_summary = next.as_ref().map_or_else(
+            || "next=none".to_owned(),
+            |(config, _)| {
+                format!(
+                    "next={} {}",
+                    config.endpoint(),
+                    config.effective_transport()
+                )
+            },
+        );
         let telemetry_summary = format!(
-            "net={network_mode} tls={tls_mode} alpn={alpn} rate={rate_limit} etar={etar_limit} dial={} socks={}",
-            dialer_ip,
-            socks
-                .as_ref()
-                .map(SocksConfig::endpoint)
-                .unwrap_or_else(|| "none".to_owned()),
+            "net={network_mode} tls={tls_mode} alpn={alpn} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
         );
         let telemetry = TelemetryHub::for_current_process(
             InstanceRole::Portal,
@@ -133,6 +166,17 @@ impl Portal {
             telemetry_summary,
             runtime.telemetry_interval,
         );
+        let outbound = match next {
+            Some((config, credentials)) => PortalOutbound::portal(PortalClient::new(
+                config,
+                &credentials,
+                Arc::new(Stats::default()),
+                false,
+                telemetry.clone(),
+                CancellationToken::new(),
+            )?),
+            None => PortalOutbound::network(OutboundDialer::new(dialer_ip, socks)),
+        };
 
         Ok(Self {
             inner: Arc::new(PortalInner {
@@ -143,7 +187,7 @@ impl Portal {
                 endpoint_addr,
                 bind_addrs,
                 listen_port: port,
-                outbound: OutboundDialer::new(dialer_ip, socks),
+                outbound,
                 rate_limit,
                 etar_limit,
                 logger,

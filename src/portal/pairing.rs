@@ -474,6 +474,7 @@ impl PairingRegistry {
             kind: header.kind,
             uplink: header.uplink,
             downlink: header.downlink,
+            hops: header.hops,
         };
         if header.role == FlowRole::Duplex {
             if let Some(code) = self.terminal_rejection(key, true) {
@@ -521,6 +522,7 @@ impl PairingRegistry {
                 downlink_liveness,
                 uplink_carrier: header.uplink,
                 downlink_carrier: header.downlink,
+                hops: header.hops,
                 uplink_path: link.path.clone(),
                 downlink_path: link.path,
                 _flow_lease: lease,
@@ -697,6 +699,7 @@ impl PairingRegistry {
                     downlink_liveness: complete.downlink_liveness.take(),
                     uplink_carrier: complete.metadata.uplink,
                     downlink_carrier: complete.metadata.downlink,
+                    hops: complete.metadata.hops,
                     uplink_path: complete.uplink_path.take().expect("TCP uplink path paired"),
                     downlink_path: complete
                         .downlink_path
@@ -786,6 +789,7 @@ impl PairingRegistry {
             kind: header.kind,
             uplink: header.uplink,
             downlink: header.downlink,
+            hops: header.hops,
         };
         if matches!(header.role, FlowRole::Open | FlowRole::Duplex)
             && let Some(code) = self.terminal_rejection(key, header.role == FlowRole::Duplex)
@@ -854,6 +858,7 @@ impl PairingRegistry {
                 downlink,
                 uplink_carrier: header.uplink,
                 downlink_carrier: header.downlink,
+                hops: header.hops,
                 uplink_path: link.path.clone(),
                 downlink_path: link.path,
                 _flow_lease: lease,
@@ -1042,6 +1047,7 @@ impl PairingRegistry {
                     downlink: complete.downlink.take().expect("UDP downlink paired"),
                     uplink_carrier: complete.metadata.uplink,
                     downlink_carrier: complete.metadata.downlink,
+                    hops: complete.metadata.hops,
                     uplink_path: complete.uplink_path.take().expect("UDP uplink path paired"),
                     downlink_path: complete
                         .downlink_path

@@ -3,15 +3,16 @@
 
 //! Validated `vector://` URL parsing with first-value query semantics.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use anyhow::{Result, anyhow, bail};
 use url::Url;
 
-use crate::common::query_first;
 use crate::common::socks::{
     SocksCredentials, first_raw_socks_value, format_host_port, parse_host_port, parse_socks_value,
 };
+use crate::common::{DEFAULT_DIALER_IP, query_first};
 
 pub(super) const DEFAULT_ALPN: &str = "now/1";
 pub(super) const DEFAULT_POOL_SIZE: usize = 5;
@@ -29,7 +30,7 @@ pub(crate) enum CarrierMode {
 }
 
 impl CarrierMode {
-    fn parse(value: Option<&str>, name: &str) -> Result<Self> {
+    pub(crate) fn parse(value: Option<&str>, name: &str) -> Result<Self> {
         match value {
             None => Ok(Self::Udp),
             Some("tcp") => Ok(Self::Tcp),
@@ -40,6 +41,133 @@ impl CarrierMode {
 
     pub(super) fn is_tcp(self) -> bool {
         self == Self::Tcp
+    }
+}
+
+/// Transport-only configuration shared by Vector and Portal upstream clients.
+#[derive(Clone, Debug)]
+pub(crate) struct PortalClientConfig {
+    pub(crate) remote_host: String,
+    pub(crate) remote_port: u16,
+    pub(crate) up: CarrierMode,
+    pub(crate) down: CarrierMode,
+    pub(crate) pool: usize,
+    pub(crate) alpn: String,
+    pub(crate) sni: Option<String>,
+    pub(crate) pin: Option<String>,
+    pub(crate) dialer_ip: String,
+}
+
+impl PortalClientConfig {
+    fn parse(
+        url: &Url,
+        query: &HashMap<String, String>,
+        alpn_override: Option<&str>,
+        dialer_ip: &str,
+    ) -> Result<Self> {
+        let remote_host = url
+            .host_str()
+            .filter(|host| !host.is_empty())
+            .ok_or_else(|| anyhow!("vector::config: missing Portal host"))?
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_owned();
+        let remote_port = url
+            .port()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| anyhow!("vector::config: missing Portal port"))?;
+        let up = CarrierMode::parse(query.get("up").map(String::as_str), "up")?;
+        let down = CarrierMode::parse(query.get("down").map(String::as_str), "down")?;
+        let tcp_only = up.is_tcp() && down.is_tcp();
+        let pool = if tcp_only {
+            query.get("pool").map_or(Ok(DEFAULT_POOL_SIZE), |value| {
+                value
+                    .parse::<u128>()
+                    .map(|value| value.min(MAX_POOL_SIZE as u128) as usize)
+                    .map_err(|_| anyhow!("vector::config: invalid pool size"))
+            })?
+        } else {
+            0
+        };
+
+        let alpn = alpn_override
+            .or_else(|| query.get("alpn").map(String::as_str))
+            .unwrap_or(DEFAULT_ALPN);
+        if alpn.is_empty() || alpn.len() > u8::MAX as usize {
+            bail!("vector::config: alpn length must be 1..255 bytes");
+        }
+        let sni = query
+            .get("sni")
+            .filter(|value| !value.is_empty() && value.as_str() != "none")
+            .map(|value| {
+                if !value.is_ascii()
+                    || value.len() > 253
+                    || value.contains([':', '[', ']'])
+                    || value.parse::<std::net::IpAddr>().is_ok()
+                {
+                    bail!("vector::config: sni must be an ASCII DNS name");
+                }
+                Ok(value.to_owned())
+            })
+            .transpose()?;
+        let pin = query
+            .get("pin")
+            .filter(|value| !value.is_empty() && value.as_str() != "none")
+            .cloned();
+        Ok(Self {
+            remote_host,
+            remote_port,
+            up,
+            down,
+            pool,
+            alpn: alpn.to_owned(),
+            sni,
+            pin,
+            dialer_ip: dialer_ip.to_owned(),
+        })
+    }
+
+    pub(crate) fn from_upstream_authority(
+        raw_authority: &str,
+        query: &HashMap<String, String>,
+        alpn: &str,
+        dialer_ip: &str,
+    ) -> Result<(Self, crate::protocol::Credentials)> {
+        let separator = raw_authority.rfind('@').ok_or_else(|| {
+            anyhow!("portal::next: shared key and endpoint must be separated by @")
+        })?;
+        if raw_authority[..separator].contains('@') {
+            bail!("portal::next: reserved shared-key characters must be percent-encoded");
+        }
+        let url = Url::parse(&format!("vector://{raw_authority}"))
+            .map_err(|error| anyhow!("portal::next: invalid upstream Portal authority: {error}"))?;
+        if url.password().is_some()
+            || !url.path().is_empty()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            bail!("portal::next: expected only shared-key@host:port");
+        }
+        let credentials = crate::protocol::Credentials::new(&url)
+            .map_err(|error| anyhow!("portal::next: {error}"))?;
+        let config = Self::parse(&url, query, Some(alpn), dialer_ip)
+            .map_err(|error| anyhow!("portal::next: {error}"))?;
+        Ok((config, credentials))
+    }
+
+    pub(crate) fn endpoint(&self) -> String {
+        format_host_port(&self.remote_host, self.remote_port)
+    }
+
+    pub(crate) fn effective_transport(&self) -> String {
+        format!(
+            "up={} down={} pool={} sni={} pin={}",
+            self.up,
+            self.down,
+            self.pool,
+            self.sni.as_deref().unwrap_or("none"),
+            self.pin.as_deref().unwrap_or("none"),
+        )
     }
 }
 
@@ -119,74 +247,39 @@ impl VectorConfig {
             bail!("vector::config: URL path is not supported");
         }
 
-        let remote_host = url
-            .host_str()
-            .filter(|host| !host.is_empty())
-            .ok_or_else(|| anyhow!("vector::config: missing Portal host"))?
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .to_owned();
-        let remote_port = url
-            .port()
-            .filter(|port| *port != 0)
-            .ok_or_else(|| anyhow!("vector::config: missing Portal port"))?;
         let query = query_first(url, VECTOR_QUERY_KEYS)?;
-        let up = CarrierMode::parse(query.get("up").map(String::as_str), "up")?;
-        let down = CarrierMode::parse(query.get("down").map(String::as_str), "down")?;
-        let tcp_only = up.is_tcp() && down.is_tcp();
-        let pool = if tcp_only {
-            query.get("pool").map_or(Ok(DEFAULT_POOL_SIZE), |value| {
-                value
-                    .parse::<u128>()
-                    .map(|value| value.min(MAX_POOL_SIZE as u128) as usize)
-                    .map_err(|_| anyhow!("vector::config: invalid pool size"))
-            })?
-        } else {
-            0
-        };
-
-        let alpn = query
-            .get("alpn")
-            .map(String::as_str)
-            .unwrap_or(DEFAULT_ALPN);
-        if alpn.is_empty() || alpn.len() > u8::MAX as usize {
-            bail!("vector::config: alpn length must be 1..255 bytes");
-        }
-        let sni = query
-            .get("sni")
-            .filter(|value| !value.is_empty() && value.as_str() != "none")
-            .map(|value| {
-                if !value.is_ascii()
-                    || value.len() > 253
-                    || value.contains([':', '[', ']'])
-                    || value.parse::<std::net::IpAddr>().is_ok()
-                {
-                    bail!("vector::config: sni must be an ASCII DNS name");
-                }
-                Ok(value.to_owned())
-            })
-            .transpose()?;
-        let pin = query
-            .get("pin")
-            .filter(|value| !value.is_empty() && value.as_str() != "none")
-            .cloned();
+        let portal = PortalClientConfig::parse(url, &query, None, DEFAULT_DIALER_IP)?;
         let rate_mbps = parse_rate(query.get("rate").map(String::as_str), "rate")?;
         let etar_mbps = parse_rate(query.get("etar").map(String::as_str), "etar")?;
         let socks = SocksListenConfig::from_url(url)?;
 
         Ok(Self {
-            remote_host,
-            remote_port,
-            up,
-            down,
-            pool,
-            alpn: alpn.to_owned(),
-            sni,
-            pin,
+            remote_host: portal.remote_host,
+            remote_port: portal.remote_port,
+            up: portal.up,
+            down: portal.down,
+            pool: portal.pool,
+            alpn: portal.alpn,
+            sni: portal.sni,
+            pin: portal.pin,
             rate_mbps,
             etar_mbps,
             socks,
         })
+    }
+
+    pub(crate) fn portal_client_config(&self) -> PortalClientConfig {
+        PortalClientConfig {
+            remote_host: self.remote_host.clone(),
+            remote_port: self.remote_port,
+            up: self.up,
+            down: self.down,
+            pool: self.pool,
+            alpn: self.alpn.clone(),
+            sni: self.sni.clone(),
+            pin: self.pin.clone(),
+            dialer_ip: DEFAULT_DIALER_IP.to_owned(),
+        }
     }
 
     pub(super) fn portal_endpoint(&self) -> String {

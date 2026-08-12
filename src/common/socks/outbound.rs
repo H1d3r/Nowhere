@@ -4,9 +4,13 @@
 //! Direct-or-SOCKS5 TCP/UDP connection establishment and proxy address retry.
 
 use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpStream, lookup_host};
 
 use super::config::{SocksConfig, format_host_port};
@@ -15,6 +19,7 @@ use super::protocol::{
 };
 use super::udp::{OutboundUdpSocket, SocksUdpAssociation};
 use crate::common::network::{connect_tcp_addr, connect_udp_addr, filter_addrs, parse_local_ip};
+use crate::common::{LatencyGuard, LatencyTracker};
 use crate::common::{dial_tcp_from_local_ip, dial_udp_from_local_ip};
 use crate::protocol::Target;
 
@@ -23,11 +28,16 @@ use crate::protocol::Target;
 pub(crate) struct OutboundDialer {
     dialer_ip: String,
     socks: Option<SocksConfig>,
+    latency: Arc<LatencyTracker>,
 }
 
 impl OutboundDialer {
     pub(crate) fn new(dialer_ip: String, socks: Option<SocksConfig>) -> Self {
-        Self { dialer_ip, socks }
+        Self {
+            dialer_ip,
+            socks,
+            latency: LatencyTracker::new(),
+        }
     }
 
     pub(crate) fn dialer_ip(&self) -> &str {
@@ -41,13 +51,21 @@ impl OutboundDialer {
             .unwrap_or_else(|| "none".to_string())
     }
 
+    pub(crate) fn ping_ms(&self) -> u64 {
+        if self.socks.is_some() {
+            self.latency.current_ms()
+        } else {
+            0
+        }
+    }
+
     /// Dials a validated binary protocol target without reparsing host/port
     /// text at the Portal relay boundary.
     pub(crate) async fn dial_tcp_target(
         &self,
         target: &Target,
         timeout: Duration,
-    ) -> Result<TcpStream> {
+    ) -> Result<OutboundTcpStream> {
         let Some(config) = &self.socks else {
             return match target {
                 Target::Ip(address) => tokio::time::timeout(
@@ -55,9 +73,12 @@ impl OutboundDialer {
                     connect_tcp_addr(parse_local_ip(&self.dialer_ip), *address),
                 )
                 .await
-                .map_err(|_| anyhow!("common::socks::OutboundDialer::dial_tcp: dial timeout"))?,
+                .map_err(|_| anyhow!("common::socks::OutboundDialer::dial_tcp: dial timeout"))?
+                .map(OutboundTcpStream::direct),
                 Target::Domain { .. } => {
-                    dial_tcp_from_local_ip(&self.dialer_ip, &target.to_string(), timeout).await
+                    dial_tcp_from_local_ip(&self.dialer_ip, &target.to_string(), timeout)
+                        .await
+                        .map(OutboundTcpStream::direct)
                 }
             };
         };
@@ -99,7 +120,7 @@ impl OutboundDialer {
         &self,
         config: &SocksConfig,
         target: &SocksAddress,
-    ) -> Result<TcpStream> {
+    ) -> Result<OutboundTcpStream> {
         let local_ip = parse_local_ip(&self.dialer_ip);
         let addrs = resolve_proxy(config, local_ip).await?;
         let mut last_err = None;
@@ -116,7 +137,11 @@ impl OutboundDialer {
                 continue;
             }
             match send_command(&mut stream, COMMAND_CONNECT, target).await {
-                Ok(_) => return Ok(stream),
+                Ok(_) => {
+                    let latency = self.latency.register();
+                    latency.update_tcp(&stream);
+                    return Ok(OutboundTcpStream::tracked(stream, latency));
+                }
                 Err(err) => last_err = Some(err),
             }
         }
@@ -166,11 +191,83 @@ impl OutboundDialer {
         let relay_addr = resolve_relay(&relay, local_ip).await?;
         let socket = connect_udp_addr(local_ip, relay_addr).await?;
         let target_header = udp_header(&target)?;
+        let latency = self.latency.register();
+        latency.update_tcp(&control);
         Ok(SocksUdpAssociation {
             control,
             socket,
             target_header,
+            _latency: latency,
         })
+    }
+}
+
+/// TCP target stream with an optional live SOCKS-control RTT sample.
+pub(crate) struct OutboundTcpStream {
+    stream: TcpStream,
+    _latency: Option<LatencyGuard>,
+}
+
+impl OutboundTcpStream {
+    fn direct(stream: TcpStream) -> Self {
+        Self {
+            stream,
+            _latency: None,
+        }
+    }
+
+    fn tracked(stream: TcpStream, latency: LatencyGuard) -> Self {
+        Self {
+            stream,
+            _latency: Some(latency),
+        }
+    }
+
+    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.stream.local_addr()
+    }
+
+    pub(crate) fn into_split(
+        self,
+    ) -> (
+        tokio::net::tcp::OwnedReadHalf,
+        tokio::net::tcp::OwnedWriteHalf,
+        Option<LatencyGuard>,
+    ) {
+        let Self { stream, _latency } = self;
+        let (reader, writer) = stream.into_split();
+        (reader, writer, _latency)
+    }
+}
+
+impl AsyncRead for OutboundTcpStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_read(cx, buffer)
+    }
+}
+
+impl AsyncWrite for OutboundTcpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, buffer)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
     }
 }
 

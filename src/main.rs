@@ -39,6 +39,8 @@ Examples:
   nowhere 'portal://secret@0.0.0.0:2077?log=info&net=tcp'
   nowhere 'portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
   nowhere 'portal://secret@:2077?socks=user:pass@127.0.0.1:1080'
+  nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077'
+  nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077&up=tcp&down=tcp&pool=5'
   nowhere 'portal://secret@:2077?rate=100&etar=200'
   nowhere 'vector://secret@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
   nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=:1080'
@@ -65,7 +67,15 @@ Portal parameters:
   etar=<mbps>      Target-to-client traffic limit. 0 disables it.
   dial=<ip|auto>   Local source IP for outbound target connections. Default: auto.
   socks=<proxy>    SOCKS5 outbound proxy: host:port or user:pass@host:port.
-                   Omit, leave empty, or use none to disable.
+                   Omit or use none to disable.
+  next=<portal>    Native upstream Portal: shared-key@host:port. Omit or use
+                   none to disable. Mutually exclusive with socks.
+  up=tcp|udp       Native upstream upload carrier. Default: udp.
+  down=tcp|udp     Native upstream download carrier. Default: udp.
+  pool=<number>    Native upstream TLS pool for tcp/tcp. Default: 5.
+  sni=<name|none>  Native upstream certificate DNS name. Default: none.
+  pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
+                   These five options are ignored unless next is enabled.
   log=<level>      none, debug, info, warn, error, event. Default: info.
 
 Vector parameters:
@@ -164,17 +174,14 @@ async fn start(args: Vec<String>) -> Result<()> {
     let command_url =
         parse_command_url(&args[1]).with_context(|| "main::start: failed to parse command URL")?;
     let scheme = command_url.url.scheme().to_string();
-    let allowed = match scheme.as_str() {
-        "portal" => &[
-            "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "log",
-        ][..],
-        "vector" => &[
-            "up", "down", "pool", "sni", "pin", "alpn", "rate", "etar", "socks", "log",
-        ][..],
-        _ => bail!("main::start: unknown URL scheme: {scheme}"),
-    };
-    let query =
-        query_first(&command_url.url, allowed).with_context(|| "main::start: invalid URL query")?;
+    if !matches!(scheme.as_str(), "portal" | "vector") {
+        bail!("main::start: unknown URL scheme: {scheme}");
+    }
+    // Startup only needs `log` here. Each role parses its own configuration,
+    // including Portal's intentionally ignored upstream options when `next`
+    // is disabled.
+    let query = query_first(&command_url.url, &["log"])
+        .with_context(|| "main::start: invalid URL query")?;
     let logger = init_logger(query.get("log").map(String::as_str))?;
 
     match scheme.as_str() {

@@ -31,6 +31,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
         downlink_liveness,
         uplink_carrier: uplink,
         downlink_carrier: downlink,
+        hops,
         uplink_path,
         downlink_path,
         _flow_lease,
@@ -63,7 +64,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
         _ = portal.drain.cancelled() => {
             TargetDial::Draining
         },
-        result = portal.outbound.dial_tcp_target(&target, portal.runtime.tcp_dial_timeout) => {
+        result = portal.outbound.dial_tcp_target(&target, hops, portal.runtime.tcp_dial_timeout) => {
             match result {
                 Ok(conn) => TargetDial::Connected(conn),
                 Err(error) => TargetDial::Failed(error),
@@ -97,6 +98,8 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
                 FlowErrorCode::SessionReplaced
             } else if portal.drain.is_cancelled() {
                 FlowErrorCode::FlowLimit
+            } else if let Some(result) = err.setup_result() {
+                FlowErrorCode::try_from(result).unwrap_or(FlowErrorCode::InternalError)
             } else {
                 FlowErrorCode::DialFailed
             };
@@ -127,10 +130,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
     portal.stats.add_session(false);
     let _done = SessionGuard::new(portal.clone(), false);
     if portal.logger.debug_enabled() {
-        let target_local = target_conn
-            .local_addr()
-            .map(|address| address.to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string());
+        let target_local = target_conn.local_label();
         portal.logger.debug(format_args!(
             "portal::conn::relay_paired_tcp: {}: {}",
             TCP_EXCHANGE_STARTING,
@@ -145,12 +145,13 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
         ));
     }
 
+    let (target_read, target_write, _target_guard) = target_conn.into_parts();
     let completion = {
         let relay = relay_stream(
             portal.clone(),
             &mut client_read,
             &mut client_write,
-            target_conn,
+            (target_read, target_write),
             (
                 portal.buffers.get_tcp_buffer(),
                 portal.buffers.get_tcp_buffer(),
@@ -200,7 +201,7 @@ enum TargetDial<T> {
     Connected(T),
     Cancelled,
     Draining,
-    Failed(anyhow::Error),
+    Failed(crate::portal::outbound::OutboundError),
 }
 
 enum RelayCompletion {

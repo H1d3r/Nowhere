@@ -14,6 +14,7 @@ fn fixed_vectors_pack_flags_and_network_order_id() {
             kind: FlowKind::Tcp,
             uplink: Carrier::TlsTcp,
             downlink: Carrier::TlsTcp,
+            hops: 0,
         })
         .unwrap(),
         [0x00, 1, 2, 3, 4]
@@ -25,6 +26,7 @@ fn fixed_vectors_pack_flags_and_network_order_id() {
             kind: FlowKind::Udp,
             uplink: Carrier::Quic,
             downlink: Carrier::TlsTcp,
+            hops: 0,
         })
         .unwrap(),
         [0x0d, 0x11, 0x22, 0x33, 0x44]
@@ -36,6 +38,7 @@ fn fixed_vectors_pack_flags_and_network_order_id() {
             kind: FlowKind::Udp,
             uplink: Carrier::TlsTcp,
             downlink: Carrier::Quic,
+            hops: 0,
         })
         .unwrap(),
         [0x16, 0, 0, 0, 7]
@@ -52,6 +55,7 @@ fn every_valid_role_kind_and_carrier_combination_round_trips() {
                 kind,
                 uplink: carrier,
                 downlink: carrier,
+                hops: MAX_PORTAL_HOPS,
             });
         }
         for role in [FlowRole::Open, FlowRole::Attach] {
@@ -61,6 +65,7 @@ fn every_valid_role_kind_and_carrier_combination_round_trips() {
                 kind,
                 uplink: Carrier::TlsTcp,
                 downlink: Carrier::Quic,
+                hops: 3,
             });
             round_trip(FlowHeader {
                 role,
@@ -68,6 +73,7 @@ fn every_valid_role_kind_and_carrier_combination_round_trips() {
                 kind,
                 uplink: Carrier::Quic,
                 downlink: Carrier::TlsTcp,
+                hops: 6,
             });
         }
     }
@@ -81,6 +87,7 @@ fn semantic_validation_rejects_zero_ids_and_carrier_conflicts() {
         kind: FlowKind::Tcp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::Quic,
+        hops: 0,
     };
     assert!(encode_flow_header(duplex).is_err());
 
@@ -90,6 +97,7 @@ fn semantic_validation_rejects_zero_ids_and_carrier_conflicts() {
         kind: FlowKind::Udp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::TlsTcp,
+        hops: 0,
     };
     assert!(encode_flow_header(split).is_err());
 
@@ -99,6 +107,7 @@ fn semantic_validation_rejects_zero_ids_and_carrier_conflicts() {
         kind: FlowKind::Tcp,
         uplink: Carrier::Quic,
         downlink: Carrier::Quic,
+        hops: 0,
     };
     assert!(encode_flow_header(zero).is_err());
 }
@@ -111,6 +120,7 @@ fn current_lane_must_match_the_role_direction() {
         kind: FlowKind::Tcp,
         uplink: Carrier::TlsTcp,
         downlink: Carrier::Quic,
+        hops: 0,
     };
     assert!(open.validate_on(Carrier::TlsTcp).is_ok());
     assert!(open.validate_on(Carrier::Quic).is_err());
@@ -126,18 +136,13 @@ fn current_lane_must_match_the_role_direction() {
 }
 
 #[test]
-fn decoder_rejects_invalid_flags_ids_lengths_and_semantics() {
+fn decoder_rejects_invalid_ids_lengths_and_semantics() {
     for input in [&[][..], &[0; 4], &[0; 6]] {
         assert!(decode_flow_header(input).is_err());
     }
     assert!(decode_flow_header(&[0, 0, 0, 0, 0]).is_err());
 
     let valid = [0, 0, 0, 0, 1];
-    for reserved in [0x20, 0x40, 0x80, 0xe0] {
-        let mut input = valid;
-        input[0] |= reserved;
-        assert!(decode_flow_header(&input).is_err());
-    }
     let mut invalid_role = valid;
     invalid_role[0] = 3;
     assert!(decode_flow_header(&invalid_role).is_err());
@@ -158,6 +163,7 @@ async fn async_reader_consumes_only_five_bytes() {
         kind: FlowKind::Udp,
         uplink: Carrier::Quic,
         downlink: Carrier::Quic,
+        hops: 7,
     };
     let mut input = encode_flow_header(header).unwrap().to_vec();
     input.extend_from_slice(b"payload");
@@ -166,6 +172,23 @@ async fn async_reader_consumes_only_five_bytes() {
     let mut payload = Vec::new();
     input.read_to_end(&mut payload).await.unwrap();
     assert_eq!(payload, b"payload");
+}
+
+#[test]
+fn all_hop_budgets_use_the_former_reserved_bits() {
+    for hops in 0..=MAX_PORTAL_HOPS {
+        let header = FlowHeader {
+            role: FlowRole::Duplex,
+            flow_id: 42,
+            kind: FlowKind::Tcp,
+            uplink: Carrier::TlsTcp,
+            downlink: Carrier::TlsTcp,
+            hops,
+        };
+        let encoded = encode_flow_header(header).unwrap();
+        assert_eq!(encoded[0] >> 5, hops);
+        assert_eq!(decode_flow_header(&encoded).unwrap(), header);
+    }
 }
 
 fn round_trip(header: FlowHeader) {
