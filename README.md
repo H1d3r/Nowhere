@@ -44,7 +44,7 @@ closing a dashboard never starts, stops, or owns a service instance.
 
 | View | Signals and controls |
 | --- | --- |
-| **Overview** | Uplink, downlink, TCP, UDP, TLS, and QUIC histories; active connections; carriers; pairs; warm pool; CPU; RSS; selected-instance metadata |
+| **Overview** | Uplink, downlink, TCP, UDP, TLS, and QUIC histories; active connections; carriers; upstream RTT; warm pool; CPU; RSS; selected-instance metadata |
 | **Logs** | Independent Access and Runtime feeds with filtering, pause and resume, paging, horizontal panning, and local privacy masking |
 | **Discovery** | Automatic instance discovery with stable selection and concurrent read-only viewers |
 

@@ -13,8 +13,11 @@ their defaults.
 Portal prints:
 
 ```text
-net -> tls -> alpn -> rate -> etar -> dial -> socks
+net -> tls -> alpn -> rate -> etar -> dial -> socks -> next
 ```
+
+When `next` is enabled, Portal appends its effective `up`, `down`, `pool`,
+`sni`, and `pin` values. The upstream shared key is always redacted.
 
 Vector prints:
 
@@ -37,6 +40,14 @@ CHECK_POINT|MODE=0|PING=0ms|POOL=5|TCPS=0|UDPS=0|TCPRX=0|TCPTX=0|UDPRX=0|UDPTX=0
 
 Portal MODE values are `0=mix`, `1=tcp`, and `2=udp`. Vector MODE values are
 `0=tcp/tcp`, `1=tcp/udp`, `2=udp/tcp`, and `3=udp/udp`.
+
+`PING` is the current explicit upstream transport RTT in integer milliseconds.
+Vector reports Vector-to-Portal RTT. A chained Portal reports relay-to-next-
+Portal RTT, and a SOCKS-backed Portal reports its SOCKS5 TCP-control RTT.
+TLS/TCP and SOCKS samples come from Linux `TCP_INFO`; QUIC samples come from
+Quinn's connection RTT. No active probe traffic is generated. A direct Portal
+always emits the exact token `PING=0ms`; zero on other roles means no live
+valid sample is available.
 
 DEBUG additionally emits carrier state:
 
@@ -97,7 +108,7 @@ Every supported size uses two workspaces and keeps Instances in a full-height
 left sidebar. Press `1` for Overview or `2` for Logs. At 120×32 terminal cells
 and above, Overview shows six filled traffic histories plus equal-width
 Selected, Connections, and Carriers/Process cards. The latter cards add hollow
-histories for TCP/UDP connections, TLS and QUIC links, pairs, pool occupancy,
+histories for TCP/UDP connections, TLS and QUIC links, upstream PING, pool occupancy,
 CPU, and RSS. Medium-width terminals preserve this dashboard with denser chart
 cells. Narrow or portrait terminals prioritize Selected, Connections, and
 Carriers/Process and omit the six large traffic histories.
@@ -134,6 +145,13 @@ Portal applies `NOW_HANDSHAKE_TIMEOUT` independently to QUIC TLS negotiation
 and to v1 authentication, so one phase cannot consume the other's budget.
 Abandoned handshake timeouts are silent; non-timeout negotiation failures are
 available at DEBUG level.
+
+A Portal configured with `next` uses the same lazy TLS pool and shared QUIC
+session engine. Upstream failure does not block `READY`; each affected flow
+fails with its authoritative setup result and later flows reconnect normally.
+The upstream client's carrier counters and pool occupancy are intentionally
+private, so they do not alter the relay Portal's inbound `POOL` or
+`LINK_STATUS` values. Only its RTT feeds `PING`.
 
 ## Limits and Rate Control
 
