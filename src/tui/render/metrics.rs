@@ -56,10 +56,10 @@ fn render_selected_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .unwrap_or_else(|| "—".to_owned());
     let content_width = usize::from(area.width.saturating_sub(2));
     let config_width = content_width.saturating_sub(4);
-    let config_rows = usize::from(area.height.saturating_sub(2))
-        .saturating_sub(4)
-        .min(4);
+    let config_rows = usize::from(area.height.saturating_sub(2)).saturating_sub(4);
     let config_lines = wrap_tokens(&instance.meta.config_summary, config_width, config_rows);
+    let pid = instance.meta.pid.to_string();
+    let identity_width = pid.len().max(instance.meta.version.len());
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
@@ -73,13 +73,13 @@ fn render_selected_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("PID ", dim(app)),
-            Span::raw(instance.meta.pid.to_string()),
+            Span::raw(format!("{pid:<identity_width$}")),
             Span::styled("  UID ", dim(app)),
             Span::raw(instance.meta.uid.to_string()),
         ]),
         Line::from(vec![
             Span::styled("VER ", dim(app)),
-            Span::raw(&instance.meta.version),
+            Span::raw(format!("{:<identity_width$}", instance.meta.version)),
             Span::styled("  SMP ", dim(app)),
             Span::raw(format!("{}ms", instance.meta.telemetry_interval_ms)),
         ]),

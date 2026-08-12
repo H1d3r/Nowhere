@@ -137,7 +137,7 @@ fn full_dashboard_uses_equal_cards_and_a_full_height_sidebar() {
         workspace_columns(Rect::new(0, 0, 120, 30), WorkspaceDensity::Full);
     assert_eq!(instances.height, 30);
     assert_eq!(workspace.height, 30);
-    assert_eq!(instances.width, 25);
+    assert_eq!(instances.width, 27);
 }
 
 #[test]
@@ -160,10 +160,10 @@ fn log_page_stacks_full_width_feeds_beside_the_sidebar() {
             .any(|line| { line.contains("ACCESS ·") && line.contains("RUNTIME ·") })
     );
 
-    let [access, runtime] = log_rows(Rect::new(25, 2, 95, 29));
+    let [access, runtime] = log_rows(Rect::new(27, 2, 93, 29));
     assert_eq!(access.x, runtime.x);
-    assert_eq!(access.width, 95);
-    assert_eq!(runtime.width, 95);
+    assert_eq!(access.width, 93);
+    assert_eq!(runtime.width, 93);
     assert!(access.height.abs_diff(runtime.height) <= 1);
 }
 
@@ -173,7 +173,7 @@ fn compact_layout_keeps_instances_full_height_on_both_pages() {
         workspace_columns(Rect::new(0, 0, 100, 28), WorkspaceDensity::Compact);
     assert_eq!(instances.height, 28);
     assert_eq!(workspace.height, 28);
-    assert_eq!(instances.width, 23);
+    assert_eq!(instances.width, 25);
 
     let mut app = app_with_instance();
     show_logs(&mut app);
@@ -264,6 +264,64 @@ fn selected_config_wraps_without_internal_history_counters() {
     assert!(!output.contains("HIST"));
     assert!(!output.contains("FEED A/R"));
     assert!(!output.contains("GAP/OVR"));
+}
+
+#[test]
+fn full_sidebar_keeps_long_lifecycle_labels_visible() {
+    let mut app = app_with_instance();
+    app.instances[0].lifecycle = Lifecycle::Draining;
+    app.apply(UiEvent::Upsert {
+        meta: InstanceMeta {
+            id: "starting".to_owned(),
+            role: InstanceRole::Vector,
+            pid: 4_330,
+            uid: 502,
+            version: "test".to_owned(),
+            endpoint: "[::1]:1082".to_owned(),
+            config_summary: "portal=relay.example:2077".to_owned(),
+            telemetry_interval_ms: 1_000,
+        },
+        lifecycle: Lifecycle::Starting,
+        snapshot: None,
+    });
+
+    let output = rendered(120, 32, &app);
+    assert!(output.contains("DRAINING"));
+    assert!(output.contains("STARTING"));
+}
+
+#[test]
+fn selected_uses_available_height_for_complete_config() {
+    let mut app = app_with_instance();
+    app.instances[0].meta.config_summary =
+        "net=mix tls=1 alpn=now/1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp pool=0 sni=origin.example pin=present"
+            .to_owned();
+
+    let output = rendered(160, 40, &app);
+    assert!(output.contains("sni=origin.example"));
+    assert!(output.contains("pin=present"));
+}
+
+#[test]
+fn selected_uid_and_sample_interval_share_one_column() {
+    let mut app = app_with_instance();
+    app.instances[0].meta.pid = 7;
+    app.instances[0].meta.version = "1.6.0-long".to_owned();
+    let output = rendered(120, 32, &app);
+    let pid_row = output
+        .lines()
+        .find(|line| line.contains("PID ") && line.contains(" UID "))
+        .expect("PID/UID row");
+    let version_row = output
+        .lines()
+        .find(|line| line.contains("VER ") && line.contains(" SMP "))
+        .expect("VER/SMP row");
+    let column = |line: &str, value: &str| {
+        let byte = line.find(value).expect("selected metric");
+        line[..byte].chars().count()
+    };
+
+    assert_eq!(column(pid_row, " UID "), column(version_row, " SMP "));
 }
 
 #[test]

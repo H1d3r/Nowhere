@@ -181,9 +181,9 @@ enum WorkspaceDensity {
 impl WorkspaceDensity {
     const fn sidebar_width(self) -> u16 {
         match self {
-            Self::Full => 25,
-            Self::Compact => 23,
-            Self::Narrow => 20,
+            Self::Full => 27,
+            Self::Compact => 25,
+            Self::Narrow => 22,
         }
     }
 }
@@ -427,7 +427,7 @@ fn accent(app: &App, color: Color) -> Style {
 
 fn dim(app: &App) -> Style {
     if app.capabilities.color {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Gray)
     } else {
         Style::default().add_modifier(Modifier::DIM)
     }
