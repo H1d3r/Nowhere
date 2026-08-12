@@ -34,7 +34,7 @@ fn empty_host_listens_on_both_wildcard_families() {
     assert_eq!(portal.inner.alpn, "now/1");
     assert_eq!(
         portal.effective_url(),
-        "portal://:2077?net=mix&tls=1&alpn=now/1&rate=0&etar=0&dial=127.0.0.1&socks=none"
+        "portal://:2077?net=mix&tls=1&alpn=now/1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
     );
 }
 
@@ -122,6 +122,144 @@ fn socks_configuration_is_validated_and_redacted_in_effective_url() {
     )
     .unwrap();
     assert!(duplicate.effective_url().contains("socks=proxy.test:1080"));
+}
+
+#[test]
+fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
+    let portal = Portal::new(
+        Url::parse("portal://relay-key@127.0.0.1:2077?next=upstream%40key@relay.example:2080")
+            .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+
+    assert_eq!(portal.inner.outbound.next_endpoint(), "relay.example:2080");
+    assert_eq!(
+        portal.inner.outbound.next_transport().as_deref(),
+        Some("up=udp down=udp pool=0 sni=none pin=none")
+    );
+    let effective = portal.effective_url();
+    assert!(effective.contains("next=relay.example:2080"));
+    assert!(!effective.contains("upstream"));
+    assert_eq!(portal.inner.outbound.ping_ms(), 0);
+}
+
+#[test]
+fn native_next_reuses_transport_identity_alpn_and_source_binding() {
+    let portal = Portal::new(
+        Url::parse(
+            "portal://relay-key@127.0.0.1:2077?alpn=private/1&dial=127.0.0.2&next=secret@[::1]:2080&up=tcp&down=tcp&sni=origin.example&pin=abc",
+        )
+        .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+
+    assert_eq!(portal.inner.alpn, "private/1");
+    assert_eq!(portal.inner.outbound.dialer_ip(), "127.0.0.2");
+    assert_eq!(portal.inner.outbound.next_endpoint(), "[::1]:2080");
+    assert_eq!(
+        portal.inner.outbound.next_transport().as_deref(),
+        Some("up=tcp down=tcp pool=5 sni=origin.example pin=abc")
+    );
+}
+
+#[test]
+fn native_next_and_socks_are_mutually_exclusive() {
+    let result = Portal::new(
+        Url::parse(
+            "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&socks=127.0.0.1:1080",
+        )
+        .unwrap(),
+        test_logger(),
+    );
+    assert!(result.is_err());
+
+    let disabled_socks = Portal::new(
+        Url::parse("portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&socks=none")
+            .unwrap(),
+        test_logger(),
+    );
+    assert!(disabled_socks.is_ok());
+}
+
+#[test]
+fn disabled_next_ignores_all_native_upstream_options() {
+    for suffix in [
+        "up=mix&down=invalid&pool=NaN&sni=127.0.0.1&pin=anything",
+        "next=none&up=mix&down=invalid&pool=NaN&sni=127.0.0.1&pin=anything",
+        "next=none&up=%GG&pin=%FF",
+    ] {
+        let portal = Portal::new(
+            Url::parse(&format!("portal://relay-key@127.0.0.1:2077?{suffix}")).unwrap(),
+            test_logger(),
+        )
+        .unwrap();
+        assert_eq!(portal.inner.outbound.next_endpoint(), "none");
+        assert_eq!(portal.inner.outbound.next_transport(), None);
+    }
+}
+
+#[test]
+fn enabled_next_validates_only_effective_upstream_options() {
+    for suffix in [
+        "up=mix",
+        "down=mix",
+        "sni=127.0.0.1",
+        "up=tcp&down=tcp&pool=NaN",
+    ] {
+        let result = Portal::new(
+            Url::parse(&format!(
+                "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&{suffix}"
+            ))
+            .unwrap(),
+            test_logger(),
+        );
+        assert!(result.is_err(), "upstream options accepted: {suffix}");
+    }
+
+    // Vector semantics deliberately ignore pool outside tcp/tcp.
+    let ignored_pool = Portal::new(
+        Url::parse("portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&pool=NaN")
+            .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+    assert_eq!(
+        ignored_pool.inner.outbound.next_transport().as_deref(),
+        Some("up=udp down=udp pool=0 sni=none pin=none")
+    );
+}
+
+#[test]
+fn next_uses_first_duplicate_and_rejects_empty_value() {
+    let portal = Portal::new(
+        Url::parse(
+            "portal://relay-key@127.0.0.1:2077?next=first@one.example:2080&next=second@two.example:2081",
+        )
+        .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+    assert_eq!(portal.inner.outbound.next_endpoint(), "one.example:2080");
+
+    assert!(
+        Portal::new(
+            Url::parse("portal://relay-key@127.0.0.1:2077?next=").unwrap(),
+            test_logger(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn direct_portal_reports_exact_zero_ping() {
+    let portal = Portal::new(
+        Url::parse("portal://relay-key@127.0.0.1:2077").unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+    assert_eq!(portal.inner.outbound.ping_ms(), 0);
 }
 
 #[test]
