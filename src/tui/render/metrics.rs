@@ -236,12 +236,12 @@ fn render_carriers_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
         frame,
         rows[1],
         MetricGraph::new(
-            "PAIR",
+            "PING",
             snapshot
-                .map(|value| value.link_pairs.to_string())
+                .map(|value| format!("{}ms", value.ping_ms))
                 .unwrap_or_else(|| "—".to_owned()),
-            spark_data(&instance.history, rows[1].width / 2, |point| point.pairs),
-            palette::PAIR,
+            spark_data(&instance.history, rows[1].width / 2, |point| point.ping_ms),
+            palette::PING,
         ),
         MetricGraph::new(
             "POOL",

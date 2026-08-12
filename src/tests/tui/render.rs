@@ -276,9 +276,10 @@ fn carrier_process_metrics_use_three_balanced_graph_rows() {
     assert!(carrier_row.find(" TLS") < carrier_row.find(" QUIC"));
     let process_row = output
         .lines()
-        .find(|line| line.contains(" PAIR") && line.contains(" POOL"))
-        .expect("PAIR and POOL row");
-    assert!(process_row.find(" PAIR") < process_row.find(" POOL"));
+        .find(|line| line.contains(" PING") && line.contains(" POOL"))
+        .expect("PING and POOL row");
+    assert!(process_row.find(" PING") < process_row.find(" POOL"));
+    assert!(process_row.contains("17ms"));
     let resource_row = output
         .lines()
         .find(|line| line.contains(" CPU") && line.contains(" RSS"))
@@ -301,8 +302,8 @@ fn carrier_and_process_second_columns_share_one_alignment() {
         .expect("TLS/QUIC row");
     let pool_row = output
         .lines()
-        .find(|line| line.contains(" PAIR") && line.contains(" POOL"))
-        .expect("PAIR/POOL row");
+        .find(|line| line.contains(" PING") && line.contains(" POOL"))
+        .expect("PING/POOL row");
     let rss_row = output
         .lines()
         .find(|line| line.contains(" CPU") && line.contains(" RSS"))

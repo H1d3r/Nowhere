@@ -12,7 +12,7 @@ pub(super) const UDP: Color = Color::LightYellow;
 pub(super) const TLS: Color = Color::LightMagenta;
 pub(super) const QUIC: Color = Color::LightRed;
 
-pub(super) const PAIR: Color = Color::LightGreen;
+pub(super) const PING: Color = Color::LightGreen;
 pub(super) const POOL: Color = Color::LightBlue;
 pub(super) const CPU: Color = Color::LightYellow;
 pub(super) const RSS: Color = Color::LightMagenta;
