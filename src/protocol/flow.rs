@@ -77,9 +77,6 @@ impl FlowHeader {
             FlowRole::Duplex if self.uplink != self.downlink => {
                 bail!("protocol::flow::FlowHeader::validate: duplex carrier mismatch")
             }
-            FlowRole::Open | FlowRole::Attach if self.uplink == self.downlink => {
-                bail!("protocol::flow::FlowHeader::validate: split carriers must differ")
-            }
             _ => Ok(()),
         }
     }

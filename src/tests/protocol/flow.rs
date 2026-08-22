@@ -80,7 +80,7 @@ fn every_valid_role_kind_and_carrier_combination_round_trips() {
 }
 
 #[test]
-fn semantic_validation_rejects_zero_ids_and_carrier_conflicts() {
+fn semantic_validation_rejects_zero_ids_and_duplex_carrier_conflicts() {
     let duplex = FlowHeader {
         role: FlowRole::Duplex,
         flow_id: 1,
@@ -99,7 +99,7 @@ fn semantic_validation_rejects_zero_ids_and_carrier_conflicts() {
         downlink: Carrier::TlsTcp,
         hops: 0,
     };
-    assert!(encode_flow_header(split).is_err());
+    assert!(encode_flow_header(split).is_ok());
 
     let zero = FlowHeader {
         role: FlowRole::Duplex,
@@ -150,9 +150,6 @@ fn decoder_rejects_invalid_ids_lengths_and_semantics() {
     let mut bad_duplex = valid;
     bad_duplex[0] = 0x10;
     assert!(decode_flow_header(&bad_duplex).is_err());
-    let mut bad_open = valid;
-    bad_open[0] = 1;
-    assert!(decode_flow_header(&bad_open).is_err());
 }
 
 #[tokio::test]
@@ -175,7 +172,7 @@ async fn async_reader_consumes_only_five_bytes() {
 }
 
 #[test]
-fn all_hop_budgets_use_the_former_reserved_bits() {
+fn all_hop_budgets_fit_the_packed_header_budget() {
     for hops in 0..=MAX_PORTAL_HOPS {
         let header = FlowHeader {
             role: FlowRole::Duplex,
