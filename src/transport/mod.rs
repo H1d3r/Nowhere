@@ -4,9 +4,11 @@
 //! Transport support primitives for buffers, rate limits, and counters.
 
 mod buffers;
+mod quic;
 mod rate;
 mod stats;
 
 pub use buffers::Buffers;
+pub(crate) use quic::quic_flow_control;
 pub use rate::{RateLimiter, TokenBucket};
 pub use stats::Stats;
