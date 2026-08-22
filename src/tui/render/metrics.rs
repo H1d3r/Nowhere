@@ -206,14 +206,14 @@ fn render_carriers_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let block = panel(" CARRIERS / PROCESS ", false, app);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let rows = Layout::vertical([Constraint::Ratio(1, 3); 3]).split(inner);
+    let rows = Layout::vertical([Constraint::Ratio(1, 2); 2]).split(inner);
     render_graph_pair(
         frame,
         rows[0],
         MetricGraph::new(
             "TLS",
             snapshot
-                .map(|value| value.link_tcp.to_string())
+                .map(|value| value.tls_carriers_active.to_string())
                 .unwrap_or_else(|| "—".to_owned()),
             spark_data(&instance.history, rows[0].width / 2, |point| {
                 point.tls_links
@@ -223,7 +223,7 @@ fn render_carriers_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
         MetricGraph::new(
             "QUIC",
             snapshot
-                .map(|value| value.link_udp.to_string())
+                .map(|value| value.quic_carriers_active.to_string())
                 .unwrap_or_else(|| "—".to_owned()),
             spark_data(&instance.history, rows[0].width / 2, |point| {
                 point.quic_links
@@ -236,35 +236,12 @@ fn render_carriers_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
         frame,
         rows[1],
         MetricGraph::new(
-            "PING",
-            snapshot
-                .map(|value| format!("{}ms", value.ping_ms))
-                .unwrap_or_else(|| "—".to_owned()),
-            spark_data(&instance.history, rows[1].width / 2, |point| point.ping_ms),
-            palette::PING,
-        ),
-        MetricGraph::new(
-            "POOL",
-            snapshot
-                .map(|value| value.pool_active.to_string())
-                .unwrap_or_else(|| "—".to_owned()),
-            spark_data(&instance.history, rows[1].width / 2, |point| {
-                point.pool_active
-            }),
-            palette::POOL,
-        ),
-        app,
-    );
-    render_graph_pair(
-        frame,
-        rows[2],
-        MetricGraph::new(
             "CPU",
             snapshot
                 .and_then(|snapshot| snapshot.cpu_percent)
                 .map(|value| format!("{value:.1}%"))
                 .unwrap_or_else(|| "—".to_owned()),
-            scaled_data(&instance.history, rows[2].width / 2, |point| {
+            scaled_data(&instance.history, rows[1].width / 2, |point| {
                 point.cpu_percent
             }),
             palette::CPU,
@@ -275,7 +252,7 @@ fn render_carriers_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .and_then(|snapshot| snapshot.rss_bytes)
                 .map(format::bytes)
                 .unwrap_or_else(|| "—".to_owned()),
-            spark_data(&instance.history, rows[2].width / 2, |point| {
+            spark_data(&instance.history, rows[1].width / 2, |point| {
                 point.rss_bytes
             }),
             palette::RSS,

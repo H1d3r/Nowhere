@@ -85,6 +85,7 @@ pub struct InstanceMeta {
     pub endpoint: String,
     pub config_summary: String,
     pub telemetry_interval_ms: u64,
+    pub telemetry_protocol_version: u16,
 }
 
 /// Runtime event severity.
@@ -132,6 +133,8 @@ pub struct AccessRecord {
     pub event_id: u64,
     pub phase: AccessPhase,
     pub protocol: String,
+    pub alpn: String,
+    pub session_tag: Option<String>,
     pub client: Option<String>,
     pub path_peers: Vec<String>,
     pub route: String,
@@ -212,16 +215,5 @@ impl Page {
             Self::Overview => "Overview",
             Self::Logs => "Logs",
         }
-    }
-
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Overview => Self::Logs,
-            Self::Logs => Self::Overview,
-        }
-    }
-
-    pub const fn previous(self) -> Self {
-        self.next()
     }
 }

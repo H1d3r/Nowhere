@@ -15,8 +15,8 @@ fn meta(id: &str, pid: u32) -> InstanceMeta {
 fn snapshot(at: u64, up: u64, down: u64) -> TelemetrySnapshot {
     TelemetrySnapshot {
         timestamp_ms: at,
-        tcp_rx: up,
-        tcp_tx: down,
+        tcp_logical_up: up,
+        tcp_logical_down: down,
         ..TelemetrySnapshot::default()
     }
 }
@@ -42,26 +42,6 @@ fn calculates_bits_per_second_and_trims_history() {
         snapshot: snapshot(HISTORY_WINDOW_MS + 3_000, 2_100, 3_200),
     });
     assert_eq!(app.selected().unwrap().history.len(), 1);
-}
-
-#[test]
-fn retains_ping_in_the_ten_minute_history() {
-    let mut app = App::default();
-    let mut first = snapshot(1_000, 0, 0);
-    first.ping_ms = 7;
-    app.apply(UiEvent::Upsert {
-        meta: meta("one", 1),
-        lifecycle: Lifecycle::Ready,
-        snapshot: Some(first),
-    });
-    let mut second = snapshot(2_000, 0, 0);
-    second.ping_ms = 11;
-    app.apply(UiEvent::Snapshot {
-        id: "one".to_owned(),
-        snapshot: second,
-    });
-
-    assert_eq!(app.selected().unwrap().latest_history().ping_ms, 11);
 }
 
 #[test]
@@ -156,7 +136,7 @@ fn paused_filtered_feed_only_tracks_matching_new_records() {
     app.apply(UiEvent::Runtime {
         id: "one".to_owned(),
         record: RuntimeRecord {
-            kind: "POOL".to_owned(),
+            kind: "BACKPRESSURE".to_owned(),
             ..RuntimeRecord::default()
         },
     });

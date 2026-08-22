@@ -79,11 +79,8 @@ impl InstanceView {
                     quic_bps: rate(snapshot.quic_bytes(), previous.quic_bytes()),
                     tcp_active: snapshot.tcp_active.max(0),
                     udp_active: snapshot.udp_active.max(0),
-                    tls_links: snapshot.link_tcp,
-                    quic_links: snapshot.link_udp,
-                    pairs: snapshot.link_pairs,
-                    pool_active: snapshot.pool_active,
-                    ping_ms: snapshot.ping_ms,
+                    tls_links: snapshot.tls_carriers_active,
+                    quic_links: snapshot.quic_carriers_active,
                     cpu_percent: snapshot.cpu_percent.unwrap_or_default().max(0.0),
                     rss_bytes: snapshot.rss_bytes.unwrap_or_default(),
                 });

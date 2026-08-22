@@ -136,6 +136,11 @@ fn access_line(record: &AccessRecord, app: &App) -> Line<'static> {
             target
         )),
     ];
+    if app.reveal_clients
+        && let Some(tag) = record.session_tag.as_deref()
+    {
+        spans.push(Span::styled(format!(" S:{tag}"), dim(app)));
+    }
     if let Some(duration) = record.duration_ms {
         spans.push(Span::styled(
             format!("  {}", format::duration_ms(duration)),
