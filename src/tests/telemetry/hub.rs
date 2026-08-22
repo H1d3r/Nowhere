@@ -1,9 +1,10 @@
 use std::sync::atomic::Ordering;
 
 use crate::protocol::Carrier;
+use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    AccessOutcome, AccessStart, InstanceDescriptor, InstanceRole, PROTOCOL_VERSION, ServerMessage,
-    TelemetryHub, TrafficProtocol,
+    AccessOutcome, AccessStart, InstanceRole, PROTOCOL_VERSION, ServerMessage, TelemetryHub,
+    TrafficProtocol,
 };
 use crate::transport::Stats;
 
@@ -14,7 +15,7 @@ fn descriptor() -> InstanceDescriptor {
         role: InstanceRole::Portal,
         pid: 2,
         uid: 1,
-        start_ticks: 3,
+        incarnation: 3,
         version: "test".to_owned(),
         endpoint: ":2077".to_owned(),
         config_summary: "portal net=mix".to_owned(),
@@ -26,16 +27,18 @@ fn descriptor() -> InstanceDescriptor {
 fn access_span_finishes_only_once() {
     let hub = TelemetryHub::new(descriptor());
     let mut events = hub.event_receiver();
-    let span = hub.start_access(AccessStart {
+    let span = hub.start_access(|| AccessStart {
         id: 0,
         timestamp_ms: 1,
         protocol: TrafficProtocol::Tcp,
+        alpn: "now/1".to_owned(),
         flow_id: Some(7),
+        session_tag: Some("abc123".to_owned()),
         client: Some("127.0.0.1:1".to_owned()),
         path_peers: vec!["127.0.0.1:1".to_owned()],
         target: "example:443".to_owned(),
-        uplink: Some(Carrier::TlsTcp),
-        downlink: Some(Carrier::Quic),
+        initial_uplink: Some(Carrier::TlsTcp),
+        initial_downlink: Some(Carrier::Quic),
         path: None,
     });
     span.add_upload(10);
@@ -56,15 +59,24 @@ fn access_span_finishes_only_once() {
 }
 
 #[test]
+fn access_fields_are_not_built_without_a_receiver() {
+    let hub = TelemetryHub::new(descriptor());
+    let span = hub.start_access(|| panic!("unobservable access must stay lazy"));
+
+    span.add_upload(10);
+    span.add_download(20);
+    span.finish(AccessOutcome::Success, None);
+}
+
+#[test]
 fn snapshot_contains_existing_transport_counters() {
     let hub = TelemetryHub::new(descriptor());
     let stats = Stats::default();
     stats.tcp_rx.store(42, Ordering::Relaxed);
     stats.link_tcp.store(2, Ordering::Relaxed);
-    hub.capture_and_publish(&stats, 3, 17);
+    hub.capture_and_publish(&stats, 17);
     let snapshot = hub.snapshots.borrow().clone();
-    assert_eq!(snapshot.tcp_rx, 42);
-    assert_eq!(snapshot.link_tcp, 2);
-    assert_eq!(snapshot.pool_active, 3);
+    assert_eq!(snapshot.tcp_logical_up, 42);
+    assert_eq!(snapshot.tls_carriers_active, 2);
     assert_eq!(snapshot.ping_ms, 17);
 }
