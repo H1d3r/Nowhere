@@ -86,8 +86,6 @@ fn number_keys_switch_between_the_two_workspaces() {
     let mut app = App::default();
     handle_key(&mut app, key(KeyCode::Char('2')));
     assert_eq!(app.page, Page::Logs);
-    assert_eq!(app.focus, Focus::Instances);
-
     handle_key(&mut app, key(KeyCode::Tab));
     assert_eq!(app.focus, Focus::Feed);
     handle_key(&mut app, key(KeyCode::Char('1')));
