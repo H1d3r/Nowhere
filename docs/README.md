@@ -1,48 +1,30 @@
-# Nowhere Documentation
+# Documentation
 
-> **One port. Two transports. Split directions.**
+The documentation has one source of truth for each concern:
 
-Nowhere combines TLS/TCP and QUIC/UDP on one Portal service port. TCP and UDP
-flows choose their upload and download carriers independently, while the native
-Vector client exposes the complete transport model through a local SOCKS5
-entry point.
+| Need | Document |
+|---|---|
+| Run a local Portal and Vector | [Quick start](quick-start.md) |
+| Choose and operate a supported platform | [Platforms](platforms.md) |
+| Understand URL and environment options | [Configuration](configuration.md) |
+| Implement or inspect the wire format | [Protocol](protocol.md) |
+| Deploy and observe the processes | [Operations](operations.md) |
+| Review authentication and memory bounds | [Security](security.md) |
+| Understand ALPN and peer interoperability | [Interoperability](compatibility.md) |
+| Implement another client or integration | [Integrations](integrations.md) |
 
-The project targets Linux exclusively and uses Linux process, signal, and
-abstract Unix-socket interfaces directly.
+`protocol.md` is normative. Portal and Vector share one internal bounded TLS
+Mux engine.
 
-## System Map
+Portal and Vector have the same transport behavior on Linux, macOS, and Windows. Platform-specific packaging, process control, filesystem paths, and telemetry availability are documented separately instead of being mixed into the protocol.
 
-| Layer | Responsibility |
-| --- | --- |
-| Portal | Authenticate carriers, pair directions, dial targets or a native upstream Portal, and relay data |
-| Vector | Accept SOCKS5 CONNECT and UDP ASSOCIATE requests and open flows |
-| TLS/TCP | Carry TCP stream bytes or length-prefixed UDP packets |
-| QUIC/UDP | Carry TCP stream bytes or QUIC DATAGRAM packets |
-| Session | Bind physical carriers to one authenticated logical identity |
-| Flow | Describe target, payload kind, and both directional carriers |
+## Protocol summary
 
-## Guides
+| Mux setting | TLS/TCP | QUIC/UDP | Failure scope |
+|---|---|---|---|
+| `mux=0` | Dedicated lane per flow | Native streams/datagrams | The dedicated flow closes with the carrier |
+| `mux=1` | Shared bounded Mux | Native streams/datagrams | Assigned flows close with the carrier |
 
-| Document | Purpose |
-| --- | --- |
-| [Quick Start](quick-start.md) | Build and run Portal and Vector locally |
-| [Configuration](configuration.md) | Command URLs, defaults, and runtime limits |
-| [Operations](operations.md) | Logs, pools, reconnection, certificates, and shutdown |
-| [Security](security.md) | Trust boundaries, authentication, and resource controls |
-| [Wire Protocol](protocol.md) | Authentication, flow setup, frame diagrams, and lifecycles |
-| [Integrations](integrations.md) | Process managers, SOCKS5, OpenCtrl, and client contracts |
-
-## Terminology
-
-- **Portal** accepts encrypted carriers and opens target connections.
-- **Vector** is the Rust client and local SOCKS5 ingress.
-- **Uplink** is client to target; **downlink** is target to client.
-- **Carrier** is TLS/TCP or QUIC/UDP for one direction.
-- **Bundle** is a set of carriers sharing one authenticated session ID.
-- **UoT** carries individual UDP packets over a TLS/TCP stream.
-- **rate** limits uplink traffic; **etar** limits downlink traffic.
-- **next** selects a native upstream Portal without a SOCKS5 conversion.
-
-Operators should start with Quick Start, Configuration, Security, and
-Operations. Client implementers should start with Wire Protocol and then read
-Security and Integrations.
+ALPN defaults to `now/1` and is configurable independently from Mux. Peers use
+the same exact ALPN. All four uplink/downlink carrier combinations use the same
+FlowHeader, Target, pairing, and relay semantics.
