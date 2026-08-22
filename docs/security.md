@@ -1,134 +1,47 @@
-# Security Model
+# Security and Resource Bounds
 
-Nowhere separates transport confidentiality, server identity, shared-key
-authorization, and resource admission. These controls work together and should
-be configured as distinct trust boundaries.
+## Authentication
 
-## Transport Security
+The shared key is never sent on the wire. A derived HMAC key authenticates a frame bound to the TLS exporter, carrier type, and random session ID. Replaying the frame on another connection fails.
 
-TLS/TCP and QUIC require TLS 1.3. Plaintext carriers, application 0-RTT data,
-and half-RTT server data are not accepted.
+TLS is version 1.3. Deployments may use a certificate pin, normal system-root verification with SNI, or the explicitly configured unverified certificate mode used by generated local certificates.
 
-TLS protects carrier confidentiality and integrity. Certificate verification
-establishes Portal identity. Exporter-bound shared-key authentication then
-authorizes the physical connection to join a logical session and request target
-connections.
+## Admission
 
-## Shared-Key Authentication
+Portal bounds pre-authentication work and applies per-source admission before expanding QUIC stream windows. Flow pairing, logical IDs, UDP routes, datagram queues, and fragment reassembly are separately bounded.
 
-The shared key is read from the URL username and never sent on the wire. Portal
-and client derive an authentication key once, then combine it with the current
-TLS exporter, transport domain, and session ID to produce a 16-byte tag.
+## Mux memory safety
 
-The exporter binds the tag to one physical TLS or QUIC connection. A captured
-32-byte authentication frame therefore cannot authenticate another connection.
-Tags are compared in constant time.
+Mux payload remains within the active carrier's bounded outbound queue. A sender
+needs both stream and connection credit before a data frame enters that queue.
+A receiver charges both windows before delivery and returns credit only after
+application consumption. Closing the carrier releases queued payload.
 
-Use a high-entropy shared key. Anyone with the key can request arbitrary target
-connections because Nowhere does not provide per-user accounts or target
-allowlists.
+The fixed maximum frame payload is 65,535 bytes and the runtime emits at most
+32 KiB per STREAM frame. Malformed kinds, flags, IDs, lengths, window overflow,
+and DATA for unknown streams close the carrier. Late terminal and credit frames
+for a terminal stream are idempotent.
 
-## Certificate Policy
+Default limits are 512 KiB per stream and per Mux connection and 256 active
+streams per Mux. With `mux=1`, the application places at most 12 active flows
+on a shard before opening another, distributes new flows to the least-loaded
+shard, and closes a fully idle shard after 30 seconds. One authenticated client session
+admits at most 1,024 concurrent logical TCP flows and 256 logical UDP flows
+across all of its carriers. UoT and QUIC DATAGRAM flows share the UDP limit.
+Local fair credit prevents one stream from monopolizing a shared window. The
+finite frame queue has 512 slots, but payload admission is still capped by the
+512 KiB byte window; empty SYN/FIN/WINDOW frames cannot turn those slots into
+retained application payload. These are credit ceilings rather than eagerly
+allocated payload buffers.
 
-Portal `tls=1` creates a new in-memory self-signed certificate at startup. It
-provides encryption but no stable public identity.
+Relay scratch buffers use bounded reuse caches: each process retains at most 64
+TCP buffers and 32 UDP buffers. A short-lived concurrency spike therefore
+cannot leave an unbounded allocator cache behind.
 
-Portal `tls=2` loads a PEM certificate chain and private key and supports safe
-reload while retaining the last valid certificate.
+## Local telemetry
 
-Vector trust behavior is explicit:
+The TUI control plane binds only IPv4 loopback and publishes a descriptor in the platform's per-user temporary directory. The client validates the registry identity against the server hello. No shared keys or payload bytes enter telemetry. Unix registry files receive owner-only permissions; every platform also validates the per-user descriptor and server identity before displaying an instance.
 
-- `pin=<sha256>` verifies the exact lowercase SHA-256 fingerprint of the leaf
-  certificate and the TLS handshake signature. A matching pin takes priority
-  over certificate-chain, validity, and name verification.
-- Empty, omitted, or `pin=none` disables certificate pinning.
-- `sni=<name>` loads system roots and verifies the certificate chain and name.
-- Empty, omitted, or `sni=none` disables certificate verification.
-- A verification failure closes the carrier and does not fall back to an
-  unverified policy.
+## Threat boundary
 
-Exporter authentication does not replace certificate verification. Without
-certificate verification, an active intermediary that knows or obtains the
-shared key can impersonate Portal.
-
-## Authentication Boundary
-
-Portal never dials a target before authentication succeeds. Authentication
-failures wait for the common authentication deadline and expose only a generic
-network outcome; detailed diagnostics stay in local logs.
-
-Before QUIC authentication, Portal requires Retry, applies global and
-source-prefix admission limits, allows one bidirectional stream, grants
-conservative receive credit, and discards all DATAGRAMs.
-
-After authentication, Portal raises the normal stream and receive limits and
-registers the carrier under the validated session ID.
-
-## Flow and Memory Boundaries
-
-Explicit limits cover:
-
-- authenticated streams and UDP flows;
-- pending asymmetric pairs;
-- idle TLS lanes;
-- UDP queue packets and bytes;
-- fragment reassembly slots, bytes, and lifetime;
-- target lengths and flow identifiers;
-- authentication, setup, dial, idle, and shutdown deadlines.
-
-Decoders validate enum values, reserved bits, identifiers, and lengths before
-allocating from network-controlled input. DATA for unknown flows or flows that
-have not reached READY is dropped.
-
-## SOCKS5 Boundaries
-
-Vector ties UDP ASSOCIATE traffic to the TCP control peer, rejects SOCKS5 UDP
-fragments, limits target flows globally, and closes target state when the
-control connection ends.
-
-Wildcard listeners such as `socks=:1080`, `0.0.0.0`, or `[::]` expose Vector to
-other hosts. Protect them with RFC1929 credentials and firewall rules.
-
-Portal outbound SOCKS failures never fall back to direct dialing. When proxying
-is configured, domain targets remain unresolved until they reach the proxy.
-
-## Native Portal Chain Boundary
-
-Each `next` edge is a new authenticated TLS/QUIC trust boundary with its own
-upstream shared key and certificate policy. The upstream key is accepted only
-in the command URL and is redacted from effective URLs, logs, and local
-telemetry. Protect the complete command URL as a secret.
-
-`next` and outbound `socks` cannot be enabled together, and failure never falls
-back to a different route. The three-bit HOPS field limits native forwarding to
-seven Portal transitions; every Portal in the chain must run an implementation
-that enforces this field.
-
-## Local TUI Boundary
-
-Each running Portal or Vector exposes read-only structured telemetry through
-an abstract Unix socket. The service verifies the dashboard with
-`SO_PEERCRED`: an unprivileged process must have the same effective UID, while
-root may inspect all visible instances in the same PID and network namespaces.
-The dashboard also verifies the service UID, PID, and process start time before
-accepting its data.
-
-The socket carries no shared keys or SOCKS passwords, but it does expose target
-addresses, traffic counters, process metadata, and client addresses. Client
-masking is a dashboard presentation control; an authorized local process can
-still read the underlying telemetry. Treat root and same-UID processes as
-trusted operators, and use container namespaces when instances need stronger
-isolation.
-
-## Deployment Checklist
-
-- Use a verified Vector `sni` or a securely distributed `pin` for public
-  deployments.
-- Restrict command URL, certificate, and private-key access.
-- Use independent high-entropy shared and SOCKS credentials.
-- Enable only the required Portal listener transports.
-- Keep wildcard SOCKS listeners behind authentication and firewall policy.
-- Monitor CHECK_POINT, LINK_STATUS, authentication failures, and restarts.
-- Treat DEBUG access paths as sensitive operational metadata.
-- Treat the root TUI and direct same-UID telemetry access as trusted local
-  operations, not as a confidentiality boundary.
+Nowhere protects traffic on its carrier links. Target-side security, local SOCKS access control, endpoint compromise, denial of service within configured limits, and application reconnection policy remain operational responsibilities.

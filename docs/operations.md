@@ -1,190 +1,44 @@
-# Operations Guide
+# Operations
 
-Portal and Vector expose their effective configuration, transport state, flow
-counts, traffic counters, and lifecycle through local logs. Credentials are
-never included in effective URLs or access records.
+## Health model
 
-## Startup Output
+Portal and Vector expose lifecycle, logical flow counts, TLS/QUIC carrier
+counts, and traffic totals through the local TUI on every supported platform.
+Linux also reports process CPU and RSS. These process-resource fields are
+unavailable on macOS and Windows; relay behavior is unchanged.
 
-Both commands validate selected values before opening listeners. Unknown
-parameters and later duplicates are ignored; missing optional parameters use
-their defaults.
+Run `nowhere` without a URL and select:
 
-Portal prints:
+- `1` Overview;
+- `2` Logs.
 
-```text
-net -> tls -> alpn -> rate -> etar -> dial -> socks -> next
-```
+## Capacity
 
-When `next` is enabled, Portal appends its effective `up`, `down`, `pool`,
-`sni`, and `pin` values. The upstream shared key is always redacted.
+The important memory bounds are the 1,024 concurrent TCP flows and 256 UDP flows
+per authenticated client session, the 512 KiB per-stream and per-Mux receive
+windows, 256 streams per Mux, bounded reusable relay-buffer caches, and QUIC UDP
+queue/reassembly limits. UoT and QUIC DATAGRAM share the UDP flow limit. TLS
+shards enabled by `mux=1` target 12 active flows, use least-loaded placement,
+and close after 30 seconds fully idle. Frame queue slots do not bypass byte credit. Windows are
+granted as permits and payload is admitted incrementally.
 
-Vector prints:
+QUIC uses the shared `balanced` memory profile by default for both protocol
+versions. Select `throughput` only for high-bandwidth, high-RTT paths after
+capacity testing; select `memory` when connection density matters more than a
+single flow's bandwidth-delay product.
 
-```text
-up -> down -> pool -> sni -> pin -> alpn -> rate -> etar -> socks
-```
+## Failure behavior
 
-Vector records `sni=none` and `pin=none` whenever those identity controls are
-disabled, and reports `pool=0` for every carrier pair except `tcp/tcp`.
+When a physical carrier closes, its logical flows close. SSH, download, and
+WebSocket clients reconnect according to their application policy after
+Wi-Fi/5G changes, NAT rebuilds, or TCP resets.
 
-## Logs and Telemetry
+## Shutdown
 
-Available levels are `none`, `debug`, `info`, `warn`, `error`, and `event`.
+Ctrl+C starts graceful shutdown on Linux, macOS, and Windows. Unix process managers may use SIGINT or SIGTERM. Shutdown stops accepting new work, rejects incomplete pairings, lets established relay tasks drain until `NOW_SHUTDOWN_TIMEOUT`, and then closes remaining carriers. Local telemetry registry files are removed when their server exits; stale entries are also discarded during discovery.
 
-EVENT emits machine-readable checkpoints:
+Run Portal and Vector under the platform's normal service manager. The manager should preserve the URL and environment configuration, forward a graceful termination event, restart only after the process exits, and allow the configured shutdown deadline.
 
-```text
-CHECK_POINT|MODE=0|PING=0ms|POOL=5|TCPS=0|UDPS=0|TCPRX=0|TCPTX=0|UDPRX=0|UDPTX=0
-```
+## Deployment checks
 
-Portal MODE values are `0=mix`, `1=tcp`, and `2=udp`. Vector MODE values are
-`0=tcp/tcp`, `1=tcp/udp`, `2=udp/tcp`, and `3=udp/udp`.
-
-`PING` is the current explicit upstream transport RTT in integer milliseconds.
-Vector reports Vector-to-Portal RTT. A chained Portal reports relay-to-next-
-Portal RTT, and a SOCKS-backed Portal reports its SOCKS5 TCP-control RTT.
-TLS/TCP and SOCKS samples come from Linux `TCP_INFO`; QUIC samples come from
-Quinn's connection RTT. No active probe traffic is generated. A direct Portal
-always emits the exact token `PING=0ms`; zero on other roles means no live
-valid sample is available.
-
-DEBUG additionally emits carrier state:
-
-```text
-LINK_STATUS|TCP=0|UDP=0|PAIRS=0|UPTCP=0|UPUDP=0|DOWNTCP=0|DOWNUDP=0
-```
-
-Portal and Vector also emit transition-only lifecycle records:
-
-```text
-LIFE_STATUS|MODE=PORTAL|STATE=STARTING|REASON=STARTUP
-LIFE_STATUS|MODE=PORTAL|STATE=READY|REASON=LISTENING
-LIFE_STATUS|MODE=PORTAL|STATE=DRAINING|REASON=SIGTERM
-LIFE_STATUS|MODE=PORTAL|STATE=STOPPED|REASON=DRAINED
-```
-
-`MODE` is `PORTAL` or `VECTOR`. Portal draining reasons are `SIGINT`,
-`SIGTERM`, `TCP_LISTENER_EXIT`, and `QUIC_LISTENER_EXIT`; its stopped reasons
-are `DRAINED`, `TIMEOUT`, `FORCED`, and `START_FAILED`. Vector uses
-`SOCKS_LISTENER_EXIT` while draining and `CLEANUP_COMPLETE`, `TIMEOUT`,
-`FORCED`, or `START_FAILED` when stopped. Vector `READY` means that every local
-SOCKS listener is bound; it does not probe Portal. Lifecycle records use the
-EVENT channel and, like all output, are suppressed by `log=none`.
-
-Access paths use matching `starting` and `complete` messages. They include the
-selected upload and download carriers plus client, relay, and target endpoints,
-but never shared keys or SOCKS passwords.
-
-## Read-only TUI
-
-Run `nowhere` or `nowhere tui` from an interactive terminal. Each Portal and
-Vector publishes structured telemetry over a Linux abstract Unix socket;
-the dashboard never parses or captures stdout/stderr and cannot start, stop, or
-reconfigure an instance.
-
-An unprivileged dashboard may observe instances owned by its effective UID.
-A root dashboard may observe all Nowhere instances in the same PID and network
-namespaces.
-Container namespaces are isolated unless the dashboard runs inside the same
-container. Multiple dashboards may observe an instance concurrently, up to 16
-read-only clients per service. Abstract socket names include the UID, PID, and
-process start time; the kernel removes them automatically when the process
-exits.
-
-`NOW_TELEMETRY_INTERVAL` controls structured snapshots independently of
-`NOW_REPORT_INTERVAL`. It defaults to one second and accepts values from 250ms
-through 60s. The dashboard retains ten minutes of metrics and only the live
-access/runtime events received while an instance is selected; nothing is
-persisted by the service or dashboard.
-
-TUI metrics and structured access/runtime events are independent of `log=`.
-The existing EVENT and DEBUG text formats remain available to journald,
-OpenCtrl, and other stdout consumers, but are not repeated in the dashboard.
-Client addresses are masked in both live feeds by default; press `p` to reveal
-them locally. Targets remain visible in the access feed.
-
-Every supported size uses two workspaces and keeps Instances in a full-height
-left sidebar. Press `1` for Overview or `2` for Logs. At 120×32 terminal cells
-and above, Overview shows six filled traffic histories plus equal-width
-Selected, Connections, and Carriers/Process cards. The latter cards add hollow
-histories for TCP/UDP connections, TLS and QUIC links, upstream PING, pool occupancy,
-CPU, and RSS. Medium-width terminals preserve this dashboard with denser chart
-cells. Narrow or portrait terminals prioritize Selected, Connections, and
-Carriers/Process and omit the six large traffic histories.
-
-Logs stacks Access above Runtime to give both feeds the full workspace width;
-the instance sidebar remains full height. Use Tab or BackTab to focus Access or
-Runtime. Up and down scroll records; left and right pan a focused log
-horizontally so every single-line event can be inspected. The minimum supported
-terminal is 72×20 cells.
-
-## TLS Warm Lanes
-
-Vector uses a warm pool only for `tcp/tcp`. Each prepared lane completes TCP,
-TLS, exporter derivation, and the 32-byte authentication exchange before it is
-placed in the idle set.
-
-An acquired lane is single-use. Consumed, closed, unhealthy, or expired lanes
-are removed and replenished in the background. Portal independently limits the
-number of authenticated idle lanes, so client and server pool controls protect
-different resources.
-
-## QUIC Sessions and Recovery
-
-Vector shares one QUIC connection across eligible TCP streams and UDP flows.
-When Portal is unavailable, the SOCKS listener remains active while affected
-requests fail cleanly. Later requests trigger reconnect after
-`NOW_SERVICE_COOLDOWN`.
-
-The logical session ID remains stable across QUIC reconnects. Portal admits one
-current QUIC carrier for that session and cancels state owned by a displaced
-connection instead of moving live flows between connections.
-
-Portal applies `NOW_HANDSHAKE_TIMEOUT` independently to QUIC TLS negotiation
-and to v1 authentication, so one phase cannot consume the other's budget.
-Abandoned handshake timeouts are silent; non-timeout negotiation failures are
-available at DEBUG level.
-
-A Portal configured with `next` uses the same lazy TLS pool and shared QUIC
-session engine. Upstream failure does not block `READY`; each affected flow
-fails with its authoritative setup result and later flows reconnect normally.
-The upstream client's carrier counters and pool occupancy are intentionally
-private, so they do not alter the relay Portal's inbound `POOL` or
-`LINK_STATUS` values. Only its RTT feeds `PING`.
-
-## Limits and Rate Control
-
-`rate` applies client-to-target and `etar` applies target-to-client. Portal and
-Vector enforce their configured limits independently; the tighter side bounds
-the complete path.
-
-Increase stream, flow, queue, or pair limits only after measuring CPU, memory,
-queue pressure, and target behavior. Queue overload, unknown UDP flows, DATA
-before READY, and expired fragments are dropped instead of accumulating
-unbounded state.
-
-## Certificates
-
-Portal `tls=2` validates PEM files at startup and checks for replacement files
-no more often than `NOW_RELOAD_INTERVAL`. A reload failure keeps the last valid
-certificate active and emits an error.
-
-Vector loads system roots for verified `sni` connections. A root-store,
-certificate-chain, or name error fails the carrier. There is no automatic
-fallback from verified to unverified TLS. An enabled `pin` takes precedence and
-requires an exact leaf-certificate SHA-256 match.
-
-## Graceful Shutdown
-
-SIGINT and SIGTERM initiate shutdown. Portal first stops physical admission and
-rejects pending or newly requested v1 flows with `FLOW_LIMIT`. Relays that have
-already committed `READY` continue until they finish or the single absolute
-`NOW_SHUTDOWN_TIMEOUT` deadline expires. A second signal forces immediate
-cleanup. A TCP or QUIC listener task exiting unexpectedly follows the same
-drain path and makes Portal return an error after cleanup.
-
-Vector performs fast cleanup rather than flow draining: it closes the SOCKS
-listeners, local client work, pool maintenance, and remote carriers. A SOCKS
-listener task exiting unexpectedly is fatal. The periodic EVENT task is
-auxiliary in both modes and is not treated as a listener failure.
+Functional validation belongs on every deployment platform. Check Portal and Vector startup, TCP CONNECT, UDP ASSOCIATE, all configured carrier combinations, graceful shutdown, and local TUI discovery.
