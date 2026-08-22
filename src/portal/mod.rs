@@ -17,11 +17,9 @@ mod tasks;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::{Lifecycle, Logger, TLSMode};
+use crate::common::{Lifecycle, Logger, MuxMode, TLSMode};
 use crate::protocol::Credentials;
 use crate::telemetry::TelemetryHub;
 use crate::transport::{Buffers, RateLimiter, Stats};
@@ -30,10 +28,7 @@ use self::config::PortalRuntimeConfig;
 pub(crate) use self::mode::NetworkMode;
 use self::outbound::PortalOutbound;
 
-const DEFAULT_QUIC_MAX_UDP_FLOWS: usize = 256;
 const DEFAULT_QUIC_UDP_QUEUE_BYTES: usize = 4 * 1024 * 1024;
-const DEFAULT_TCP_IDLE_POOL_CONNECTIONS: usize = 4096;
-const DEFAULT_ALPN: &str = "now/1";
 
 #[derive(Clone, Copy, Debug)]
 struct UdpFlowLimits {
@@ -50,6 +45,7 @@ pub struct Portal {
 struct PortalInner {
     credentials: Credentials,
     alpn: String,
+    mux: MuxMode,
     tls_mode: TLSMode,
     network_mode: NetworkMode,
     endpoint_addr: String,
@@ -65,8 +61,6 @@ struct PortalInner {
     drain: CancellationToken,
     runtime: PortalRuntimeConfig,
     stats: Arc<Stats>,
-    pool_active: AtomicU64,
-    tcp_idle_pool_budget: Arc<Semaphore>,
     buffers: Buffers,
     rate_limiter: Option<Arc<RateLimiter>>,
     udp_flow_limits: UdpFlowLimits,

@@ -8,13 +8,13 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use tokio::sync::Semaphore;
 
-use crate::common::{DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL, MIN_TELEMETRY_INTERVAL};
-
-use super::{
-    DEFAULT_QUIC_MAX_UDP_FLOWS, DEFAULT_QUIC_UDP_QUEUE_BYTES, DEFAULT_TCP_IDLE_POOL_CONNECTIONS,
+use crate::common::{
+    DEFAULT_MAX_TCP_FLOWS, DEFAULT_MAX_UDP_FLOWS, DEFAULT_TELEMETRY_INTERVAL,
+    MAX_TELEMETRY_INTERVAL, MIN_TELEMETRY_INTERVAL,
 };
 
-const DEFAULT_QUIC_MAX_STREAMS: u32 = 1024;
+use super::DEFAULT_QUIC_UDP_QUEUE_BYTES;
+
 const DEFAULT_TCP_DATA_BUF_SIZE: usize = 32 * 1024;
 const DEFAULT_UDP_DATA_BUF_SIZE: usize = 64 * 1024;
 const DEFAULT_TCP_DIAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -30,10 +30,9 @@ const DEFAULT_FLOW_PAIR_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct PortalRuntimeConfig {
-    pub(super) quic_max_streams: u32,
+    pub(super) max_tcp_flows: u32,
     pub(super) max_udp_flows: usize,
     pub(super) udp_queue_bytes: usize,
-    pub(super) tcp_idle_pool_connections: usize,
     pub(super) tcp_data_buf_size: usize,
     pub(super) udp_data_buf_size: usize,
     pub(super) tcp_dial_timeout: Duration,
@@ -50,6 +49,10 @@ pub(super) struct PortalRuntimeConfig {
 }
 
 impl PortalRuntimeConfig {
+    pub(super) fn quic_bidi_stream_capacity(&self) -> u32 {
+        self.max_tcp_flows + self.max_udp_flows as u32
+    }
+
     pub(super) fn from_env() -> Result<Self> {
         Self::from_source(|name| match std::env::var(name) {
             Ok(value) => Ok(Some(value)),
@@ -64,28 +67,21 @@ impl PortalRuntimeConfig {
     where
         F: FnMut(&str) -> Result<Option<String>>,
     {
-        let quic_max_streams = read_u32(
-            &mut source,
-            "NOW_QUIC_MAX_STREAMS",
-            DEFAULT_QUIC_MAX_STREAMS,
-        )?;
+        let max_tcp_flows = read_u32(&mut source, "NOW_MAX_TCP_FLOWS", DEFAULT_MAX_TCP_FLOWS)?;
         let max_udp_flows = read_usize(
             &mut source,
-            "NOW_QUIC_MAX_UDP_FLOWS",
-            DEFAULT_QUIC_MAX_UDP_FLOWS,
+            "NOW_MAX_UDP_FLOWS",
+            DEFAULT_MAX_UDP_FLOWS,
             (u32::MAX as usize).min(Semaphore::MAX_PERMITS),
         )?;
+        max_tcp_flows
+            .checked_add(max_udp_flows as u32)
+            .context("portal::config: NOW_MAX_TCP_FLOWS + NOW_MAX_UDP_FLOWS exceeds u32")?;
         let udp_queue_bytes = read_usize(
             &mut source,
             "NOW_QUIC_UDP_QUEUE_BYTES",
             DEFAULT_QUIC_UDP_QUEUE_BYTES,
             Semaphore::MAX_PERMITS.min(u32::MAX as usize),
-        )?;
-        let tcp_idle_pool_connections = read_usize(
-            &mut source,
-            "NOW_TCP_IDLE_POOL_CONNS",
-            DEFAULT_TCP_IDLE_POOL_CONNECTIONS,
-            Semaphore::MAX_PERMITS,
         )?;
         let tcp_data_buf_size = read_usize(
             &mut source,
@@ -160,10 +156,9 @@ impl PortalRuntimeConfig {
         )?;
 
         Ok(Self {
-            quic_max_streams,
+            max_tcp_flows,
             max_udp_flows,
             udp_queue_bytes,
-            tcp_idle_pool_connections,
             tcp_data_buf_size,
             udp_data_buf_size,
             tcp_dial_timeout,
