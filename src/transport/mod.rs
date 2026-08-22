@@ -8,7 +8,7 @@ mod quic;
 mod rate;
 mod stats;
 
-pub use buffers::Buffers;
+pub use buffers::{BufferLease, Buffers};
 pub(crate) use quic::quic_flow_control;
 pub use rate::{RateLimiter, TokenBucket};
 pub use stats::Stats;
