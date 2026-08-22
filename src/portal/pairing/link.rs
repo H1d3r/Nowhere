@@ -97,7 +97,6 @@ impl Drop for LinkGuard {
             }
             return;
         };
-        let was_paired = counts.tcp > 0 && counts.udp.is_some();
         match self.carrier {
             crate::protocol::Carrier::TlsTcp => counts.tcp = counts.tcp.saturating_sub(1),
             crate::protocol::Carrier::Quic => {
@@ -112,10 +111,6 @@ impl Drop for LinkGuard {
                 }
                 counts.udp = None;
             }
-        }
-        let is_paired = counts.tcp > 0 && counts.udp.is_some();
-        if was_paired && !is_paired {
-            self.stats.link_pairs.fetch_sub(1, Ordering::Relaxed);
         }
         if counts.tcp == 0 && counts.udp.is_none() {
             links.remove(&self.session_id);
@@ -144,12 +139,7 @@ impl PairingRegistry {
         let counts = links
             .entry(session_id)
             .or_insert_with(|| super::state::LinkCounts::new(self.max_udp_flows));
-        let was_paired = counts.tcp > 0 && counts.udp.is_some();
         counts.tcp += 1;
-        let is_paired = counts.udp.is_some();
-        if !was_paired && is_paired {
-            stats.link_pairs.fetch_add(1, Ordering::Relaxed);
-        }
         stats.link_tcp.fetch_add(1, Ordering::Relaxed);
         drop(links);
         LinkGuard {
@@ -174,17 +164,12 @@ impl PairingRegistry {
             let counts = links
                 .entry(session_id)
                 .or_insert_with(|| super::state::LinkCounts::new(self.max_udp_flows));
-            let was_paired = counts.tcp > 0 && counts.udp.is_some();
             let previous = counts.udp.replace(ActiveQuic {
                 generation,
                 replacement,
             });
-            let is_paired = counts.tcp > 0;
             if previous.is_none() {
                 stats.link_udp.fetch_add(1, Ordering::Relaxed);
-                if !was_paired && is_paired {
-                    stats.link_pairs.fetch_add(1, Ordering::Relaxed);
-                }
             }
             previous
         };
