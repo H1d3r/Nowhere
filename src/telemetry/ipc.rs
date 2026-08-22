@@ -1,13 +1,11 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Abstract Unix-socket transport and `/proc` discovery.
+//! Portable loopback transport and per-user registry discovery.
 
 use std::io;
-use std::os::linux::net::SocketAddrExt;
-use std::os::unix::net::{
-    SocketAddr, UnixListener as StdUnixListener, UnixStream as StdUnixStream,
-};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener as StdTcpListener};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,35 +13,41 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, broadcast};
 use tokio_util::sync::CancellationToken;
 
-use super::process::read_start_ticks;
+use super::process::{process_is_alive, process_uid, read_process_incarnation};
 use super::{
     ClientMessage, Hello, MAX_FRAME_SIZE, PROTOCOL_VERSION, ServerMessage, Subscription,
     TelemetryHub,
 };
 
-const SOCKET_PREFIX: &str = "@nowhere.v1.";
 const MAX_CLIENTS: usize = 16;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A socket name validated against the live `/proc/<pid>/stat` incarnation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// A registry identity validated against the live process incarnation where supported.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
 pub(crate) struct DiscoveredInstance {
-    pub(crate) socket_name: String,
+    pub(crate) registry_name: String,
     pub(crate) uid: u32,
     pub(crate) pid: u32,
-    pub(crate) start_ticks: u64,
+    pub(crate) incarnation: u64,
+}
+
+#[derive(serde::Deserialize, Serialize)]
+struct RegistryEntry {
+    instance: DiscoveredInstance,
+    address: SocketAddr,
 }
 
 /// Publishes one process hub to any number of read-only TUI clients.
 pub(crate) struct TelemetryServer {
-    listener: UnixListener,
+    listener: TcpListener,
     hub: Arc<TelemetryHub>,
     clients: Arc<Semaphore>,
+    registry_path: PathBuf,
 }
 
 impl TelemetryServer {
@@ -51,19 +55,39 @@ impl TelemetryServer {
         if let Some(reason) = hub.unavailable_reason() {
             bail!("telemetry process identity is unavailable: {reason}");
         }
-        let name = hub.descriptor().socket_name();
-        let address = SocketAddr::from_abstract_name(name.as_bytes())
-            .context("telemetry: invalid abstract socket name")?;
-        let listener = StdUnixListener::bind_addr(&address)
-            .with_context(|| format!("telemetry: failed to bind @{name}"))?;
+        let descriptor = hub.descriptor();
+        let name = descriptor.registry_name();
+        let listener = StdTcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .context("telemetry: failed to bind loopback listener")?;
         listener
             .set_nonblocking(true)
-            .context("telemetry: failed to make abstract socket nonblocking")?;
+            .context("telemetry: failed to make loopback socket nonblocking")?;
+        let entry = RegistryEntry {
+            instance: DiscoveredInstance {
+                registry_name: name,
+                uid: descriptor.uid,
+                pid: descriptor.pid,
+                incarnation: descriptor.incarnation,
+            },
+            address: listener.local_addr()?,
+        };
+        let directory = registry_directory();
+        std::fs::create_dir_all(&directory)
+            .context("telemetry: failed to create local registry")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700));
+        }
+        let registry_path = registry_path(&entry.instance.registry_name);
+        let payload = serde_json::to_vec(&entry).context("telemetry: failed to encode registry")?;
+        std::fs::write(&registry_path, payload).context("telemetry: failed to publish registry")?;
         Ok(Self {
-            listener: UnixListener::from_std(listener)
-                .context("telemetry: failed to register abstract socket")?,
+            listener: TcpListener::from_std(listener)
+                .context("telemetry: failed to register loopback socket")?,
             hub,
             clients: Arc::new(Semaphore::new(MAX_CLIENTS)),
+            registry_path,
         })
     }
 
@@ -80,13 +104,6 @@ impl TelemetryServer {
                 }
                 continue;
             };
-            let Ok(peer) = stream.peer_cred() else {
-                continue;
-            };
-            let owner = self.hub.descriptor().uid;
-            if peer.uid() != owner && peer.uid() != 0 {
-                continue;
-            }
             let Ok(permit) = Arc::clone(&self.clients).try_acquire_owned() else {
                 tokio::spawn(async move {
                     let (_, mut writer) = stream.into_split();
@@ -111,7 +128,7 @@ impl TelemetryServer {
 }
 
 async fn serve_client(
-    stream: UnixStream,
+    stream: TcpStream,
     hub: Arc<TelemetryHub>,
     shutdown: CancellationToken,
 ) -> Result<()> {
@@ -183,53 +200,38 @@ async fn serve_client(
     }
 }
 
-/// Scans only the caller's current network namespace.
-///
-/// Non-root callers skip sockets whose encoded UID differs before connecting.
-/// The service repeats this check using `SO_PEERCRED`.
 pub(crate) fn discover_instances() -> io::Result<Vec<DiscoveredInstance>> {
-    let contents = std::fs::read_to_string("/proc/net/unix")?;
-    let current_uid = unsafe { libc::geteuid() };
-    let is_root = current_uid == 0;
+    let current_uid = process_uid();
     let mut found = Vec::new();
-    for path in contents
-        .lines()
-        .filter_map(|line| line.split_ascii_whitespace().last())
-        .filter(|path| path.starts_with(SOCKET_PREFIX))
-    {
-        let Some(instance) = parse_socket_path(path) else {
+    let directory = registry_directory();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(found),
+        Err(error) => return Err(error),
+    };
+    for path in entries.filter_map(Result::ok).map(|entry| entry.path()) {
+        let Ok(payload) = std::fs::read(&path) else {
             continue;
         };
-        if !is_root && instance.uid != current_uid {
+        let Ok(entry) = serde_json::from_slice::<RegistryEntry>(&payload) else {
+            continue;
+        };
+        let instance = entry.instance;
+        if instance.uid != current_uid {
             continue;
         }
-        if read_start_ticks(instance.pid) != Some(instance.start_ticks) {
+        if !process_is_alive(instance.pid)
+            || (cfg!(target_os = "linux")
+                && read_process_incarnation(instance.pid) != Some(instance.incarnation))
+        {
+            let _ = std::fs::remove_file(path);
             continue;
         }
         found.push(instance);
     }
-    found.sort_by_key(|instance| (instance.uid, instance.pid, instance.start_ticks));
+    found.sort_by_key(|instance| (instance.uid, instance.pid, instance.incarnation));
     found.dedup();
     Ok(found)
-}
-
-fn parse_socket_path(path: &str) -> Option<DiscoveredInstance> {
-    let mut components = path.strip_prefix('@')?.split('.');
-    if components.next()? != "nowhere" || components.next()? != "v1" {
-        return None;
-    }
-    let uid = components.next()?.parse().ok()?;
-    let pid = components.next()?.parse().ok()?;
-    let start_ticks = components.next()?.parse().ok()?;
-    if components.next().is_some() {
-        return None;
-    }
-    Some(DiscoveredInstance {
-        socket_name: path.strip_prefix('@')?.to_owned(),
-        uid,
-        pid,
-        start_ticks,
-    })
 }
 
 pub(crate) struct TelemetryClient {
@@ -243,36 +245,16 @@ impl TelemetryClient {
         discovered: &DiscoveredInstance,
         subscription: Subscription,
     ) -> Result<Self> {
-        let address = SocketAddr::from_abstract_name(discovered.socket_name.as_bytes())
-            .context("telemetry: invalid discovered abstract socket name")?;
-        let stream = StdUnixStream::connect_addr(&address)
-            .with_context(|| format!("telemetry: failed to connect @{}", discovered.socket_name))?;
-        stream
-            .set_nonblocking(true)
-            .context("telemetry: failed to make client socket nonblocking")?;
-        let stream =
-            UnixStream::from_std(stream).context("telemetry: failed to register client socket")?;
-        let peer = stream
-            .peer_cred()
-            .context("telemetry: failed to inspect service peer credentials")?;
-        if peer.uid() != discovered.uid {
-            bail!(
-                "telemetry: service UID mismatch (expected {}, got {})",
-                discovered.uid,
-                peer.uid()
-            );
+        let payload = std::fs::read(registry_path(&discovered.registry_name))
+            .context("telemetry: discovered registry disappeared")?;
+        let entry: RegistryEntry =
+            serde_json::from_slice(&payload).context("telemetry: invalid discovered registry")?;
+        if entry.instance != *discovered || !entry.address.ip().is_loopback() {
+            bail!("telemetry: discovered registry identity mismatch");
         }
-        let peer_pid = peer
-            .pid()
-            .and_then(|pid| u32::try_from(pid).ok())
-            .context("telemetry: service peer PID is unavailable")?;
-        if peer_pid != discovered.pid {
-            bail!(
-                "telemetry: service PID mismatch (expected {}, got {})",
-                discovered.pid,
-                peer_pid
-            );
-        }
+        let stream = TcpStream::connect(entry.address)
+            .await
+            .with_context(|| format!("telemetry: failed to connect {}", entry.address))?;
         let (reader, mut writer) = stream.into_split();
         let mut reader = FrameReader::new(reader);
         let message = reader.next::<ServerMessage>().await?;
@@ -301,15 +283,32 @@ impl TelemetryClient {
     }
 }
 
+impl Drop for TelemetryServer {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.registry_path);
+    }
+}
+
+fn registry_directory() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "nowhere-telemetry-v{PROTOCOL_VERSION}-{}",
+        process_uid()
+    ))
+}
+
+fn registry_path(registry_name: &str) -> PathBuf {
+    registry_directory().join(format!("{registry_name}.json"))
+}
+
 fn validate_hello(hello: &Hello, discovered: &DiscoveredInstance) -> Result<()> {
     let instance = &hello.instance;
     if instance.protocol_version != PROTOCOL_VERSION
         || instance.uid != discovered.uid
         || instance.pid != discovered.pid
-        || instance.start_ticks != discovered.start_ticks
-        || instance.socket_name() != discovered.socket_name
+        || instance.incarnation != discovered.incarnation
+        || instance.registry_name() != discovered.registry_name
     {
-        bail!("telemetry: hello identity does not match discovered socket");
+        bail!("telemetry: hello identity does not match discovered registry");
     }
     Ok(())
 }

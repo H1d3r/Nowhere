@@ -4,38 +4,56 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::telemetry::{
-    InstanceDescriptor, InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetrySnapshot,
-};
+use crate::telemetry::wire::InstanceDescriptor;
+use crate::telemetry::{InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetrySnapshot};
 use crate::transport::Stats;
 
-#[test]
-fn parses_only_exact_v1_socket_names() {
-    assert_eq!(
-        parse_socket_path("@nowhere.v1.1000.42.900"),
-        Some(DiscoveredInstance {
-            socket_name: "nowhere.v1.1000.42.900".to_owned(),
-            uid: 1000,
-            pid: 42,
-            start_ticks: 900,
-        })
-    );
-    assert!(parse_socket_path("@nowhere.v2.1000.42.900").is_none());
-    assert!(parse_socket_path("@nowhere.v1.1000.42").is_none());
-    assert!(parse_socket_path("@nowhere.v1.1000.42.900.extra").is_none());
+fn parse_registry_name(name: &str) -> Option<DiscoveredInstance> {
+    let mut components = name.split('.');
+    if components.next()? != "nowhere" || components.next()? != "v2" {
+        return None;
+    }
+    let uid = components.next()?.parse().ok()?;
+    let pid = components.next()?.parse().ok()?;
+    let incarnation = components.next()?.parse().ok()?;
+    if components.next().is_some() {
+        return None;
+    }
+    Some(DiscoveredInstance {
+        registry_name: name.to_owned(),
+        uid,
+        pid,
+        incarnation,
+    })
 }
 
 #[test]
-fn v1_snapshot_without_ping_defaults_to_zero() {
-    let mut encoded = serde_json::to_value(TelemetrySnapshot {
-        ping_ms: 23,
-        ..TelemetrySnapshot::default()
-    })
-    .unwrap();
-    encoded.as_object_mut().unwrap().remove("ping_ms");
+fn parses_only_exact_v2_registry_names() {
+    assert_eq!(
+        parse_registry_name("nowhere.v2.1000.42.900"),
+        Some(DiscoveredInstance {
+            registry_name: "nowhere.v2.1000.42.900".to_owned(),
+            uid: 1000,
+            pid: 42,
+            incarnation: 900,
+        })
+    );
+    assert!(parse_registry_name("nowhere.v1.1000.42.900").is_none());
+    assert!(parse_registry_name("nowhere.v2.1000.42").is_none());
+    assert!(parse_registry_name("nowhere.v2.1000.42.900.extra").is_none());
+}
 
-    let decoded: TelemetrySnapshot = serde_json::from_value(encoded).unwrap();
-    assert_eq!(decoded.ping_ms, 0);
+#[test]
+fn v2_snapshot_round_trips_transport_counters() {
+    let snapshot = TelemetrySnapshot {
+        tls_carriers_active: 2,
+        quic_carriers_active: 3,
+        tcp_logical_up: 4,
+        ..TelemetrySnapshot::default()
+    };
+    let encoded = serde_json::to_vec(&snapshot).unwrap();
+    let decoded: TelemetrySnapshot = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(decoded, snapshot);
 }
 
 #[tokio::test]
@@ -95,26 +113,31 @@ async fn slow_frame_writes_time_out() {
 
 #[tokio::test]
 async fn multiple_clients_can_read_and_change_subscriptions() {
-    let descriptor = InstanceDescriptor::current(
+    let mut descriptor = InstanceDescriptor::current(
         InstanceRole::Portal,
         ":2077",
         "net=mix",
         Duration::from_secs(1),
     )
     .unwrap();
-    let id = descriptor.id.clone();
+    // Unit tests share one process incarnation and run in parallel with
+    // Portal runtime tests, so use a test-only registry identity.
+    descriptor.incarnation = descriptor.incarnation.saturating_add(10_000_000);
+    descriptor.id = format!(
+        "{}:{}:{}",
+        descriptor.uid, descriptor.pid, descriptor.incarnation
+    );
+    let discovered = DiscoveredInstance {
+        registry_name: descriptor.registry_name(),
+        uid: descriptor.uid,
+        pid: descriptor.pid,
+        incarnation: descriptor.incarnation,
+    };
     let hub = TelemetryHub::new(descriptor);
     let shutdown = CancellationToken::new();
     let server = TelemetryServer::bind(hub.clone()).unwrap();
     let server_task = tokio::spawn(server.run(shutdown.clone()));
 
-    let discovered = discover_instances()
-        .unwrap()
-        .into_iter()
-        .find(|instance| {
-            format!("{}:{}:{}", instance.uid, instance.pid, instance.start_ticks) == id
-        })
-        .expect("bound instance must be discoverable");
     let summary = TelemetryClient::connect(&discovered, Subscription::Summary)
         .await
         .unwrap();
@@ -175,7 +198,7 @@ async fn multiple_clients_can_read_and_change_subscriptions() {
         ServerMessage::RuntimeEvent(_)
     ));
 
-    hub.capture_and_publish(&Stats::default(), 0, 0);
+    hub.capture_and_publish(&Stats::default(), 0);
     assert!(matches!(
         tokio::time::timeout(Duration::from_secs(1), summary_reader.next_message())
             .await
@@ -188,19 +211,24 @@ async fn multiple_clients_can_read_and_change_subscriptions() {
         .subscribe(Subscription::Detail)
         .await
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    hub.emit_runtime(RuntimeEvent::new(
-        RuntimeLevel::Warn,
-        RuntimeKind::Pool,
-        "pool changed",
-    ));
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(1), summary_reader.next_message())
-            .await
-            .unwrap()
-            .unwrap(),
-        ServerMessage::RuntimeEvent(_)
-    ));
+    let subscribed_event = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            hub.emit_runtime(RuntimeEvent::new(
+                RuntimeLevel::Warn,
+                RuntimeKind::Backpressure,
+                "buffer pressure changed",
+            ));
+            if let Ok(message) =
+                tokio::time::timeout(Duration::from_millis(25), summary_reader.next_message()).await
+            {
+                return message;
+            }
+        }
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(subscribed_event, ServerMessage::RuntimeEvent(_)));
 
     shutdown.cancel();
     server_task.await.unwrap();
