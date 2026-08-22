@@ -12,14 +12,15 @@ use tokio::time::timeout;
 use crate::portal::PortalInner;
 use crate::protocol::Carrier;
 use crate::telemetry::AccessSpan;
+use crate::transport::BufferLease;
 
 /// Relays both directions until one side closes or either direction errors.
-pub(super) async fn relay_stream<R, W, TR, TW>(
+pub(in crate::portal) async fn relay_stream<R, W, TR, TW>(
     portal: Arc<PortalInner>,
     client_read: &mut R,
     client_write: &mut W,
     target: (TR, TW),
-    buffers: (Vec<u8>, Vec<u8>),
+    buffers: (BufferLease, BufferLease),
     carriers: Option<(Carrier, Carrier)>,
     access: &AccessSpan,
 ) -> anyhow::Result<()>
@@ -52,7 +53,6 @@ where
                 limiter.wait_read(n as i64).await;
             }
             target_write.write_all(&buffer1[..n]).await?;
-            target_write.flush().await?;
         }
     };
 
@@ -67,7 +67,13 @@ where
                 limiter.wait_write(n as i64).await;
             }
             client_write.write_all(&buffer2[..n]).await?;
-            client_write.flush().await?;
+            if carriers.is_some_and(|(uplink, downlink)| {
+                uplink == Carrier::TlsTcp && downlink == Carrier::Quic
+            }) {
+                // Keep the TLS Mux receive/control tasks responsive when the
+                // QUIC half remains continuously writable.
+                tokio::task::yield_now().await;
+            }
             access.add_download(n as u64);
             portal.stats.tcp_tx.fetch_add(n as u64, Ordering::Relaxed);
             if let Some((_, downlink)) = carriers {

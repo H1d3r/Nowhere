@@ -87,8 +87,8 @@ pub(super) async fn authenticate_connection(
                     Ok((session_id, first_send, first_recv)) => {
                         // Establish a hard phase barrier before any flow can
                         // be installed: poll until Quinn reports no queued
-                        // DATAGRAM. Unlike the old bounded drain, an arbitrary
-                        // pre-auth backlog can never leak into a READY flow.
+                        // DATAGRAM, so no pre-auth backlog can enter a READY
+                        // flow.
                         match drain_pre_auth_datagrams(
                             &conn,
                             deadline,
