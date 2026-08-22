@@ -3,6 +3,7 @@
 
 //! Shared configuration, logging, networking, and TLS utilities.
 
+mod alpn;
 mod config;
 mod datagram;
 mod latency;
@@ -12,6 +13,7 @@ mod network;
 pub(crate) mod socks;
 mod tls;
 
+pub(crate) use alpn::{MUX_MARKER, MuxMode, parse_alpn};
 pub(crate) use config::first_raw_query_value;
 pub use config::{
     DEFAULT_DIALER_IP, DEFAULT_RATE_LIMIT, DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL,
