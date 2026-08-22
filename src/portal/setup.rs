@@ -4,17 +4,15 @@
 //! Portal construction from URL configuration.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use anyhow::Result;
-use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, OutboundDialer,
-    SocksConfig, bind_udp_addrs, first_raw_query_value, init_dialer_ip,
-    new_server_configs_with_reload_interval, query_first, rate_limit_bytes_per_second,
+    DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, MuxMode,
+    OutboundDialer, SocksConfig, bind_udp_addrs, first_raw_query_value, init_dialer_ip,
+    new_server_configs_with_reload_interval, parse_alpn, query_first, rate_limit_bytes_per_second,
 };
 use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryHub};
@@ -22,15 +20,12 @@ use crate::transport::{Buffers, RateLimiter, Stats};
 use crate::vector::{PortalClient, PortalClientConfig};
 
 use super::listener::{configure_transport, format_endpoint_addr};
-use super::{
-    DEFAULT_ALPN, NetworkMode, Portal, PortalInner, UdpFlowLimits, admission,
-    outbound::PortalOutbound,
-};
+use super::{NetworkMode, Portal, PortalInner, UdpFlowLimits, admission, outbound::PortalOutbound};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "next", "log",
+    "net", "tls", "crt", "key", "alpn", "mux", "rate", "etar", "dial", "socks", "next", "log",
 ];
-const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "pool", "sni", "pin"];
+const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "sni", "pin"];
 
 impl Portal {
     /// Builds a portal using the listen host encoded in the URL.
@@ -88,10 +83,10 @@ impl Portal {
             Credentials::new(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
         let runtime = super::config::PortalRuntimeConfig::from_env()
             .map_err(|e| anyhow::anyhow!("portal::new: invalid runtime configuration: {e}"))?;
-        let alpn = query
-            .get("alpn")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_ALPN.to_string());
+        let alpn = parse_alpn(query.get("alpn").map(String::as_str))
+            .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?;
+        let mux = MuxMode::parse(query.get("mux").map(String::as_str))
+            .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?;
         let network_mode =
             NetworkMode::from_url(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
         let (tls_mode, tls_server_config, mut quic_server_config) =
@@ -123,7 +118,7 @@ impl Portal {
                 let raw = first_raw_query_value(&parsed_url, "next")
                     .expect("decoded next came from the raw query");
                 Some(
-                    PortalClientConfig::from_upstream_authority(raw, &query, &alpn, &dialer_ip)
+                    PortalClientConfig::from_upstream_authority(raw, &query, &dialer_ip)
                         .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?,
                 )
             }
@@ -134,7 +129,7 @@ impl Portal {
         let rate_limit = parse_rate(&query, "rate")?;
         let etar_limit = parse_rate(&query, "etar")?;
 
-        configure_transport(&mut quic_server_config, runtime.udp_idle_timeout)?;
+        configure_transport(&mut quic_server_config, runtime.udp_idle_timeout, None)?;
 
         let read_bps = rate_limit_bytes_per_second(rate_limit) as i64;
         let write_bps = rate_limit_bytes_per_second(etar_limit) as i64;
@@ -149,16 +144,10 @@ impl Portal {
             .unwrap_or_else(|| "none".to_owned());
         let next_summary = next.as_ref().map_or_else(
             || "next=none".to_owned(),
-            |(config, _)| {
-                format!(
-                    "next={} {}",
-                    config.endpoint(),
-                    config.effective_transport()
-                )
-            },
+            |(config, _)| format!("next={} {}", config.endpoint(), config.effective_route()),
         );
         let telemetry_summary = format!(
-            "net={network_mode} tls={tls_mode} alpn={alpn} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
+            "net={network_mode} tls={tls_mode} alpn={alpn} mux={mux} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
         );
         let telemetry = TelemetryHub::for_current_process(
             InstanceRole::Portal,
@@ -182,6 +171,7 @@ impl Portal {
             inner: Arc::new(PortalInner {
                 credentials,
                 alpn,
+                mux,
                 tls_mode,
                 network_mode,
                 endpoint_addr,
@@ -196,8 +186,6 @@ impl Portal {
                 drain: CancellationToken::new(),
                 runtime,
                 stats: Arc::new(Stats::default()),
-                pool_active: AtomicU64::new(0),
-                tcp_idle_pool_budget: Arc::new(Semaphore::new(runtime.tcp_idle_pool_connections)),
                 buffers: Buffers::new(runtime.tcp_data_buf_size, runtime.udp_data_buf_size),
                 rate_limiter,
                 udp_flow_limits,
@@ -205,6 +193,7 @@ impl Portal {
                 quic_server_config,
                 unauthenticated_admission: Arc::new(admission::UnauthenticatedAdmission::new()),
                 pairing: Arc::new(super::pairing::PairingRegistry::new(
+                    runtime.max_tcp_flows as usize,
                     udp_flow_limits.max_flows,
                     runtime.max_pending_pairs,
                     runtime.flow_pair_timeout,
@@ -219,7 +208,7 @@ impl Portal {
 
 fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<()> {
     for name in [
-        "log", "tls", "crt", "key", "net", "alpn", "rate", "etar", "dial", "socks",
+        "log", "tls", "crt", "key", "alpn", "mux", "net", "rate", "etar", "dial", "socks",
     ] {
         if query.get(name).is_some_and(String::is_empty) {
             anyhow::bail!("empty {name} parameter");
@@ -242,11 +231,6 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<(
         && !matches!(net.as_str(), "mix" | "tcp" | "udp")
     {
         anyhow::bail!("invalid net mode");
-    }
-    if let Some(alpn) = query.get("alpn")
-        && alpn.len() > u8::MAX as usize
-    {
-        anyhow::bail!("alpn exceeds 255 bytes");
     }
     let tls_is_ca = query.get("tls").is_some_and(|value| value == "2");
     let has_crt = query.contains_key("crt");
