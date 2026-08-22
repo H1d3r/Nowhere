@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Shared process lifecycle telemetry and Unix shutdown signals.
+//! Shared process lifecycle telemetry and platform shutdown signals.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -108,32 +108,49 @@ impl Lifecycle {
 
 /// Reusable signal receiver so a second signal can force an in-progress shutdown.
 pub(crate) struct ShutdownSignals {
+    #[cfg(unix)]
     interrupt: tokio::signal::unix::Signal,
+    #[cfg(unix)]
     terminate: tokio::signal::unix::Signal,
 }
 
 impl ShutdownSignals {
     pub(crate) fn new() -> Result<Self> {
-        use tokio::signal::unix::{SignalKind, signal};
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
 
-        Ok(Self {
-            interrupt: signal(SignalKind::interrupt())
-                .context("common::lifecycle: failed to install SIGINT handler")?,
-            terminate: signal(SignalKind::terminate())
-                .context("common::lifecycle: failed to install SIGTERM handler")?,
-        })
+            Ok(Self {
+                interrupt: signal(SignalKind::interrupt())
+                    .context("common::lifecycle: failed to install SIGINT handler")?,
+                terminate: signal(SignalKind::terminate())
+                    .context("common::lifecycle: failed to install SIGTERM handler")?,
+            })
+        }
+        #[cfg(not(unix))]
+        Ok(Self {})
     }
 
     pub(crate) async fn recv(&mut self) -> Result<LifeReason> {
-        tokio::select! {
-            value = self.interrupt.recv() => {
-                value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGINT stream closed"))?;
-                Ok(LifeReason::SigInt)
+        #[cfg(unix)]
+        {
+            tokio::select! {
+                value = self.interrupt.recv() => {
+                    value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGINT stream closed"))?;
+                    Ok(LifeReason::SigInt)
+                }
+                value = self.terminate.recv() => {
+                    value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGTERM stream closed"))?;
+                    Ok(LifeReason::SigTerm)
+                }
             }
-            value = self.terminate.recv() => {
-                value.ok_or_else(|| anyhow::anyhow!("common::lifecycle: SIGTERM stream closed"))?;
-                Ok(LifeReason::SigTerm)
-            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c()
+                .await
+                .context("common::lifecycle: failed to receive Ctrl+C")?;
+            Ok(LifeReason::SigInt)
         }
     }
 }

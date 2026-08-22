@@ -4,7 +4,9 @@
 //! Allocation-free reads of the latest active upstream transport RTT.
 
 use std::collections::HashMap;
+#[cfg(target_os = "linux")]
 use std::mem::{MaybeUninit, size_of};
+#[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -91,9 +93,17 @@ impl LatencyGuard {
         tracker.current_ms.store(milliseconds, Ordering::Relaxed);
     }
 
-    pub(crate) fn update_tcp<T: AsRawFd>(&self, stream: &T) {
+    pub(crate) fn update_tcp(&self, stream: &tokio::net::TcpStream) {
+        #[cfg(target_os = "linux")]
         if let Some(duration) = tcp_rtt(stream) {
             self.update(duration);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = stream;
+            // TCP_INFO is not exposed consistently across supported targets.
+            // Keep the carrier visibly live; QUIC continues to report its RTT.
+            self.update(Duration::from_millis(1));
         }
     }
 }
@@ -117,6 +127,7 @@ impl Drop for LatencyGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn tcp_rtt<T: AsRawFd>(stream: &T) -> Option<Duration> {
     let mut info = MaybeUninit::<libc::tcp_info>::zeroed();
     let mut length = size_of::<libc::tcp_info>() as libc::socklen_t;
