@@ -1,110 +1,57 @@
 # Quick Start
 
-## Build
+Use a release archive for a supported target or build with `cargo build --release --locked`. The commands below work in Linux/macOS shells and PowerShell. Windows Command Prompt users should replace single quotes with double quotes and invoke `nowhere.exe`.
 
-Nowhere uses stable Rust and the 2024 edition and must be built for Linux:
+## 1. Start Portal
 
-```bash
-git clone https://github.com/NodePassProject/Nowhere.git
-cd Nowhere
-cargo build --release --locked
-./target/release/nowhere --version
-./target/release/nowhere --help
+```text
+nowhere 'portal://secret@:2077?log=info'
 ```
 
-On macOS with Apple Container, the repository provides a pinned Linux check
-environment instead:
+Portal listens for TLS/TCP and QUIC on the same numeric port when `net=mix` (the default).
 
-```bash
-./scripts/check-linux.sh
+## 2. Start Vector
+
+Dedicated TLS lanes in both directions:
+
+```text
+nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&socks=127.0.0.1:1080'
 ```
 
-## Start a Local Portal
+QUIC in both directions:
 
-```bash
-./target/release/nowhere 'portal://secret@127.0.0.1:2077?log=debug'
+```text
+nowhere 'vector://secret@127.0.0.1:2077?up=udp&down=udp&socks=127.0.0.1:1080'
 ```
 
-Portal starts TLS/TCP and QUIC/UDP on port 2077. Its default in-memory
-certificate is intended for local operation.
+Asymmetric examples use `up=tcp&down=udp` or `up=udp&down=tcp`.
 
-## Start Vector
+TLS Mux is enabled explicitly on both endpoints:
 
-In another terminal:
-
-```bash
-./target/release/nowhere \
-  'vector://secret@127.0.0.1:2077?up=udp&down=udp&sni=none&socks=127.0.0.1:1080&log=debug'
+```text
+nowhere 'portal://secret@:2077?mux=1'
+nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
 ```
 
-This exposes a SOCKS5 listener on `127.0.0.1:1080`. `sni=none` deliberately
-disables certificate verification for the local in-memory certificate.
+ALPN defaults to `now/1`. Set the same `alpn=<value>` on Portal and Vector when
+a custom identifier is required. ALPN does not enable or disable Mux.
 
-Test a TCP request:
+## 3. Use SOCKS5
 
-```bash
+```text
 curl --proxy socks5h://127.0.0.1:1080 https://example.com/
 ```
 
-Applications supporting SOCKS5 UDP ASSOCIATE can use the same listener for
-UDP. Vector keeps one idle-timed Nowhere UDP flow per target address.
-
-## Select Directional Carriers
-
-Set upload and download independently:
+On Windows, use `curl.exe` to avoid PowerShell aliases:
 
 ```text
-up=tcp&down=tcp&pool=5
-up=tcp&down=udp
-up=udp&down=tcp
-up=udp&down=udp
+curl.exe --proxy socks5h://127.0.0.1:1080 https://example.com/
 ```
 
-Split combinations require Portal `net=mix`, which is the default. The warm
-pool applies only to `tcp/tcp`; every other pair reports `pool=0`.
+Vector supports SOCKS5 CONNECT and UDP ASSOCIATE. Configure credentials with the `socks` URL value when required; see [Configuration](configuration.md).
 
-## Add a Native Relay Portal
+## 4. Open the TUI
 
-Run the final Portal with its own key:
+Run `nowhere` without a URL. Local instances are discovered through a per-user registry and loopback control socket on Linux, macOS, and Windows. Use page `1` for Overview and page `2` for Logs.
 
-```bash
-nowhere 'portal://origin-key@127.0.0.1:3077'
-```
-
-Then run one relay process whose upstream is that Portal:
-
-```bash
-nowhere \
-  'portal://relay-key@127.0.0.1:2077?next=origin-key@127.0.0.1:3077&up=udp&down=udp'
-```
-
-Point Vector at port 2077 with `relay-key`. The relay terminates its incoming
-TLS/QUIC connection and opens a native flow to port 3077 without a local
-SOCKS5 conversion. Use `tcp/tcp`, `tcp/udp`, `udp/tcp`, or `udp/udp` exactly as
-you would on Vector.
-
-## Use a Trusted Certificate
-
-Portal:
-
-```bash
-nowhere \
-  'portal://secret@:2077?net=mix&tls=2&crt=/etc/nowhere/fullchain.pem&key=/etc/nowhere/privkey.pem'
-```
-
-Vector:
-
-```bash
-nowhere \
-  'vector://secret@relay.example:2077?up=tcp&down=tcp&pool=5&sni=relay.example&socks=127.0.0.1:1080'
-```
-
-ALPN defaults to `now/1`. If it is overridden, Portal and Vector must receive
-the same nonempty value.
-
-## Stop
-
-Send Ctrl-C, SIGINT, or SIGTERM. Portal rejects unready and new flows while
-already-READY relays drain until the single `NOW_SHUTDOWN_TIMEOUT` deadline.
-Send a second signal to force shutdown. Vector closes its local and remote work
-immediately, bounded by the same timeout.
+See [Platforms](platforms.md) for release targets, native paths, process control, and telemetry differences.

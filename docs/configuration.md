@@ -1,188 +1,92 @@
-# Configuration Reference
+# Configuration
 
-Nowhere runs one command URL per process. `portal://` starts the relay service;
-`vector://` starts the native SOCKS5 client.
+URLs and environment variables have the same meaning on Linux, macOS, and Windows. Shell quoting and filesystem path syntax follow the host platform; see [Platforms](platforms.md).
 
-All configuration described here applies to the Linux-only binary.
-
-## URL Rules
-
-The URL username is the percent-decoded shared key and MUST contain `1..255`
-bytes. Password userinfo, paths, and fragments are rejected. Literal `+`
-remains `+` rather than being decoded as a space.
-
-Query parsing follows these rules:
-
-- parameters may appear in any order;
-- unknown parameters are ignored;
-- the first occurrence of a repeated parameter wins;
-- absent optional parameters use their defaults;
-- an invalid selected value fails startup.
-
-## Portal
+## Portal URL
 
 ```text
-portal://<shared-key>@<listen-host>:<port>?net=...&tls=...&crt=...&key=...&alpn=...&rate=...&etar=...&dial=...&socks=...&next=...&up=...&down=...&pool=...&sni=...&pin=...&log=...
+portal://shared-key@host:port?net=mix&tls=1&log=info
 ```
 
-An empty listen host binds separate IPv4 and IPv6 wildcard sockets. An IP
-literal binds only that family. A hostname resolves to its first address.
+| Query | Values | Default |
+|---|---|---|
+| `net` | `mix`, `tcp`, `udp` | `mix` |
+| `tls` | `1` generated certificate, `2` supplied certificate | `1` |
+| `crt`, `key` | PEM paths, required with `tls=2` | — |
+| `alpn` | exact TLS/QUIC ALPN, 1–255 bytes | `now/1` |
+| `mux` | `0` dedicated TLS only, `1` Mux TLS only | `0` |
+| `rate`, `etar` | Mbps, `0` disables limit | `0` |
+| `dial` | `auto` or local IP | `auto` |
+| `socks` | outbound SOCKS5 configuration | disabled |
+| `next` | `shared-key@host:port` | disabled |
+| `log` | `none`, `debug`, `info`, `warn`, `error`, `event` | `info` |
 
-| Parameter | Default | Rules |
-| --- | --- | --- |
-| `net` | `mix` | `mix`, `tcp`, or `udp` |
-| `tls` | `1` | `1` creates an in-memory certificate; `2` loads PEM files |
-| `crt` | omitted | Required and nonempty exactly when `tls=2` |
-| `key` | omitted | Required and nonempty exactly when `tls=2` |
-| `alpn` | `now/1` | Nonempty decoded value, at most 255 bytes |
-| `rate` | `0` | Client-to-target Mbps; nonnegative integer |
-| `etar` | `0` | Target-to-client Mbps; nonnegative integer |
-| `dial` | `auto` | `auto` or a local IP literal for direct, SOCKS5, and native Portal egress |
-| `socks` | `none` | Outbound SOCKS5 endpoint or `none` |
-| `next` | `none` | Native upstream Portal as `shared-key@host:port`; mutually exclusive with enabled `socks` |
-| `up` | `udp` | Native upstream upload carrier; ignored without `next` |
-| `down` | `udp` | Native upstream download carrier; ignored without `next` |
-| `pool` | `5` for native `tcp/tcp` | Native upstream TLS pool, capped at 256; ignored without `next` |
-| `sni` | `none` | Native upstream certificate DNS name; ignored without `next` |
-| `pin` | `none` | Native upstream certificate SHA-256; ignored without `next` |
-| `log` | `info` | `none`, `debug`, `info`, `warn`, `error`, or `event` |
+When `next` is enabled, `up`, `down`, `sni`, and `pin` configure that upstream
+hop. The Portal's `alpn` and `mux` also apply to its native upstream client.
 
-Portal prints its effective settings in this order:
+## Vector URL
 
 ```text
-net -> tls -> alpn -> rate -> etar -> dial -> socks -> next -> up -> down -> pool -> sni -> pin
+vector://shared-key@host:port?up=tcp&down=tcp&socks=127.0.0.1:1080
 ```
 
-Rate conversion is `Mbps * 125000` bytes per second. Zero disables the
-corresponding limiter.
+| Query | Values | Default |
+|---|---|---|
+| `up`, `down` | `tcp` or `udp` | `udp` |
+| `alpn` | exact TLS/QUIC ALPN, 1–255 bytes | `now/1` |
+| `mux` | `0` dedicated TLS lanes, `1` TLS Mux | `0` |
+| `sni` | verified DNS name, or `none` | `none` |
+| `pin` | certificate SHA-256 pin, or `none` | `none` |
+| `rate`, `etar` | Mbps, `0` disables limit | `0` |
+| `socks` | required local listen address, optionally credentials | — |
+| `log` | logging threshold | `info` |
 
-### Outbound SOCKS5
+With `mux=1`, Shards open lazily according to active flow pressure. New flows
+use the least-loaded shard; a shard carries 12 active flows before another
+opens and closes after 30 seconds fully idle. With `mux=0`, every TLS-carried
+Flow uses its own on-demand lane. No idle TLS pool is maintained.
 
-```text
-socks=host:port
-socks=user:password@host:port
-socks=user:p%40ss@[2001:db8::10]:1080
-```
+Portal and Vector advertise only their configured ALPN and require an exact
+match. ALPN and Mux are independent settings. Portal `mux=0` is dedicated TLS
+mode. Portal `mux=1` requires the Mux marker after authentication and rejects
+dedicated lanes.
 
-With credentials, Portal offers only username/password authentication. Without
-credentials, it offers only no-auth. CONNECT handles TCP targets; each UDP flow
-owns one UDP ASSOCIATE control connection. Proxy failure never falls back to a
-direct route. `socks=` is invalid; omit the parameter or use `socks=none`.
+For `tls=2`, `crt` and `key` are native filesystem paths. Quote the complete URL when a Windows path, space, `&`, or another shell-significant character is present.
 
-### Native upstream Portal
+## Environment
 
-`next` forwards TCP and UDP flows directly through another Portal:
+| Variable | Purpose |
+|---|---|
+| `NOW_MAX_TCP_FLOWS` | TCP flows per authenticated client session (default `1024`) |
+| `NOW_MAX_UDP_FLOWS` | UDP flows per authenticated client session (default `256`) |
+| `NOW_QUIC_UDP_QUEUE_BYTES` | Bounded QUIC datagram/reassembly memory |
+| `NOW_QUIC_MEMORY_PROFILE` | `memory`, `balanced` (default), or `throughput` flow-control budget |
+| `NOW_MAX_PENDING_PAIRS` | Pending split-flow pairs |
+| `NOW_FLOW_PAIR_TIMEOUT` | Split-flow pairing deadline |
+| `NOW_FLOW_SETUP_TIMEOUT` | Client flow setup deadline |
+| `NOW_TCP_DATA_BUF_SIZE` | TCP relay buffer |
+| `NOW_UDP_DATA_BUF_SIZE` | UDP receive buffer |
+| `NOW_TCP_DIAL_TIMEOUT`, `NOW_UDP_DIAL_TIMEOUT` | Target dial deadlines |
+| `NOW_TCP_READ_TIMEOUT`, `NOW_UDP_IDLE_TIMEOUT` | Relay idle/half-close deadlines |
+| `NOW_HANDSHAKE_TIMEOUT` | TLS, authentication, and request phase deadline |
+| `NOW_REPORT_INTERVAL` | Local status-report interval |
+| `NOW_TELEMETRY_INTERVAL` | TUI sample period (`250ms..60s`) |
+| `NOW_SERVICE_COOLDOWN` | Transport reconnect retry delay |
+| `NOW_SHUTDOWN_TIMEOUT` | Graceful shutdown deadline |
+| `NOW_RELOAD_INTERVAL` | Minimum PEM certificate reload interval |
 
-```text
-portal://relay-key@:2077?next=origin-key@origin.example:2077
-portal://relay-key@:2077?next=origin-key@[2001:db8::20]:2077&up=tcp&down=tcp&pool=5&sni=origin.example
-```
+Mux limits are library defaults with strict validation: 512 KiB per stream and
+connection, 256 active streams per Mux, and 512 queued frame slots. Payload in
+the queue is also charged against the 512 KiB connection window, so slot capacity
+does not multiply the byte bound. The application uses a 12-flow shard density
+and retires fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
+per-session logical TCP limit shared by TLS and QUIC. `NOW_MAX_UDP_FLOWS` is the
+corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail
+without waiting for capacity. QUIC internally admits the sum of both limits as
+bidirectional streams; this derived capacity has no separate setting.
 
-The separator between key and endpoint is the last literal `@`; reserved
-characters inside the key must be percent-encoded. Effective URLs and
-telemetry include only the upstream endpoint, never its shared key.
-
-Native upstream transport defaults and validation match Vector. `udp/udp`
-uses `pool=0`; explicit `tcp/tcp` defaults to five warm lanes. Other carrier
-pairs ignore `pool`, including an otherwise invalid value. When `next` is
-omitted or `none`, all five upstream-only parameters are ignored even if their
-values are invalid. `next=` is always invalid.
-
-The Portal's `alpn` value is shared by its listener and native upstream client;
-there is no second upstream ALPN setting. Native carriers connect lazily and do
-not gate listener readiness. An upstream setup rejection is returned unchanged
-to the incoming flow. Forwarding initializes a seven-hop budget and never
-falls back to SOCKS5 or direct target dialing.
-
-### Portal Examples
-
-```text
-portal://secret@:2077
-portal://secret@0.0.0.0:2077?net=tcp
-portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem
-portal://secret@:2077?alpn=now%2Fprivate&rate=100&etar=200
-portal://relay-key@:2077?next=origin-key@origin.example:2077&up=udp&down=tcp
-```
-
-## Vector
-
-```text
-vector://<shared-key>@<portal-host>:<port>?up=...&down=...&pool=...&sni=...&pin=...&alpn=...&rate=...&etar=...&socks=...&log=...
-```
-
-Portal host, Portal port, and the local `socks` listener are required. Vector
-prints its effective settings in this order:
-
-```text
-up -> down -> pool -> sni -> pin -> alpn -> rate -> etar -> socks
-```
-
-| Parameter | Default | Rules |
-| --- | --- | --- |
-| `up` | `udp` | `tcp` selects TLS/TCP; `udp` selects QUIC |
-| `down` | `udp` | `tcp` selects TLS/TCP; `udp` selects QUIC |
-| `pool` | `5` for `tcp/tcp` | Nonnegative integer, capped at 256 |
-| `sni` | `none` | DNS certificate name; empty or `none` disables verification |
-| `pin` | `none` | Leaf-certificate SHA-256; empty or `none` disables pinning |
-| `alpn` | `now/1` | Must match Portal |
-| `rate` | `0` | Local SOCKS-client-to-target Mbps |
-| `etar` | `0` | Local target-to-SOCKS-client Mbps |
-| `socks` | required | `[user:password@]listen-host:port` |
-| `log` | `info` | Same levels as Portal |
-
-The warm pool is active only when both directions use TLS/TCP. `pool=0`
-disables preconnection. Values greater than 256 become 256. Every other
-carrier pair ignores the supplied pool value and reports `pool=0`.
-
-When `sni` contains a DNS name, Vector loads system roots and verifies both the
-certificate chain and name. Empty, omitted, or `none` disables certificate
-verification. When `pin` is set, its exact lowercase SHA-256 match takes
-priority over certificate-chain and name validation while the TLS handshake
-signature remains verified. Empty, omitted, or `none` disables pinning. A
-domain Portal host may still be sent as ClientHello SNI for virtual-host
-routing. Operator output always records both effective values, including
-`sni=none` and `pin=none`.
-
-The SOCKS listener value cannot be empty, but its host may be empty:
-
-```text
-vector://secret@127.0.0.1:2077?socks=127.0.0.1:1080
-vector://secret@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=:1080
-vector://secret@relay.example:2077?sni=relay.example&socks=user:p%40ss@0.0.0.0:1080
-vector://secret@relay.example:2077?pin=<portal-cert-sha256>&socks=127.0.0.1:1080
-```
-
-An empty SOCKS host binds separate IPv4 and IPv6 wildcard listeners. Explicit
-wildcards require authentication and network policy when exposed beyond the
-local host.
-
-## Runtime Limits
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `NOW_QUIC_MAX_STREAMS` | `1024` | Authenticated QUIC streams and Vector TCP flow cap |
-| `NOW_QUIC_MAX_UDP_FLOWS` | `256` | UDP flows per session and Vector UDP target cap |
-| `NOW_QUIC_UDP_QUEUE_BYTES` | `4194304` (4 MiB) | QUIC UDP queue and reassembly byte budget |
-| `NOW_TCP_IDLE_POOL_CONNS` | `4096` | Portal authenticated idle TLS lane cap |
-| `NOW_MAX_PENDING_PAIRS` | `1024` | Pending split-flow cap per session |
-| `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Split-flow pairing deadline |
-| `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Vector deadline for waiting for Portal READY |
-| `NOW_TCP_DATA_BUF_SIZE` | `32768` (32 KiB) | TCP relay buffer size |
-| `NOW_UDP_DATA_BUF_SIZE` | `65536` (64 KiB) | UDP receive buffer size |
-| `NOW_TCP_DIAL_TIMEOUT` | `15s` | TCP target connect deadline |
-| `NOW_UDP_DIAL_TIMEOUT` | `15s` | UDP target setup deadline |
-| `NOW_TCP_READ_TIMEOUT` | `30s` | Opposite-half TCP drain grace |
-| `NOW_UDP_IDLE_TIMEOUT` | `2m` | UDP flow and association target idle timeout |
-| `NOW_HANDSHAKE_TIMEOUT` | `5s` | Per-phase TLS, authentication, and request deadline |
-| `NOW_REPORT_INTERVAL` | `5s` | CHECK_POINT and LINK_STATUS interval |
-| `NOW_TELEMETRY_INTERVAL` | `1s` | Structured TUI snapshot interval; must be `250ms..60s` |
-| `NOW_SERVICE_COOLDOWN` | `3s` | Carrier reconnect delay |
-| `NOW_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown deadline |
-| `NOW_RELOAD_INTERVAL` | `1h` | PEM certificate reload interval |
-
-Portal reads every variable it consumes into one typed startup snapshot. A
-present Portal value that is malformed, zero where a positive value is
-required, outside the implementation limit, or too large for its target type
-fails startup; it is never silently replaced with a default. Later environment
-changes do not alter a running Portal. Vector keeps its existing configuration
-behavior.
+Portal and Vector use the same QUIC profile for every ALPN and Mux setting.
+The stream/connection/send windows are respectively 4/8/8 MiB for `memory`,
+8/16/16 MiB for `balanced`, and 16/32/32 MiB for `throughput`. These are
+flow-control ceilings, not eager allocations. Larger windows are useful only
+when the required bandwidth-delay product justifies their in-flight memory.
