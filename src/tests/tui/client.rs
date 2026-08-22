@@ -1,7 +1,6 @@
 use super::*;
-use crate::telemetry::{
-    AccessOutcome, InstanceDescriptor, InstanceRole as WireRole, PROTOCOL_VERSION,
-};
+use crate::telemetry::wire::{InstanceDescriptor, LifecycleSnapshot};
+use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, PROTOCOL_VERSION};
 
 fn hello() -> Hello {
     Hello {
@@ -11,7 +10,7 @@ fn hello() -> Hello {
             role: WireRole::Portal,
             pid: 42,
             uid: 0,
-            start_ticks: 7,
+            incarnation: 7,
             version: "test".to_owned(),
             endpoint: ":2077".to_owned(),
             config_summary: "net=mix".to_owned(),
@@ -41,12 +40,14 @@ fn completion_inherits_access_path() {
         id: 9,
         timestamp_ms: 1,
         protocol: TrafficProtocol::Tcp,
+        alpn: "now/1".to_owned(),
         flow_id: None,
+        session_tag: Some("abc123".to_owned()),
         client: Some("10.0.0.1:9".to_owned()),
         path_peers: vec!["10.0.0.1:9".to_owned()],
         target: "example.com:443".to_owned(),
-        uplink: Some("udp".to_owned()),
-        downlink: Some("tcp".to_owned()),
+        initial_uplink: Some("udp".to_owned()),
+        initial_downlink: Some("tcp".to_owned()),
         path: Some("client -> QUIC -> TLS -> target".to_owned()),
     };
     let mut starts = HashMap::from([(9, access_start_ui_value(started))]);
@@ -55,12 +56,14 @@ fn completion_inherits_access_path() {
         timestamp_ms: 2,
         duration_ms: 1,
         protocol: TrafficProtocol::Tcp,
+        alpn: "now/1".to_owned(),
         flow_id: None,
+        session_tag: Some("abc123".to_owned()),
         client: Some("10.0.0.1:9".to_owned()),
         path_peers: vec!["10.0.0.1:9".to_owned()],
         target: "example.com:443".to_owned(),
-        uplink: Some("udp".to_owned()),
-        downlink: Some("tcp".to_owned()),
+        initial_uplink: Some("udp".to_owned()),
+        initial_downlink: Some("tcp".to_owned()),
         path: Some("client -> QUIC -> TLS -> target".to_owned()),
         upload_bytes: 10,
         download_bytes: 20,
@@ -107,7 +110,7 @@ fn lifecycle_runtime_updates_status_and_feed() {
 #[test]
 fn lifecycle_snapshot_updates_summary_status() {
     let events = server_ui_events(
-        ServerMessage::Lifecycle(crate::telemetry::LifecycleSnapshot {
+        ServerMessage::Lifecycle(LifecycleSnapshot {
             state: "STOPPED".to_owned(),
             reason: "CLEANUP_COMPLETE".to_owned(),
             timestamp_ms: 2,
