@@ -30,6 +30,7 @@ pub(super) const EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 pub(super) struct ClientTls {
     rustls: Arc<rustls::ClientConfig>,
     server_name: ServerName<'static>,
+    alpn: Vec<u8>,
 }
 
 impl ClientTls {
@@ -74,7 +75,8 @@ impl ClientTls {
                 }))
                 .with_no_client_auth()
         };
-        client.alpn_protocols = vec![config.alpn.as_bytes().to_vec()];
+        let alpn = config.alpn.as_bytes().to_vec();
+        client.alpn_protocols = vec![alpn.clone()];
         client.enable_early_data = false;
 
         let server_name = ServerName::try_from(
@@ -88,6 +90,7 @@ impl ClientTls {
         Ok(Self {
             rustls: Arc::new(client),
             server_name,
+            alpn,
         })
     }
 
@@ -129,6 +132,9 @@ impl ClientTls {
             .1
             .export_keying_material(&mut exporter, EXPORTER_LABEL, Some(&[]))
             .context("vector::tls::connect_tcp: TLS exporter failed")?;
+        if tls.get_ref().1.alpn_protocol() != Some(self.alpn.as_slice()) {
+            bail!("vector::tls::connect_tcp: Portal did not negotiate the configured ALPN");
+        }
         Ok((tls, exporter))
     }
 }

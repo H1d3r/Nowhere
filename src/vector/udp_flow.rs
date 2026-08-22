@@ -23,7 +23,7 @@ use super::flow::{
     read_ready, write_header, write_open_request,
 };
 use super::flow_id::FlowLease;
-use super::session::{QueuedDatagram, QuicSession};
+use super::session::{MuxDirection, QueuedDatagram, QuicSession};
 pub(crate) struct UdpTunnel {
     flow_id: u32,
     quic: Option<Arc<QuicSession>>,
@@ -32,9 +32,9 @@ pub(crate) struct UdpTunnel {
     sender: UdpTunnelSender,
     receiver: UdpTunnelReceiver,
     _lanes: Vec<PhysicalLane>,
-    _lease: FlowLease,
+    _lease: Option<FlowLease>,
     _session: Option<SessionGuard>,
-    _flow_permit: OwnedSemaphorePermit,
+    _flow_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl UdpTunnel {
@@ -199,16 +199,22 @@ pub(crate) async fn open_udp(
     let uplink = carrier(client.config.up);
     let downlink = carrier(client.config.down);
 
-    let mut lanes = if uplink == downlink {
+    let split_lanes = uplink != downlink;
+    let mut lanes = if !split_lanes {
         vec![
-            open_lane(client.clone(), client.config.up)
+            open_lane(client.clone(), client.config.up, flow_id, MuxDirection::Up)
                 .await
                 .map_err(OpenFlowError::Transport)?,
         ]
     } else {
         let (uplink_lane, downlink_lane) = tokio::join!(
-            open_lane(client.clone(), client.config.up),
-            open_lane(client.clone(), client.config.down),
+            open_lane(client.clone(), client.config.up, flow_id, MuxDirection::Up,),
+            open_lane(
+                client.clone(),
+                client.config.down,
+                flow_id,
+                MuxDirection::Down,
+            ),
         );
         vec![
             uplink_lane.map_err(OpenFlowError::Transport)?,
@@ -228,8 +234,17 @@ pub(crate) async fn open_udp(
         None
     };
 
-    if let Err(error) =
-        setup_udp_lanes(&client, &mut lanes, flow_id, uplink, downlink, target, hops).await
+    if let Err(error) = setup_udp_lanes(
+        &client,
+        &mut lanes,
+        flow_id,
+        uplink,
+        downlink,
+        split_lanes,
+        target,
+        hops,
+    )
+    .await
     {
         if let Some(quic) = &quic {
             quic.remove_udp(flow_id);
@@ -253,7 +268,7 @@ pub(crate) async fn open_udp(
     } else {
         None
     };
-    let down_index = usize::from(uplink != downlink);
+    let down_index = usize::from(split_lanes);
     let reader = if client.config.down == CarrierMode::Tcp {
         Some(lanes[down_index].take_reader())
     } else {
@@ -285,9 +300,9 @@ pub(crate) async fn open_udp(
         _session: client
             .account_stats
             .then(|| SessionGuard::new(client.stats.clone(), true)),
-        _flow_permit: flow_permit,
+        _flow_permit: Some(flow_permit),
         _lanes: lanes,
-        _lease: lease,
+        _lease: Some(lease),
     })
 }
 
@@ -344,20 +359,25 @@ impl UotReadState {
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "setup keeps the wire header fields and lane shape explicit"
+)]
 async fn setup_udp_lanes(
     client: &PortalClient,
     lanes: &mut [PhysicalLane],
     flow_id: u32,
     uplink: Carrier,
     downlink: Carrier,
+    split_lanes: bool,
     target: &crate::protocol::Target,
     hops: u8,
 ) -> std::result::Result<(), OpenFlowError> {
     let open = FlowHeader {
-        role: if uplink == downlink {
-            FlowRole::Duplex
-        } else {
+        role: if split_lanes {
             FlowRole::Open
+        } else {
+            FlowRole::Duplex
         },
         flow_id,
         kind: FlowKind::Udp,
@@ -375,7 +395,7 @@ async fn setup_udp_lanes(
     .await
     .map_err(OpenFlowError::Transport)?;
     lanes[0].mark_auth_sent();
-    if uplink != downlink {
+    if split_lanes {
         let pending_auth = lanes[1].take_pending_auth();
         write_header(
             lanes[1].writer.as_mut().expect("downlink writer"),
@@ -406,7 +426,7 @@ async fn setup_udp_lanes(
         })?
         .map_err(|error| OpenFlowError::Transport(error.into()))?;
     }
-    let down_index = usize::from(uplink != downlink);
+    let down_index = usize::from(split_lanes);
     if client.config.down == CarrierMode::Udp && down_index != 0 {
         timeout(
             handshake_timeout(),

@@ -21,23 +21,20 @@ use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+pub(crate) use self::config::PortalClientConfig;
+use self::config::VectorConfig;
+use self::flow_id::FlowIdAllocator;
+use self::session::{ClientSignals, QuicManager, TlsManager};
+use self::tls::ClientTls;
 use crate::common::{
     LatencyTracker, LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals,
-    quic_max_streams, rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size,
+    max_tcp_flows, max_udp_flows, rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size,
     telemetry_interval, udp_data_buf_size,
 };
 use crate::protocol::{Credentials, SESSION_ID_LEN};
 use crate::telemetry::TelemetryServer;
 use crate::telemetry::{InstanceRole, TelemetryHub};
 use crate::transport::{Buffers, RateLimiter, Stats};
-
-pub(crate) use self::config::PortalClientConfig;
-use self::config::VectorConfig;
-use self::flow_id::FlowIdAllocator;
-use self::session::{ClientSignals, QuicManager, TlsPool};
-use self::tls::ClientTls;
-
-const DEFAULT_MAX_UDP_FLOWS: usize = 256;
 
 /// Runnable native client serving a local SOCKS5 endpoint.
 pub struct Vector {
@@ -70,7 +67,7 @@ pub(crate) struct PortalClient {
     flow_ids: Arc<FlowIdAllocator>,
     tcp_flow_permits: Arc<Semaphore>,
     udp_flow_permits: Arc<Semaphore>,
-    tls_pool: Arc<TlsPool>,
+    tls_manager: Arc<TlsManager>,
     quic: Arc<QuicManager>,
     shutdown: CancellationToken,
 }
@@ -94,7 +91,7 @@ impl PortalClient {
         })?;
         let latency = LatencyTracker::new();
         let signals = ClientSignals::new(stats.clone(), telemetry.clone(), latency.clone());
-        let tls_pool = TlsPool::new(
+        let tls_manager = TlsManager::new(
             &config,
             tls.clone(),
             credentials,
@@ -109,10 +106,8 @@ impl PortalClient {
             signals,
             shutdown.clone(),
         );
-        let tcp_limit = quic_max_streams().max(1) as usize;
-        let udp_limit =
-            crate::common::env_int("NOW_QUIC_MAX_UDP_FLOWS", DEFAULT_MAX_UDP_FLOWS as i32)
-                .clamp(1, DEFAULT_MAX_UDP_FLOWS as i32) as usize;
+        let tcp_limit = max_tcp_flows().max(1) as usize;
+        let udp_limit = max_udp_flows();
         Ok(Arc::new(Self {
             config,
             telemetry,
@@ -122,7 +117,7 @@ impl PortalClient {
             flow_ids: FlowIdAllocator::new(tcp_limit.saturating_add(udp_limit)),
             tcp_flow_permits: Arc::new(Semaphore::new(tcp_limit)),
             udp_flow_permits: Arc::new(Semaphore::new(udp_limit)),
-            tls_pool,
+            tls_manager,
             quic,
             shutdown,
         }))
@@ -136,12 +131,8 @@ impl PortalClient {
         &self.config.dialer_ip
     }
 
-    pub(crate) fn pool_size(&self) -> usize {
-        self.config.pool
-    }
-
-    pub(crate) fn effective_transport(&self) -> String {
-        self.config.effective_transport()
+    pub(crate) fn effective_route(&self) -> String {
+        self.config.effective_route()
     }
 
     pub(crate) async fn open_tcp(
@@ -160,16 +151,7 @@ impl PortalClient {
         udp_flow::open_udp(self.clone(), target, hops).await
     }
 
-    pub(crate) async fn idle_count(&self) -> usize {
-        self.tls_pool.idle_count().await
-    }
-
-    pub(crate) async fn maintain(self: Arc<Self>, shutdown: CancellationToken) {
-        self.tls_pool.clone().maintain(shutdown).await;
-    }
-
     pub(crate) async fn refresh_latency(&self) {
-        self.tls_pool.refresh_latency().await;
         self.quic.refresh_latency().await;
     }
 
@@ -179,7 +161,6 @@ impl PortalClient {
 
     pub(crate) async fn close(&self, deadline: Instant) {
         self.shutdown.cancel();
-        self.tls_pool.clear().await;
         self.quic.close(deadline).await;
     }
 }
@@ -205,11 +186,12 @@ impl Vector {
         let credentials =
             Credentials::new(&parsed_url).context("vector::Vector::new: invalid shared key")?;
         let telemetry_summary = format!(
-            "portal={} up={} down={} pool={} socks={}",
+            "portal={} up={} down={} alpn={} mux={} socks={}",
             config.portal_endpoint(),
             config.up,
             config.down,
-            config.pool,
+            config.alpn,
+            config.mux,
             config.socks.endpoint(),
         );
         let telemetry = TelemetryHub::for_current_process(
@@ -220,10 +202,8 @@ impl Vector {
         );
         let stats = Arc::new(Stats::default());
         let shutdown = CancellationToken::new();
-        let tcp_limit = quic_max_streams().max(1) as usize;
-        let udp_limit =
-            crate::common::env_int("NOW_QUIC_MAX_UDP_FLOWS", DEFAULT_MAX_UDP_FLOWS as i32)
-                .clamp(1, DEFAULT_MAX_UDP_FLOWS as i32) as usize;
+        let tcp_limit = max_tcp_flows().max(1) as usize;
+        let udp_limit = max_udp_flows();
         let read_bps = rate_limit_bytes_per_second(config.rate_mbps) as i64;
         let write_bps = rate_limit_bytes_per_second(config.etar_mbps) as i64;
         let rate_limiter = RateLimiter::new(read_bps, write_bps).map(Arc::new);
@@ -326,15 +306,6 @@ impl Vector {
             self.inner.clone(),
             self.inner.shutdown.clone(),
         ));
-        if self.inner.config.pool != 0 {
-            auxiliary_tasks.spawn(
-                self.inner
-                    .client
-                    .clone()
-                    .maintain(self.inner.shutdown.clone()),
-            );
-        }
-
         let (reason, failure) = tokio::select! {
             signal = signals.recv() => match signal {
                 Ok(reason) => (reason, None),
@@ -398,12 +369,9 @@ impl Vector {
         self.inner
             .telemetry
             .set_lifecycle(LifeState::Stopped.to_string(), outcome.to_string());
-        let pool = self.inner.client.idle_count().await as u64;
-        self.inner.telemetry.capture_and_publish(
-            &self.inner.stats,
-            pool,
-            self.inner.client.ping_ms(),
-        );
+        self.inner
+            .telemetry
+            .capture_and_publish(&self.inner.stats, self.inner.client.ping_ms());
         tokio::task::yield_now().await;
         telemetry_shutdown.cancel();
         while telemetry_tasks.join_next().await.is_some() {}
