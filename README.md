@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  A Linux-native encrypted relay that composes TLS/TCP and QUIC/UDP<br>
+  A cross-platform encrypted relay that composes TLS/TCP and QUIC/UDP<br>
   independently for upload and download.
 </p>
 
@@ -35,7 +35,7 @@ downlink independently instead of forcing both directions onto one transport.
 ## Live operations
 
 <p align="center">
-  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing six live traffic histories, native Portal chaining, upstream RTT, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
+  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
 </p>
 
 The built-in TUI turns every visible Portal and Vector into a live operational
@@ -44,11 +44,11 @@ closing a dashboard never starts, stops, or owns a service instance.
 
 | View | Signals and controls |
 | --- | --- |
-| **Overview** | Uplink, downlink, TCP, UDP, TLS, and QUIC histories; active connections; carriers; upstream RTT; warm pool; CPU; RSS; selected-instance metadata |
+| **Overview** | Uplink, downlink, TCP, UDP, TLS, and QUIC histories; active connections; carriers; CPU and RSS where available; selected-instance metadata |
 | **Logs** | Independent Access and Runtime feeds with filtering, pause and resume, paging, horizontal panning, and local privacy masking |
-| **Discovery** | Automatic instance discovery with stable selection and concurrent read-only viewers |
+| **Discovery** | Automatic per-user instance discovery with stable selection and concurrent read-only viewers |
 
-Start it from any terminal in the same Linux environment:
+Start it from any terminal in the same user environment:
 
 ```bash
 nowhere
@@ -56,8 +56,9 @@ nowhere
 nowhere tui
 ```
 
-Telemetry uses a local abstract Unix socket. It does not consume or redirect
-stdout and stderr, and history is held only by connected dashboards.
+Telemetry uses a per-user registry and a loopback control socket. It does not
+consume or redirect stdout and stderr, and history is held only by connected
+dashboards.
 
 ## How it works
 
@@ -97,21 +98,21 @@ Vector's `up` and `down` parameters form four first-class modes:
 | `udp/tcp` | QUIC/UDP | TLS/TCP |
 | `udp/udp` | QUIC/UDP | QUIC/UDP |
 
-TCP application traffic uses a TLS connection or a bidirectional QUIC stream.
-UDP application traffic uses length-prefixed UoT over TLS/TCP or QUIC
-DATAGRAM. Split paths rejoin through authenticated session and flow identity,
-never by source address.
+TCP application traffic uses a dedicated TLS lane, an optional shared TLS Mux
+stream, or a bidirectional QUIC stream. UDP application traffic uses
+length-prefixed UoT over TLS or QUIC DATAGRAM. Split paths rejoin through
+authenticated session and flow identity, never by source address.
 
 ## Engineered for a small data path
 
 | Area | Design |
 | --- | --- |
-| Framing | 32-byte connection authentication, 5-byte flow header, and one-byte setup result |
+| Framing | 32-byte connection authentication, 5-byte flow header, one-byte setup result, and an 8-byte TLS Mux header |
 | UDP overhead | 5 bytes for common QUIC DATAGRAM packets and 2 bytes for UoT packets |
 | Hot path | Stack-encoded headers, binary targets, allocation-free DATAGRAM decoding, and reusable buffers |
-| Reuse | Shared QUIC connections carry many streams and UDP flows; warm TLS lanes reduce `tcp/tcp` setup work |
+| Reuse | Shared QUIC connections and optional, lazily opened TLS Mux shards carry many logical flows |
 | Authentication | Credentials are bound to each TLS or QUIC connection through a TLS exporter |
-| Resource control | Explicit bounds cover connections, flows, queues, reassembly, rate limits, and idle state |
+| Resource control | Explicit bounds cover connections, streams, flows, windows, queues, reassembly, rate limits, and idle state |
 
 Certificate reload, graceful shutdown, outbound SOCKS5, source binding,
 directional rate limits, access paths, and EVENT logging are part of the core
@@ -135,7 +136,8 @@ Native forwarding is bounded to seven Portal hops.
 
 ## Quick start
 
-Nowhere requires Linux and a stable Rust toolchain.
+Nowhere requires a supported Linux, macOS, or Windows target and a stable Rust
+toolchain when building from source.
 
 ### 1. Build
 
@@ -153,12 +155,20 @@ The default `net=mix` mode accepts TLS/TCP and QUIC/UDP on port `2077`:
 
 ### 3. Start Vector
 
-This Vector exposes SOCKS5 on `127.0.0.1:1080`, uses TLS/TCP in both
-directions, and keeps five authenticated TLS lanes warm:
+This Vector exposes SOCKS5 on `127.0.0.1:1080` and uses dedicated TLS/TCP lanes
+in both directions:
 
 ```bash
 ./target/release/nowhere \
-  'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=127.0.0.1:1080'
+  'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&socks=127.0.0.1:1080'
+```
+
+Enable TLS Mux on both endpoints when shared Shards are desired:
+
+```bash
+./target/release/nowhere 'portal://change-me@127.0.0.1:2077?mux=1'
+./target/release/nowhere \
+  'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
 ```
 
 To split the carriers, change the directional parameters:
@@ -188,8 +198,9 @@ nowhere 'vector://change-me@relay.example:2077?sni=relay.example&socks=127.0.0.1
 
 Alternatively, set `pin` to the lowercase `CERT_SHA256` value printed by
 Portal. Pinning takes priority over `sni` certificate-chain and name checks.
-Portal and Vector default to ALPN `now/1`; custom ALPN values must match at both
-ends.
+Portal and Vector use the exact configured ALPN, `now/1` by default. Set the
+same nonempty `alpn` value on both endpoints when customization is required.
+ALPN does not select Mux; `mux=0|1` controls TLS multiplexing explicitly.
 
 Read the [security model](docs/security.md) before exposing a Portal outside a
 trusted environment.
@@ -198,49 +209,50 @@ trusted environment.
 
 | Boundary | Behavior |
 | --- | --- |
-| Platform | Linux only; runtime, signals, process metrics, discovery, and telemetry use Linux APIs directly |
-| Visibility | An unprivileged TUI sees instances owned by its effective UID; root sees all instances visible in its PID and network namespaces |
+| Platform | Portal, Vector, carriers, relay, TUI, and local discovery run on Linux, macOS, and Windows; Linux additionally reports process CPU and RSS |
+| Visibility | Discovery is scoped to the current user's platform-specific registry and validated control endpoint |
 | Ownership | The TUI is read-only and has no service lifecycle or configuration authority |
 | Concurrency | Multiple TUIs may observe one instance at the same time |
 | Logging | stdout and stderr remain independent from structured TUI telemetry |
 | Persistence | TUI metric history and feeds begin at connection time and are not persisted |
 
-Containers provide the portability boundary for non-Linux hosts while keeping
-the Linux process and IPC model intact inside each environment.
+See [Platforms](docs/platforms.md) for supported release targets, native paths,
+process control, and telemetry differences.
 
 ## Documentation map
 
 | Guide | Start here when you need to |
 | --- | --- |
 | [Quick start](docs/quick-start.md) | Build a local Portal and Vector |
+| [Platforms](docs/platforms.md) | Review supported targets and platform-specific behavior |
 | [Configuration](docs/configuration.md) | Review command URLs, defaults, identity, limits, and environment variables |
-| [Operations](docs/operations.md) | Operate logs, telemetry, pools, reconnection, certificates, and shutdown |
+| [Operations](docs/operations.md) | Operate logs, telemetry, capacity, failure behavior, certificates, and shutdown |
 | [Security](docs/security.md) | Understand trust boundaries, authentication, permissions, and resource controls |
 | [Wire protocol](docs/protocol.md) | Implement authentication, flow setup, framing, and lifecycles |
-| [Integrations](docs/integrations.md) | Connect process managers, SOCKS5 clients, OpenCtrl, and other tooling |
+| [Compatibility](docs/compatibility.md) | Understand ALPN selection and peer interoperability |
+| [Integrations](docs/integrations.md) | Implement alternate clients or configure chained Portals |
 
 ## Development
 
-On Linux:
+Run the project checks on a supported host:
 
 ```bash
 cargo fmt --all -- --check
-cargo test --locked
+cargo test --all-targets --locked
 cargo clippy --all-targets --locked -- -D warnings
 cargo build --release --locked
 ```
 
-On macOS with [Apple Container](https://github.com/apple/container), run the
-same Linux checks through the reusable, cache-backed environment:
+On macOS with [Apple Container](https://github.com/apple/container), the
+reusable Linux check environment remains available:
 
 ```bash
 ./scripts/check-linux.sh
 ```
 
-The script pins Rust 1.95.0 by default, mounts the source read-only, and keeps
-Cargo, rustup, and target caches in named volumes. Override its resources or
-toolchain with `NOWHERE_CONTAINER_CPUS`, `NOWHERE_CONTAINER_MEMORY`,
-`NOWHERE_LINUX_IMAGE`, and `NOWHERE_RUST_TOOLCHAIN`.
+CI runs the project on Linux, macOS, and Windows. Release packaging covers
+Linux GNU/musl on x86-64 and AArch64, macOS on Apple Silicon, and Windows
+x86-64 MSVC.
 
 Protocol changes must update the normative wire document and protocol-vector
 tests in the same change.
