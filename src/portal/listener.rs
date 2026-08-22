@@ -14,14 +14,11 @@ use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 
 use crate::telemetry::{RuntimeEvent, RuntimeKind, RuntimeLevel};
+use crate::transport::quic_flow_control;
 
 use super::{PortalInner, conn};
 
-const QUIC_STREAM_RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
-/// Post-authentication QUIC connection receive window.
-pub(super) const QUIC_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
 const QUIC_PRE_AUTH_RECEIVE_WINDOW: u32 = 64 * 1024;
-const QUIC_SEND_WINDOW: u64 = 32 * 1024 * 1024;
 // Quinn allocates this receive queue per connection before application
 // authentication. Keep it intentionally small; authenticated DATAGRAM traffic
 // is drained continuously into the separately budgeted flow queues.
@@ -194,19 +191,21 @@ pub(super) fn format_endpoint_addr(host: &str, port: u16) -> String {
 pub(super) fn configure_transport(
     server_config: &mut quinn::ServerConfig,
     udp_idle_timeout: Duration,
+    keep_alive_interval: Option<Duration>,
 ) -> Result<()> {
+    let flow_control = quic_flow_control()?;
     let transport = Arc::get_mut(&mut server_config.transport).ok_or_else(|| {
         anyhow::anyhow!("portal::configure_transport: server transport already shared")
     })?;
     transport.datagram_receive_buffer_size(Some(QUIC_DATAGRAM_RECEIVE_BUFFER_SIZE));
     transport.datagram_send_buffer_size(QUIC_DATAGRAM_SEND_BUFFER_SIZE);
-    transport.stream_receive_window(VarInt::from_u32(QUIC_STREAM_RECEIVE_WINDOW));
+    transport.stream_receive_window(VarInt::from_u32(flow_control.stream_receive_window));
     transport.receive_window(VarInt::from_u32(QUIC_PRE_AUTH_RECEIVE_WINDOW));
-    transport.send_window(QUIC_SEND_WINDOW);
+    transport.send_window(flow_control.send_window);
     transport.max_concurrent_bidi_streams(VarInt::from_u32(1));
     transport.max_concurrent_uni_streams(VarInt::from_u32(0));
     transport.max_idle_timeout(Some(IdleTimeout::try_from(udp_idle_timeout)?));
-    transport.keep_alive_interval(None);
+    transport.keep_alive_interval(keep_alive_interval);
     transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
 
     Ok(())

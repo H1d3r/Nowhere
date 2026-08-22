@@ -96,8 +96,21 @@ async fn handle_connection(
     }
     // Once auth succeeds, expand the conservative pre-auth limits to the normal
     // data-plane limits and release the admission slot.
-    conn.set_receive_window(VarInt::from_u32(super::listener::QUIC_RECEIVE_WINDOW));
-    conn.set_max_concurrent_bi_streams(VarInt::from_u32(portal.runtime.quic_max_streams));
+    let flow_control = match crate::transport::quic_flow_control() {
+        Ok(value) => value,
+        Err(err) => {
+            portal.logger.error(format_args!(
+                "portal::conn::handle_connection: invalid QUIC memory profile: {err}"
+            ));
+            conn.close(VarInt::from_u32(0), b"");
+            drop(admission);
+            return;
+        }
+    };
+    conn.set_receive_window(VarInt::from_u32(flow_control.connection_receive_window));
+    conn.set_max_concurrent_bi_streams(VarInt::from_u32(
+        portal.runtime.quic_bidi_stream_capacity(),
+    ));
     drop(admission);
     let session = authenticated.session;
     let link_replaced = CancellationToken::new();
