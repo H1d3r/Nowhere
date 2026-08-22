@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::Carrier;
 
-use super::process::{now_unix_ms, process_start_ticks, process_uid};
+use super::process::{now_unix_ms, process_incarnation, process_uid};
 
 /// Version of the local telemetry protocol. It is not a data-plane wire version.
-pub(crate) const PROTOCOL_VERSION: u16 = 1;
+pub(crate) const PROTOCOL_VERSION: u16 = 2;
 /// Maximum accepted JSON payload, excluding the four-byte length prefix.
 pub(crate) const MAX_FRAME_SIZE: usize = 64 * 1024;
 
@@ -32,7 +32,7 @@ pub(crate) struct InstanceDescriptor {
     pub(crate) role: InstanceRole,
     pub(crate) pid: u32,
     pub(crate) uid: u32,
-    pub(crate) start_ticks: u64,
+    pub(crate) incarnation: u64,
     pub(crate) version: String,
     pub(crate) endpoint: String,
     pub(crate) config_summary: String,
@@ -48,14 +48,14 @@ impl InstanceDescriptor {
     ) -> Result<Self> {
         let pid = std::process::id();
         let uid = process_uid();
-        let start_ticks = process_start_ticks(pid)?;
+        let incarnation = process_incarnation(pid)?;
         Ok(Self {
             protocol_version: PROTOCOL_VERSION,
-            id: format!("{uid}:{pid}:{start_ticks}"),
+            id: format!("{uid}:{pid}:{incarnation}"),
             role,
             pid,
             uid,
-            start_ticks,
+            incarnation,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             endpoint: endpoint.into(),
             config_summary: config_summary.into(),
@@ -63,10 +63,10 @@ impl InstanceDescriptor {
         })
     }
 
-    pub(crate) fn socket_name(&self) -> String {
+    pub(crate) fn registry_name(&self) -> String {
         format!(
             "nowhere.v{}.{}.{}.{}",
-            PROTOCOL_VERSION, self.uid, self.pid, self.start_ticks
+            PROTOCOL_VERSION, self.uid, self.pid, self.incarnation
         )
     }
 
@@ -84,7 +84,7 @@ impl InstanceDescriptor {
             role,
             pid,
             uid,
-            start_ticks: 0,
+            incarnation: 0,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             endpoint,
             config_summary,
@@ -98,21 +98,18 @@ pub(crate) struct TelemetrySnapshot {
     pub(crate) sequence: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) uptime_ms: u64,
-    pub(crate) tcp_rx: u64,
-    pub(crate) tcp_tx: u64,
-    pub(crate) udp_rx: u64,
-    pub(crate) udp_tx: u64,
+    pub(crate) tcp_logical_up: u64,
+    pub(crate) tcp_logical_down: u64,
+    pub(crate) udp_logical_up: u64,
+    pub(crate) udp_logical_down: u64,
+    pub(crate) tls_wire_up: u64,
+    pub(crate) tls_wire_down: u64,
+    pub(crate) quic_wire_up: u64,
+    pub(crate) quic_wire_down: u64,
     pub(crate) tcp_active: i64,
     pub(crate) udp_active: i64,
-    pub(crate) link_tcp: u64,
-    pub(crate) link_udp: u64,
-    pub(crate) link_pairs: u64,
-    pub(crate) up_tcp: u64,
-    pub(crate) up_udp: u64,
-    pub(crate) down_tcp: u64,
-    pub(crate) down_udp: u64,
-    pub(crate) pool_active: u64,
-    #[serde(default)]
+    pub(crate) tls_carriers_active: u64,
+    pub(crate) quic_carriers_active: u64,
     pub(crate) ping_ms: u64,
     pub(crate) cpu_percent: Option<f64>,
     pub(crate) rss_bytes: Option<u64>,
@@ -143,12 +140,14 @@ pub(crate) struct AccessStart {
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) flow_id: Option<u32>,
+    pub(crate) alpn: String,
+    pub(crate) flow_id: Option<u64>,
+    pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
     pub(crate) path_peers: Vec<String>,
     pub(crate) target: String,
-    pub(crate) uplink: Option<Carrier>,
-    pub(crate) downlink: Option<Carrier>,
+    pub(crate) initial_uplink: Option<Carrier>,
+    pub(crate) initial_downlink: Option<Carrier>,
     pub(crate) path: Option<String>,
 }
 
@@ -157,13 +156,15 @@ pub(crate) struct AccessStarted {
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) flow_id: Option<u32>,
+    pub(crate) alpn: String,
+    pub(crate) flow_id: Option<u64>,
+    pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
     #[serde(default)]
     pub(crate) path_peers: Vec<String>,
     pub(crate) target: String,
-    pub(crate) uplink: Option<String>,
-    pub(crate) downlink: Option<String>,
+    pub(crate) initial_uplink: Option<String>,
+    pub(crate) initial_downlink: Option<String>,
     pub(crate) path: Option<String>,
 }
 
@@ -173,13 +174,15 @@ pub(crate) struct AccessFinished {
     pub(crate) timestamp_ms: u64,
     pub(crate) duration_ms: u64,
     pub(crate) protocol: TrafficProtocol,
-    pub(crate) flow_id: Option<u32>,
+    pub(crate) alpn: String,
+    pub(crate) flow_id: Option<u64>,
+    pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
     #[serde(default)]
     pub(crate) path_peers: Vec<String>,
     pub(crate) target: String,
-    pub(crate) uplink: Option<String>,
-    pub(crate) downlink: Option<String>,
+    pub(crate) initial_uplink: Option<String>,
+    pub(crate) initial_downlink: Option<String>,
     pub(crate) path: Option<String>,
     pub(crate) upload_bytes: u64,
     pub(crate) download_bytes: u64,
@@ -201,8 +204,11 @@ pub(crate) enum RuntimeKind {
     Lifecycle,
     Listener,
     Authentication,
+    Session,
     Carrier,
-    Pool,
+    Mux,
+    Backpressure,
+    Datagram,
     Reconnect,
 }
 

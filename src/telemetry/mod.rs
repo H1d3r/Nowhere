@@ -11,7 +11,7 @@ mod checkpoint;
 mod hub;
 mod ipc;
 mod process;
-mod wire;
+pub(crate) mod wire;
 
 pub(crate) use checkpoint::Checkpoint;
 pub(crate) use hub::{AccessSpan, TelemetryHub};
@@ -22,5 +22,3 @@ pub(crate) use wire::{
     MAX_FRAME_SIZE, PROTOCOL_VERSION, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage,
     Subscription, TelemetrySnapshot, TrafficProtocol,
 };
-#[cfg(test)]
-pub(crate) use wire::{InstanceDescriptor, LifecycleSnapshot};
