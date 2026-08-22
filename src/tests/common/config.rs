@@ -8,10 +8,10 @@ use url::Url;
 
 #[test]
 fn query_first_ignores_unknown_parameters_and_keeps_first_duplicate() {
-    let parsed = Url::parse("portal://key@localhost:2077?log=debug&alpn=now%2F1").unwrap();
-    let values = query_first(&parsed, &["log", "alpn"]).unwrap();
+    let parsed = Url::parse("portal://key@localhost:2077?log=debug&label=now%2F1").unwrap();
+    let values = query_first(&parsed, &["log", "label"]).unwrap();
     assert_eq!(values["log"], "debug");
-    assert_eq!(values["alpn"], "now/1");
+    assert_eq!(values["label"], "now/1");
 
     let duplicate = Url::parse("portal://key@localhost:2077?log=debug&log=event").unwrap();
     assert_eq!(query_first(&duplicate, &["log"]).unwrap()["log"], "debug");
@@ -20,20 +20,26 @@ fn query_first_ignores_unknown_parameters_and_keeps_first_duplicate() {
 }
 
 #[test]
-fn query_first_preserves_literal_plus_and_validates_the_selected_value() {
-    let parsed = Url::parse("portal://key@localhost:2077?alpn=now+private").unwrap();
+fn query_first_preserves_literal_slash_and_plus_and_validates_the_selected_value() {
+    let protocol = Url::parse("portal://key@localhost:2077?label=private/2").unwrap();
     assert_eq!(
-        query_first(&parsed, &["alpn"]).unwrap()["alpn"],
+        query_first(&protocol, &["label"]).unwrap()["label"],
+        "private/2"
+    );
+
+    let parsed = Url::parse("portal://key@localhost:2077?label=now+private").unwrap();
+    assert_eq!(
+        query_first(&parsed, &["label"]).unwrap()["label"],
         "now+private"
     );
 
-    let bad = Url::parse("portal://key@localhost:2077?alpn=%GG").unwrap();
-    assert!(query_first(&bad, &["alpn"]).is_err());
+    let bad = Url::parse("portal://key@localhost:2077?label=%GG").unwrap();
+    assert!(query_first(&bad, &["label"]).is_err());
 
     let ignored_bad_duplicate =
-        Url::parse("portal://key@localhost:2077?alpn=now%2F1&alpn=%GG").unwrap();
+        Url::parse("portal://key@localhost:2077?label=now%2F1&label=%GG").unwrap();
     assert_eq!(
-        query_first(&ignored_bad_duplicate, &["alpn"]).unwrap()["alpn"],
+        query_first(&ignored_bad_duplicate, &["label"]).unwrap()["label"],
         "now/1"
     );
 }

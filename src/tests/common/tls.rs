@@ -27,3 +27,15 @@ fn server_tls_config_explicitly_disables_early_data() {
     assert_eq!(tls.max_early_data_size, 0);
     assert!(!tls.send_half_rtt_data);
 }
+
+#[test]
+fn server_offers_only_the_configured_alpn() {
+    let (_, tls, _) = new_server_configs(
+        &Url::parse("portal://secret@127.0.0.1:2077?tls=1&alpn=private/2&pool=8").unwrap(),
+        "private/2",
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+
+    assert_eq!(tls.alpn_protocols, [b"private/2".to_vec()]);
+}

@@ -20,7 +20,7 @@ use self::tls_cert::{ReloadingCertResolver, new_self_signed_cert};
 use super::{Logger, query_first, reload_interval};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "log", "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks",
+    "log", "net", "tls", "crt", "key", "rate", "etar", "dial", "socks",
 ];
 
 /// TLS mode selected by the `tls` URL query parameter.
@@ -44,7 +44,7 @@ impl fmt::Display for TLSMode {
     }
 }
 
-/// Builds rustls and QUIC TLS server configuration for the effective ALPN.
+/// Builds rustls and QUIC TLS server configuration for the configured ALPN.
 pub fn new_server_configs(
     parsed_url: &Url,
     alpn: &str,

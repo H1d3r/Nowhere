@@ -41,9 +41,7 @@ fn hkdf_and_auth_frames_match_fixed_vectors() {
 
 #[test]
 fn credentials_decode_username_and_reject_ambiguous_inputs() {
-    let plain =
-        Credentials::new(&Url::parse("portal://sec%20ret@127.0.0.1:443?alpn=now%2F1").unwrap())
-            .unwrap();
+    let plain = Credentials::new(&Url::parse("portal://sec%20ret@127.0.0.1:443").unwrap()).unwrap();
     assert_eq!(plain, Credentials::from_shared_key(b"sec ret").unwrap());
     assert!(
         Credentials::new(&Url::parse("portal://secret:password@127.0.0.1:443").unwrap()).is_err()
