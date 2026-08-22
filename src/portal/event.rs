@@ -4,38 +4,20 @@
 //! Periodic event telemetry emitted by a running portal.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-
 use tokio_util::sync::CancellationToken;
 
 use super::PortalInner;
+use crate::telemetry::Checkpoint;
 
 pub(super) async fn event_loop(portal: Arc<PortalInner>, shutdown: CancellationToken) {
     loop {
         portal.outbound.refresh_latency().await;
-        portal.logger.event(format_args!(
-            "CHECK_POINT|MODE={}|PING={}ms|POOL={}|TCPS={}|UDPS={}|TCPRX={}|TCPTX={}|UDPRX={}|UDPTX={}",
+        let checkpoint = Checkpoint::capture(
             portal.network_mode.checkpoint_value(),
             portal.outbound.ping_ms(),
-            portal.pool_active.load(Ordering::Relaxed),
-            portal.stats.tcp_active.load(Ordering::Relaxed),
-            portal.stats.udp_active.load(Ordering::Relaxed),
-            portal.stats.tcp_rx.load(Ordering::Relaxed),
-            portal.stats.tcp_tx.load(Ordering::Relaxed),
-            portal.stats.udp_rx.load(Ordering::Relaxed),
-            portal.stats.udp_tx.load(Ordering::Relaxed),
-        ));
-        portal.logger.debug(format_args!(
-            "LINK_STATUS|TCP={}|UDP={}|PAIRS={}|UPTCP={}|UPUDP={}|DOWNTCP={}|DOWNUDP={}",
-            portal.stats.link_tcp.load(Ordering::Relaxed),
-            portal.stats.link_udp.load(Ordering::Relaxed),
-            portal.stats.link_pairs.load(Ordering::Relaxed),
-            portal.stats.up_tcp.load(Ordering::Relaxed),
-            portal.stats.up_udp.load(Ordering::Relaxed),
-            portal.stats.down_tcp.load(Ordering::Relaxed),
-            portal.stats.down_udp.load(Ordering::Relaxed),
-        ));
-
+            &portal.stats,
+        );
+        portal.logger.event(format_args!("{checkpoint}"));
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = tokio::time::sleep(portal.runtime.report_interval) => {}
@@ -53,7 +35,6 @@ pub(super) async fn telemetry_loop(portal: Arc<PortalInner>, shutdown: Cancellat
                 portal.outbound.refresh_latency().await;
                 portal.telemetry.capture_and_publish(
                     &portal.stats,
-                    portal.pool_active.load(Ordering::Relaxed),
                     portal.outbound.ping_ms(),
                 );
             }

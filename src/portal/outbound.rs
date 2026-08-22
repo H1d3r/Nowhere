@@ -103,7 +103,7 @@ impl PortalOutbound {
     pub(super) fn next_transport(&self) -> Option<String> {
         match self {
             Self::Network(_) => None,
-            Self::Portal(client) => Some(client.effective_transport()),
+            Self::Portal(client) => Some(client.effective_route()),
         }
     }
 
@@ -111,13 +111,6 @@ impl PortalOutbound {
         match self {
             Self::Network(dialer) => dialer.ping_ms(),
             Self::Portal(client) => client.ping_ms(),
-        }
-    }
-
-    pub(super) fn portal_client(&self) -> Option<&Arc<PortalClient>> {
-        match self {
-            Self::Network(_) => None,
-            Self::Portal(client) => Some(client),
         }
     }
 

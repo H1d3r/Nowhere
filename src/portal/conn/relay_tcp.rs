@@ -37,16 +37,18 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
         _flow_lease,
     } = paired;
     let target_addr = target.to_string();
-    let access = portal.telemetry.start_access(AccessStart {
+    let access = portal.telemetry.start_access(|| AccessStart {
         id: 0,
         timestamp_ms: now_unix_ms(),
         protocol: TrafficProtocol::Tcp,
-        flow_id: Some(flow_id),
+        alpn: portal.alpn.clone(),
+        flow_id: Some(flow_id.into()),
+        session_tag: None,
         client: Some(uplink_path.peer.clone()),
         path_peers: vec![uplink_path.peer.clone(), downlink_path.peer.clone()],
         target: target_addr.clone(),
-        uplink: Some(uplink),
-        downlink: Some(downlink),
+        initial_uplink: Some(uplink),
+        initial_downlink: Some(downlink),
         path: Some(access_exchange_path(
             uplink,
             &uplink_path,

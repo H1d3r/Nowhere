@@ -118,12 +118,6 @@ impl Portal {
             self.inner.clone(),
             force_shutdown.clone(),
         ));
-        if let Some(client) = self.inner.outbound.portal_client()
-            && client.pool_size() != 0
-        {
-            auxiliary_tasks.spawn(client.clone().maintain(force_shutdown.clone()));
-        }
-
         let trigger = tokio::select! {
             signal = signals.recv() => match signal {
                 Ok(reason) => ShutdownTrigger { reason, failure: None },
@@ -258,13 +252,9 @@ impl Portal {
             LifeState::Stopped.to_string(),
             outcome.life_reason().to_string(),
         );
-        self.inner.telemetry.capture_and_publish(
-            &self.inner.stats,
-            self.inner
-                .pool_active
-                .load(std::sync::atomic::Ordering::Relaxed),
-            self.inner.outbound.ping_ms(),
-        );
+        self.inner
+            .telemetry
+            .capture_and_publish(&self.inner.stats, self.inner.outbound.ping_ms());
         tokio::task::yield_now().await;
         telemetry_shutdown.cancel();
         while telemetry_tasks.join_next().await.is_some() {}
@@ -303,11 +293,12 @@ impl Portal {
     /// Returns the effective startup URL that is logged for operators.
     pub(super) fn effective_url(&self) -> String {
         let base = format!(
-            "portal://{}?net={}&tls={}&alpn={}&rate={}&etar={}&dial={}&socks={}&next={}",
+            "portal://{}?net={}&tls={}&alpn={}&mux={}&rate={}&etar={}&dial={}&socks={}&next={}",
             self.inner.endpoint_addr,
             self.inner.network_mode,
             self.inner.tls_mode,
             self.inner.alpn,
+            self.inner.mux,
             self.inner.rate_limit,
             self.inner.etar_limit,
             self.inner.outbound.dialer_ip(),
