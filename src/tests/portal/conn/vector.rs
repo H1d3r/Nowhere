@@ -79,12 +79,16 @@ async fn free_tcp_port() -> u16 {
         .port()
 }
 
-async fn start_runtime(up: &str, down: &str) -> TestRuntime {
+async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
+    start_runtime_modes(up, down, mux, mux).await
+}
+
+async fn start_runtime_modes(up: &str, down: &str, portal_mux: u8, vector_mux: u8) -> TestRuntime {
     let portal_port = free_tcp_port().await;
     let socks_port = free_tcp_port().await;
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:{portal_port}?log=none&net=mix"
+            "portal://secret@127.0.0.1:{portal_port}?log=none&net=mix&mux={portal_mux}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -107,7 +111,7 @@ async fn start_runtime(up: &str, down: &str) -> TestRuntime {
     ));
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@127.0.0.1:{portal_port}?log=none&up={up}&down={down}&pool=0&socks=127.0.0.1:{socks_port}"
+            "vector://secret@127.0.0.1:{portal_port}?log=none&up={up}&down={down}&mux={vector_mux}&socks=127.0.0.1:{socks_port}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -125,6 +129,140 @@ async fn start_runtime(up: &str, down: &str) -> TestRuntime {
     }
 }
 
+#[tokio::test]
+async fn mux_client_is_rejected_by_a_dedicated_only_portal_before_target_dial() {
+    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_address = target.local_addr().unwrap();
+    let runtime = start_runtime_modes("tcp", "tcp", 0, 1).await;
+    timeout(TEST_TIMEOUT, async {
+        let mut socks = TcpStream::connect(runtime.socks).await.unwrap();
+        negotiate_socks(&mut socks).await;
+        socks
+            .write_all(&ip_request(1, target_address))
+            .await
+            .unwrap();
+        assert_ne!(read_ipv4_reply_code(&mut socks).await, 0);
+    })
+    .await
+    .unwrap();
+    assert!(
+        timeout(Duration::from_millis(100), target.accept())
+            .await
+            .is_err()
+    );
+    runtime.stop().await;
+}
+
+#[tokio::test]
+async fn mux_symmetric_carriers_relay_tcp_and_fragmented_udp() {
+    for carrier in ["tcp", "udp"] {
+        let tcp_target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tcp_address = tcp_target.local_addr().unwrap();
+        let tcp_echo = tokio::spawn(async move {
+            let (mut stream, _) = tcp_target.accept().await.unwrap();
+            let mut ping = [0u8; 4];
+            stream.read_exact(&mut ping).await.unwrap();
+            stream.write_all(b"pong").await.unwrap();
+        });
+        let udp_target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let udp_address = udp_target.local_addr().unwrap();
+        // Above QUIC's datagram MTU, below macOS's default UDP socket limit.
+        let payload = vec![0x5a; 8 * 1024];
+        let echoed = payload.clone();
+        let udp_echo = tokio::spawn(async move {
+            let mut packet = vec![0u8; 65_507];
+            let (length, peer) = udp_target.recv_from(&mut packet).await.unwrap();
+            assert_eq!(&packet[..length], echoed);
+            udp_target.send_to(&echoed, peer).await.unwrap();
+        });
+        let runtime = start_runtime(carrier, carrier, 1).await;
+        timeout(TEST_TIMEOUT, async {
+            let mut tcp = TcpStream::connect(runtime.socks).await.unwrap();
+            negotiate_socks(&mut tcp).await;
+            tcp.write_all(&ip_request(1, tcp_address)).await.unwrap();
+            read_ipv4_reply(&mut tcp).await;
+            tcp.write_all(b"ping").await.unwrap();
+            let mut pong = [0u8; 4];
+            tcp.read_exact(&mut pong).await.unwrap();
+            assert_eq!(&pong, b"pong");
+
+            let mut control = TcpStream::connect(runtime.socks).await.unwrap();
+            negotiate_socks(&mut control).await;
+            control
+                .write_all(&ip_request(3, SocketAddr::from(([0, 0, 0, 0], 0))))
+                .await
+                .unwrap();
+            let relay = read_ipv4_reply(&mut control).await;
+            let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let mut packet = vec![0, 0, 0];
+            packet.extend_from_slice(&ip_request(0, udp_address)[3..]);
+            packet.extend_from_slice(&payload);
+            client.send_to(&packet, relay).await.unwrap();
+            let mut response = vec![0u8; 65_535];
+            let (length, _) = client.recv_from(&mut response).await.unwrap();
+            assert_eq!(&response[10..length], payload);
+        })
+        .await
+        .unwrap();
+        tcp_echo.await.unwrap();
+        udp_echo.await.unwrap();
+        runtime.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
+    const DIRECTION_BYTES: usize = 3 * 1024 * 1024;
+
+    for carrier in ["tcp", "udp"] {
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_address = target.local_addr().unwrap();
+        let target_task = tokio::spawn(async move {
+            let (stream, _) = target.accept().await.unwrap();
+            let (mut reader, mut writer) = stream.into_split();
+            let upload = async {
+                let mut received = vec![0_u8; DIRECTION_BYTES];
+                reader.read_exact(&mut received).await.unwrap();
+                assert!(received.iter().all(|byte| *byte == 0xa5));
+            };
+            let download = async {
+                writer
+                    .write_all(&vec![0x5a; DIRECTION_BYTES])
+                    .await
+                    .unwrap();
+            };
+            tokio::join!(upload, download);
+        });
+        let runtime = start_runtime(carrier, carrier, 1).await;
+        timeout(TEST_TIMEOUT, async {
+            let mut stream = TcpStream::connect(runtime.socks).await.unwrap();
+            negotiate_socks(&mut stream).await;
+            stream
+                .write_all(&ip_request(1, target_address))
+                .await
+                .unwrap();
+            read_ipv4_reply(&mut stream).await;
+            let (mut reader, mut writer) = stream.into_split();
+            let upload = async {
+                writer
+                    .write_all(&vec![0xa5; DIRECTION_BYTES])
+                    .await
+                    .unwrap();
+            };
+            let download = async {
+                let mut received = vec![0_u8; DIRECTION_BYTES];
+                reader.read_exact(&mut received).await.unwrap();
+                assert!(received.iter().all(|byte| *byte == 0x5a));
+            };
+            tokio::join!(upload, download);
+        })
+        .await
+        .unwrap();
+        target_task.await.unwrap();
+        runtime.stop().await;
+    }
+}
+
 async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let origin_port = free_tcp_port().await;
     let relay_port = free_tcp_port().await;
@@ -132,7 +270,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let logger = || Logger::new(LogLevel::None, false);
     let origin = Portal::new(
         Url::parse(&format!(
-            "portal://origin-secret@127.0.0.1:{origin_port}?log=none&net=mix"
+            "portal://origin-secret@127.0.0.1:{origin_port}?log=none&net=mix&mux=1"
         ))
         .unwrap(),
         logger(),
@@ -140,7 +278,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     .unwrap();
     let relay = Portal::new(
         Url::parse(&format!(
-            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&net=mix&next=origin-secret@127.0.0.1:{origin_port}&up={up}&down={down}&pool=0"
+            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&net=mix&mux=1&next=origin-secret@127.0.0.1:{origin_port}&up={up}&down={down}"
         ))
         .unwrap(),
         logger(),
@@ -168,7 +306,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     }
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://relay-secret@127.0.0.1:{relay_port}?log=none&pool=0&socks=127.0.0.1:{socks_port}"
+            "vector://relay-secret@127.0.0.1:{relay_port}?log=none&mux=1&socks=127.0.0.1:{socks_port}"
         ))
         .unwrap(),
         logger(),
@@ -246,7 +384,7 @@ async fn vector_tcp_relays_every_carrier_pair() {
             assert_eq!(&ping, b"ping");
             stream.write_all(b"pong").await.unwrap();
         });
-        let runtime = start_runtime(up, down).await;
+        let runtime = start_runtime(up, down, 0).await;
         timeout(TEST_TIMEOUT, async {
             let mut socks = TcpStream::connect(runtime.socks).await.unwrap();
             negotiate_socks(&mut socks).await;
@@ -280,7 +418,7 @@ async fn vector_udp_associate_relays_every_carrier_pair() {
             assert_eq!(&packet[..length], echoed);
             target.send_to(&echoed, peer).await.unwrap();
         });
-        let runtime = start_runtime(up, down).await;
+        let runtime = start_runtime(up, down, 0).await;
         timeout(TEST_TIMEOUT, async {
             let mut control = TcpStream::connect(runtime.socks).await.unwrap();
             negotiate_socks(&mut control).await;
@@ -371,24 +509,5 @@ async fn native_portal_chain_relays_tcp_and_udp_for_every_upstream_carrier_pair(
     }
 }
 
-#[tokio::test]
-async fn native_portal_chain_preserves_upstream_dial_failure() {
-    let unavailable = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let unavailable_address = unavailable.local_addr().unwrap();
-    drop(unavailable);
-    let runtime = start_chain_runtime("udp", "udp").await;
-
-    timeout(TEST_TIMEOUT, async {
-        let mut socks = TcpStream::connect(runtime.socks).await.unwrap();
-        negotiate_socks(&mut socks).await;
-        socks
-            .write_all(&ip_request(1, unavailable_address))
-            .await
-            .unwrap();
-        assert_eq!(read_ipv4_reply_code(&mut socks).await, 4);
-    })
-    .await
-    .unwrap();
-
-    runtime.stop().await;
-}
+#[path = "vector/chain_failure.rs"]
+mod chain_failure;
