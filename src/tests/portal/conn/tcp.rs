@@ -3,18 +3,21 @@
 
 //! TCP/TLS portal connection tests.
 
+use std::io::ErrorKind;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UdpSocket};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::common::{LogLevel, Logger, handshake_timeout};
+use crate::common::{LogLevel, Logger};
 use crate::portal::Portal;
-use crate::portal::conn::tcp::handle_tcp_incoming_with_pool_ttl;
+use crate::portal::conn::tcp::{
+    AUTHENTICATED_LANE_BOOTSTRAP_TIMEOUT, handle_tcp_incoming_with_bootstrap_timeout,
+};
 use crate::protocol::{
     Carrier, FlowHeader, FlowKind, FlowResult, FlowRole, encode_udp_packet, read_flow_result,
     read_udp_packet, write_flow_header, write_request_frame,
@@ -41,7 +44,7 @@ fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn tls_tcp_pool_waits_beyond_handshake_timeout_then_relays() {
+async fn dedicated_portal_accepts_delayed_flow_header() {
     let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target = echo_listener.local_addr().unwrap();
     let echo_task = tokio::spawn(async move {
@@ -75,17 +78,7 @@ async fn tls_tcp_pool_waits_beyond_handshake_timeout_then_relays() {
 
     let auth = tls_auth_frame(&portal, &tls, [7; 16]);
     tls.write_all(&auth).await.unwrap();
-
-    timeout(Duration::from_secs(1), async {
-        while portal.inner.pool_active.load(Ordering::Relaxed) != 1 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-
-    tokio::time::sleep(handshake_timeout() + Duration::from_millis(100)).await;
-    assert_eq!(portal.inner.pool_active.load(Ordering::Relaxed), 1);
+    sleep(Duration::from_millis(150)).await;
 
     let mut request = duplex_setup(1, FlowKind::Tcp, &target.to_string());
     request.extend_from_slice(b"ping");
@@ -99,12 +92,16 @@ async fn tls_tcp_pool_waits_beyond_handshake_timeout_then_relays() {
         .unwrap()
         .unwrap();
     assert_eq!(&response, b"pong");
-    assert_eq!(portal.inner.pool_active.load(Ordering::Relaxed), 0);
 
     shutdown.cancel();
     let _ = tls.shutdown().await;
     echo_task.await.unwrap();
     server_task.await.unwrap();
+}
+
+#[test]
+fn authenticated_lane_window_covers_vector_1_7_warm_lane_ttl() {
+    assert!(AUTHENTICATED_LANE_BOOTSTRAP_TIMEOUT > Duration::from_secs(30));
 }
 
 #[tokio::test]
@@ -304,7 +301,7 @@ async fn tls_tcp_auth_failure_waits_for_deadline_without_application_response() 
 }
 
 #[tokio::test]
-async fn tls_tcp_pool_ttl_closes_unused_connection() {
+async fn tls_tcp_flow_header_timeout_closes_unused_connection() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
@@ -321,7 +318,7 @@ async fn tls_tcp_pool_ttl_closes_unused_connection() {
             .unauthenticated_admission
             .try_acquire(peer.ip())
             .unwrap();
-        handle_tcp_incoming_with_pool_ttl(
+        handle_tcp_incoming_with_bootstrap_timeout(
             portal_inner,
             stream,
             peer,
@@ -336,34 +333,23 @@ async fn tls_tcp_pool_ttl_closes_unused_connection() {
     let auth = tls_auth_frame(&portal, &tls, [8; 16]);
     tls.write_all(&auth).await.unwrap();
 
-    timeout(Duration::from_secs(1), async {
-        while portal.inner.pool_active.load(Ordering::Relaxed) != 1 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-
     timeout(Duration::from_secs(1), server_task)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(portal.inner.pool_active.load(Ordering::Relaxed), 0);
-
     shutdown.cancel();
     let _ = tls.shutdown().await;
 }
 
 #[tokio::test]
-async fn tls_tcp_idle_pool_limit_closes_excess_authenticated_connection() {
+async fn mux_portal_rejects_unmarked_dedicated_lane() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let listen_addr = listener.local_addr().unwrap();
     let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp&mux=1").unwrap(),
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
-    portal.inner.tcp_idle_pool_budget.close();
     let portal_inner = portal.inner.clone();
     let shutdown = CancellationToken::new();
     let child_shutdown = shutdown.clone();
@@ -377,28 +363,31 @@ async fn tls_tcp_idle_pool_limit_closes_excess_authenticated_connection() {
     });
 
     let mut tls = connect_test_tls(listen_addr).await;
-    let auth = tls_auth_frame(&portal, &tls, [9; 16]);
+    let auth = tls_auth_frame(&portal, &tls, [23; 16]);
     tls.write_all(&auth).await.unwrap();
+    sleep(Duration::from_millis(150)).await;
 
-    timeout(Duration::from_secs(1), server_task)
+    let mut request = duplex_setup(23, FlowKind::Tcp, "127.0.0.1:9");
+    request.extend_from_slice(b"ping");
+    tls.write_all(&request).await.unwrap();
+
+    let mut response = [0u8; 1];
+    let read = timeout(Duration::from_secs(3), tls.read(&mut response))
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(portal.inner.pool_active.load(Ordering::Relaxed), 0);
-    let mut byte = [0u8; 1];
-    match timeout(Duration::from_secs(1), tls.read(&mut byte))
-        .await
-        .unwrap()
-    {
+    match read {
         Ok(0) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => {}
-        result => panic!("expected closed excess pool connection, got {result:?}"),
+        Err(err) if err.kind() == ErrorKind::UnexpectedEof => {}
+        other => panic!("expected mux portal to close the dedicated lane, got {other:?}"),
     }
+
     shutdown.cancel();
+    let _ = tls.shutdown().await;
+    server_task.await.unwrap();
 }
 
 #[tokio::test]
-async fn tls_tcp_active_bootstrap_bypasses_full_idle_pool() {
+async fn tls_tcp_coalesced_auth_and_flow_bootstrap_relays() {
     let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target = echo_listener.local_addr().unwrap();
     let echo_task = tokio::spawn(async move {
@@ -416,7 +405,6 @@ async fn tls_tcp_active_bootstrap_bypasses_full_idle_pool() {
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
-    portal.inner.tcp_idle_pool_budget.close();
     let portal_inner = portal.inner.clone();
     let shutdown = CancellationToken::new();
     let child_shutdown = shutdown.clone();
@@ -442,8 +430,6 @@ async fn tls_tcp_active_bootstrap_bypasses_full_idle_pool() {
         .unwrap()
         .unwrap();
     assert_eq!(&response, b"pong");
-    assert_eq!(portal.inner.pool_active.load(Ordering::Relaxed), 0);
-
     let _ = tls.shutdown().await;
     shutdown.cancel();
     echo_task.await.unwrap();
