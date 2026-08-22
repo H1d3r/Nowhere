@@ -19,17 +19,18 @@ fn help_text_documents_usage_and_configuration_surface() {
         "net=mix|tcp|udp",
         "socks=<listener>",
         "next=<portal>",
-        "pool=<number>",
         "sni=<name|none>",
         "pin=<sha256|none>",
+        "alpn=<value>",
+        "mux=0|1",
         "UDP ASSOCIATE",
         "rate=<mbps>",
         "etar=<mbps>",
         "UDP-over-TCP (UoT)",
-        "NOW_QUIC_MAX_STREAMS",
-        "NOW_QUIC_MAX_UDP_FLOWS",
+        "NOW_MAX_TCP_FLOWS",
+        "NOW_MAX_UDP_FLOWS",
         "NOW_QUIC_UDP_QUEUE_BYTES",
-        "NOW_TCP_IDLE_POOL_CONNS",
+        "NOW_QUIC_MEMORY_PROFILE",
         "NOW_MAX_PENDING_PAIRS",
         "NOW_FLOW_PAIR_TIMEOUT",
         "NOW_FLOW_SETUP_TIMEOUT",
@@ -43,6 +44,12 @@ fn help_text_documents_usage_and_configuration_surface() {
         assert!(
             HELP_TEXT.contains(expected),
             "missing help text: {expected}"
+        );
+    }
+    for removed in ["pool=<number>", "NOW_QUIC_MAX_UDP_FLOWS"] {
+        assert!(
+            !HELP_TEXT.contains(removed),
+            "removed help option: {removed}"
         );
     }
 }

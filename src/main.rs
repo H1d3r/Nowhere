@@ -40,10 +40,10 @@ Examples:
   nowhere 'portal://secret@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
   nowhere 'portal://secret@:2077?socks=user:pass@127.0.0.1:1080'
   nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077'
-  nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077&up=tcp&down=tcp&pool=5'
+  nowhere 'portal://relay-key@:2077?next=upstream-key@origin.example:2077&up=tcp&down=tcp'
   nowhere 'portal://secret@:2077?rate=100&etar=200'
   nowhere 'vector://secret@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
-  nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&pool=5&socks=:1080'
+  nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&socks=:1080'
 
 Required URL parts:
   shared-key       Non-empty URL username. Percent-encode reserved characters.
@@ -62,7 +62,9 @@ Portal parameters:
                    tls=0 is not supported.
   crt=<path>       PEM certificate chain for tls=2.
   key=<path>       PEM private key for tls=2.
-  alpn=<value>     TLS/QUIC ALPN. Default: now/1.
+  alpn=<value>     Exact TLS/QUIC ALPN. Default: now/1.
+  mux=0|1          0 accepts dedicated TLS lanes; 1 accepts Mux TLS only.
+                   Default: 0.
   rate=<mbps>      Client-to-target traffic limit. 0 disables it.
   etar=<mbps>      Target-to-client traffic limit. 0 disables it.
   dial=<ip|auto>   Local source IP for outbound target connections. Default: auto.
@@ -72,22 +74,20 @@ Portal parameters:
                    none to disable. Mutually exclusive with socks.
   up=tcp|udp       Native upstream upload carrier. Default: udp.
   down=tcp|udp     Native upstream download carrier. Default: udp.
-  pool=<number>    Native upstream TLS pool for tcp/tcp. Default: 5.
   sni=<name|none>  Native upstream certificate DNS name. Default: none.
   pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
-                   These five options are ignored unless next is enabled.
+                   These four options are ignored unless next is enabled.
   log=<level>      none, debug, info, warn, error, event. Default: info.
 
 Vector parameters:
   up=tcp|udp       Upload carrier. Default: udp.
   down=tcp|udp     Download carrier. Default: udp.
-  pool=<number>    TLS warm pool for tcp/tcp; default 5, clamped to 256.
-                   Ignored for other carrier pairs, which report pool=0.
+  alpn=<value>     Exact TLS/QUIC ALPN. Default: now/1.
+  mux=0|1          Use TLS Mux for TLS/TCP carriers. Default: 0.
   sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
                    none disables certificate validation. Default: none.
   pin=<sha256|none> Pin the server certificate SHA-256 fingerprint. Empty,
                     omitted, or none disables pinning. Default: none.
-  alpn=<value>     TLS/QUIC ALPN. Default: now/1.
   rate=<mbps>      SOCKS client-to-target limit. 0 disables it.
   etar=<mbps>      Target-to-SOCKS client limit. 0 disables it.
   socks=<listener> Required SOCKS5 listener: [user:pass@]host:port.
@@ -113,10 +113,10 @@ SOCKS5 inbound:
   SOCKS5 UDP fragmentation is not supported.
 
 Environment:
-  NOW_QUIC_MAX_STREAMS      Maximum authenticated QUIC streams.
-  NOW_QUIC_MAX_UDP_FLOWS    Maximum UDP flows per authenticated logical session.
+  NOW_MAX_TCP_FLOWS         TCP flows per authenticated client session.
+  NOW_MAX_UDP_FLOWS         UDP flows per authenticated client session.
   NOW_QUIC_UDP_QUEUE_BYTES  Maximum queued/reassembling UDP bytes per QUIC connection.
-  NOW_TCP_IDLE_POOL_CONNS   Maximum authenticated idle TLS/TCP connections.
+  NOW_QUIC_MEMORY_PROFILE   memory, balanced, or throughput. Default: balanced.
   NOW_MAX_PENDING_PAIRS     Maximum pending logical-flow IDs per session.
   NOW_FLOW_PAIR_TIMEOUT     Timeout for completing a split logical flow.
   NOW_FLOW_SETUP_TIMEOUT    Timeout for waiting for a logical flow to become ready.
@@ -127,11 +127,12 @@ Environment:
   NOW_TCP_READ_TIMEOUT      TCP half-close grace timeout.
   NOW_UDP_IDLE_TIMEOUT      QUIC and DATAGRAM/UoT flow idle timeout.
   NOW_HANDSHAKE_TIMEOUT     Per-phase TLS, authentication, and request deadline.
-  NOW_REPORT_INTERVAL       Local CHECK_POINT and LINK_STATUS report interval.
+  NOW_REPORT_INTERVAL       Local CHECK_POINT report interval.
   NOW_TELEMETRY_INTERVAL    Local TUI telemetry interval (250ms..60s; default 1s).
   NOW_SERVICE_COOLDOWN      Transport reconnect retry delay.
   NOW_SHUTDOWN_TIMEOUT      Graceful shutdown wait.
-  NOW_RELOAD_INTERVAL       Minimum PEM certificate reload interval.";
+  NOW_RELOAD_INTERVAL       Minimum PEM certificate reload interval.
+";
 
 #[tokio::main]
 async fn main() {
