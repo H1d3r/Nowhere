@@ -51,7 +51,7 @@ async fn pending_target_setup_does_not_block_control_shutdown() {
     });
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@{portal_addr}?up=tcp&down=tcp&pool=0&socks=127.0.0.1:1080"
+            "vector://secret@{portal_addr}?up=tcp&down=tcp&socks=127.0.0.1:1080"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),

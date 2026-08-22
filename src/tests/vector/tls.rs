@@ -15,6 +15,37 @@ fn config(raw: &str) -> PortalClientConfig {
     vector_config(raw).portal_client_config()
 }
 
+#[tokio::test]
+async fn client_negotiates_the_configured_alpn() {
+    let generated = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+    let certificate: CertificateDer<'static> = generated.cert.into();
+    let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
+        generated.signing_key.serialize_der(),
+    ));
+    let mut server =
+        rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .unwrap();
+    server.alpn_protocols = vec![b"private/2".to_vec()];
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        TlsAcceptor::from(Arc::new(server)).accept(stream).await
+    });
+    let raw = format!("vector://secret@{endpoint}?alpn=private/2&socks=127.0.0.1:1080");
+
+    let (_, _) = ClientTls::new(&config(&raw))
+        .unwrap()
+        .connect_tcp(&endpoint.to_string(), "auto")
+        .await
+        .unwrap();
+    server_task.await.unwrap().unwrap();
+}
+
 #[test]
 fn missing_sni_uses_unverified_policy() {
     let tls = ClientTls::new(&config(
@@ -59,12 +90,14 @@ async fn test_pinned_handshake(pin: TestPin, sni: Option<&str>) -> Result<()> {
     let key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(
         generated.signing_key.serialize_der(),
     ));
-    let server = rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(vec![certificate], key)
-        .unwrap();
+    let mut server =
+        rustls::ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate], key)
+            .unwrap();
+    server.alpn_protocols = vec![b"now/1".to_vec()];
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
     let server_task = tokio::spawn(async move {
