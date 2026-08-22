@@ -7,6 +7,7 @@
 compile_error!("Nowhere supports Linux only");
 
 pub mod common;
+pub(crate) mod mux;
 pub mod portal;
 pub mod protocol;
 pub(crate) mod telemetry;
