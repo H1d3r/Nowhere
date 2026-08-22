@@ -7,11 +7,13 @@
 //! Portal and Vector continue to emit their existing stdout/stderr records;
 //! the telemetry hub broadcasts structured state over local IPC.
 
+mod checkpoint;
 mod hub;
 mod ipc;
 mod process;
 mod wire;
 
+pub(crate) use checkpoint::Checkpoint;
 pub(crate) use hub::{AccessSpan, TelemetryHub};
 pub(crate) use ipc::{DiscoveredInstance, TelemetryClient, TelemetryServer, discover_instances};
 pub(crate) use process::now_unix_ms;
