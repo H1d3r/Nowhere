@@ -14,6 +14,11 @@ use crate::tui::model::{App, HistoryPoint};
 
 use super::{accent, dim, palette, panel, render_empty};
 
+mod data;
+
+use self::data::graph_value;
+pub(super) use self::data::{scaled_data, spark_data};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum GraphStyle {
     Filled,
@@ -265,54 +270,6 @@ pub(super) fn traffic_cells(area: Rect, wide: bool) -> Vec<Rect> {
             })
             .collect()
     }
-}
-
-fn graph_value(value: f64) -> u64 {
-    if !value.is_finite() || value <= 0.0 {
-        0
-    } else {
-        value.min(u64::MAX as f64) as u64
-    }
-}
-
-pub(super) fn scaled_data(
-    history: &VecDeque<HistoryPoint>,
-    width: u16,
-    value: fn(&HistoryPoint) -> f64,
-) -> Vec<u64> {
-    downsample(history, width, |point| graph_value(value(point) * 10.0))
-}
-
-pub(super) fn spark_data(
-    history: &VecDeque<HistoryPoint>,
-    width: u16,
-    value: fn(&HistoryPoint) -> u64,
-) -> Vec<u64> {
-    downsample(history, width, value)
-}
-
-fn downsample(
-    history: &VecDeque<HistoryPoint>,
-    width: u16,
-    value: impl Fn(&HistoryPoint) -> u64,
-) -> Vec<u64> {
-    let bins = usize::from(width).min(history.len());
-    if bins == 0 {
-        return Vec::new();
-    }
-    (0..bins)
-        .map(|bin| {
-            let start = bin * history.len() / bins;
-            let end = ((bin + 1) * history.len() / bins).max(start + 1);
-            history
-                .iter()
-                .skip(start)
-                .take(end.saturating_sub(start))
-                .map(&value)
-                .max()
-                .unwrap_or_default()
-        })
-        .collect()
 }
 
 pub(super) fn render_sparkline(

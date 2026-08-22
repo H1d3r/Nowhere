@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Read-only Linux terminal dashboard for running Nowhere processes.
+//! Read-only terminal dashboard for running Nowhere processes.
 
 mod app;
 mod client;

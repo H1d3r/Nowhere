@@ -15,11 +15,6 @@ mod palette;
 
 use self::feed::render_specific_feed;
 use self::graphs::render_traffic;
-#[cfg(test)]
-use self::graphs::{
-    CONNECTION_GRAPH_STYLE, GraphStyle, PROCESS_GRAPH_STYLE, TRAFFIC_COLORS, TRAFFIC_GRAPH_STYLE,
-    rate_series, traffic_cells,
-};
 use self::metrics::{render_cards, render_overview_page};
 use super::format;
 use super::model::{App, FeedKind, Focus, InstanceView, Lifecycle, Page};

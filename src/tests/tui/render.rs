@@ -3,6 +3,10 @@ use std::collections::VecDeque;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
+use super::graphs::{
+    CONNECTION_GRAPH_STYLE, GraphStyle, PROCESS_GRAPH_STYLE, TRAFFIC_COLORS, TRAFFIC_GRAPH_STYLE,
+    rate_series, traffic_cells,
+};
 use super::*;
 use crate::tui::model::{
     AccessPhase, AccessRecord, AccessStatus, EventLevel, HistoryPoint, InstanceMeta, InstanceRole,
@@ -21,6 +25,7 @@ fn app_with_instance() -> App {
             endpoint: "0.0.0.0:2077".to_owned(),
             config_summary: "net=mix tls=1".to_owned(),
             telemetry_interval_ms: 1_000,
+            telemetry_protocol_version: 2,
         },
         lifecycle: Lifecycle::Ready,
         snapshot: Some(TelemetrySnapshot {
@@ -36,18 +41,14 @@ fn app_with_instance() -> App {
         snapshot: TelemetrySnapshot {
             timestamp_ms: 2_000,
             uptime_ms: 62_000,
-            tcp_rx: 1_000_000,
-            tcp_tx: 2_000_000,
+            tcp_logical_up: 1_000_000,
+            tcp_logical_down: 2_000_000,
             tcp_active: 4,
             udp_active: 2,
-            link_tcp: 3,
-            link_udp: 1,
-            link_pairs: 1,
-            pool_active: 4,
-            ping_ms: 17,
+            tls_carriers_active: 3,
+            quic_carriers_active: 1,
             cpu_percent: Some(2.5),
             rss_bytes: Some(42 << 20),
-            open_fds: Some(33),
             ..TelemetrySnapshot::default()
         },
     });
@@ -256,11 +257,9 @@ fn access_shows_only_source_and_target() {
 #[test]
 fn selected_config_wraps_without_internal_history_counters() {
     let mut app = app_with_instance();
-    app.instances[0].meta.config_summary =
-        "mode=reverse transport=quic tls=enabled pool=16".to_owned();
+    app.instances[0].meta.config_summary = "mode=reverse transport=quic tls=enabled".to_owned();
     let output = rendered(120, 32, &app);
     assert!(output.contains("mode=reverse"));
-    assert!(output.contains("pool=16"));
     assert!(!output.contains("HIST"));
     assert!(!output.contains("FEED A/R"));
     assert!(!output.contains("GAP/OVR"));
@@ -280,6 +279,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
             endpoint: "[::1]:1082".to_owned(),
             config_summary: "portal=relay.example:2077".to_owned(),
             telemetry_interval_ms: 1_000,
+            telemetry_protocol_version: 2,
         },
         lifecycle: Lifecycle::Starting,
         snapshot: None,
@@ -294,7 +294,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
 fn selected_uses_available_height_for_complete_config() {
     let mut app = app_with_instance();
     app.instances[0].meta.config_summary =
-        "net=mix tls=1 alpn=now/1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp pool=0 sni=origin.example pin=present"
+        "net=mix tls=1 alpn=now/1 mux=0 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp sni=origin.example pin=present"
             .to_owned();
 
     let output = rendered(160, 40, &app);
@@ -325,24 +325,20 @@ fn selected_uid_and_sample_interval_share_one_column() {
 }
 
 #[test]
-fn carrier_process_metrics_use_three_balanced_graph_rows() {
+fn carrier_process_metrics_use_two_balanced_graph_rows() {
     let output = rendered(120, 32, &app_with_instance());
     let carrier_row = output
         .lines()
         .find(|line| line.contains(" TLS") && line.contains(" QUIC"))
         .expect("TLS and QUIC row");
     assert!(carrier_row.find(" TLS") < carrier_row.find(" QUIC"));
-    let process_row = output
-        .lines()
-        .find(|line| line.contains(" PING") && line.contains(" POOL"))
-        .expect("PING and POOL row");
-    assert!(process_row.find(" PING") < process_row.find(" POOL"));
-    assert!(process_row.contains("17ms"));
     let resource_row = output
         .lines()
         .find(|line| line.contains(" CPU") && line.contains(" RSS"))
         .expect("CPU and RSS row");
     assert!(resource_row.find(" CPU") < resource_row.find(" RSS"));
+    assert!(!output.contains(" TLS B"));
+    assert!(!output.contains(" QUIC B"));
     assert!(!output.contains(" FD"));
     assert!(!output.contains(" SEQ"));
 }
@@ -358,16 +354,11 @@ fn carrier_and_process_second_columns_share_one_alignment() {
         .lines()
         .find(|line| line.contains(" TLS") && line.contains(" QUIC"))
         .expect("TLS/QUIC row");
-    let pool_row = output
-        .lines()
-        .find(|line| line.contains(" PING") && line.contains(" POOL"))
-        .expect("PING/POOL row");
     let rss_row = output
         .lines()
         .find(|line| line.contains(" CPU") && line.contains(" RSS"))
         .expect("CPU/RSS row");
-    assert_eq!(column(quic_row, " QUIC"), column(pool_row, " POOL"));
-    assert_eq!(column(pool_row, " POOL"), column(rss_row, " RSS"));
+    assert_eq!(column(quic_row, " QUIC"), column(rss_row, " RSS"));
 }
 
 #[test]
@@ -490,68 +481,5 @@ fn runtime_error_message_stays_on_the_event_row() {
     );
 }
 
-#[test]
-fn benign_access_completion_is_a_quiet_end() {
-    let mut app = app_with_instance();
-    show_logs(&mut app);
-    app.apply(UiEvent::Access {
-        id: "test".to_owned(),
-        record: AccessRecord {
-            timestamp_ms: 1,
-            event_id: 8,
-            phase: AccessPhase::Finish,
-            protocol: "TCP".to_owned(),
-            client: Some("10.20.30.40:1234".to_owned()),
-            target: Some("example:443".to_owned()),
-            status: Some(AccessStatus::Ended),
-            message: None,
-            ..AccessRecord::default()
-        },
-    });
-
-    let output = rendered(120, 32, &app);
-    assert!(output.contains("END"));
-    assert!(!output.contains("error 256"));
-}
-
-#[test]
-fn downsampling_keeps_peaks_and_width_bound() {
-    let history = (0..100)
-        .map(|index| HistoryPoint {
-            timestamp_ms: index,
-            upload_bps: if index == 55 { 1_000.0 } else { index as f64 },
-            download_bps: index as f64,
-            ..HistoryPoint::default()
-        })
-        .collect::<VecDeque<_>>();
-    let series = rate_series(&history, 10, |point| point.upload_bps);
-    assert_eq!(series.len(), 10);
-    assert!(series.contains(&1_000));
-}
-
-#[test]
-fn all_six_traffic_series_have_distinct_colors() {
-    for (index, color) in TRAFFIC_COLORS.iter().enumerate() {
-        assert!(
-            TRAFFIC_COLORS[index + 1..]
-                .iter()
-                .all(|candidate| candidate != color)
-        );
-    }
-}
-
-#[test]
-fn graph_styles_match_each_metrics_visual_role() {
-    assert_eq!(TRAFFIC_GRAPH_STYLE, GraphStyle::Filled);
-    assert_eq!(CONNECTION_GRAPH_STYLE, GraphStyle::Hollow);
-    assert_eq!(PROCESS_GRAPH_STYLE, GraphStyle::Hollow);
-}
-
-#[test]
-fn traffic_grid_has_a_cell_between_every_chart_column() {
-    let cells = traffic_cells(Rect::new(0, 0, 90, 12), true);
-    assert_eq!(cells[1].x, cells[0].right() + 1);
-    assert_eq!(cells[2].x, cells[1].right() + 1);
-    assert_eq!(cells[4].x, cells[3].right() + 1);
-    assert_eq!(cells[5].x, cells[4].right() + 1);
-}
+#[path = "render/completion_and_graphs.rs"]
+mod completion_and_graphs;
