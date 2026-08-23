@@ -29,3 +29,18 @@ fn valid_sub_millisecond_samples_round_up_away_from_zero() {
     sample.update(Duration::from_micros(1_001));
     assert_eq!(tracker.current_ms(), 2);
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn tcp_info_accepts_a_kernel_prefix_containing_rtt() {
+    // SAFETY: tcp_info contains only integer fields, so zero is valid.
+    let mut info = unsafe { MaybeUninit::<libc::tcp_info>::zeroed().assume_init() };
+    info.tcpi_rtt = 750;
+    let rtt_end = std::mem::offset_of!(libc::tcp_info, tcpi_rtt) + size_of::<u32>();
+
+    assert_eq!(
+        tcp_info_rtt(&info, rtt_end),
+        Some(Duration::from_micros(750))
+    );
+    assert_eq!(tcp_info_rtt(&info, rtt_end - 1), None);
+}

@@ -129,7 +129,10 @@ impl Drop for LatencyGuard {
 
 #[cfg(target_os = "linux")]
 fn tcp_rtt<T: AsRawFd>(stream: &T) -> Option<Duration> {
-    let mut info = MaybeUninit::<libc::tcp_info>::zeroed();
+    // SAFETY: tcp_info contains only integer fields, so its all-zero bit
+    // pattern is valid. Pre-initializing the full structure also makes it safe
+    // to accept the shorter prefixes returned by older Linux kernels.
+    let mut info = unsafe { MaybeUninit::<libc::tcp_info>::zeroed().assume_init() };
     let mut length = size_of::<libc::tcp_info>() as libc::socklen_t;
     // SAFETY: TCP_INFO writes at most `length` bytes to a correctly sized,
     // aligned tcp_info buffer. The descriptor remains owned by the caller.
@@ -138,16 +141,20 @@ fn tcp_rtt<T: AsRawFd>(stream: &T) -> Option<Duration> {
             stream.as_raw_fd(),
             libc::IPPROTO_TCP,
             libc::TCP_INFO,
-            info.as_mut_ptr().cast(),
+            (&raw mut info).cast(),
             &mut length,
         )
     };
-    if result != 0 || length < size_of::<libc::tcp_info>() as libc::socklen_t {
+    if result != 0 {
         return None;
     }
-    // SAFETY: getsockopt succeeded and initialized the full structure.
-    let micros = unsafe { info.assume_init() }.tcpi_rtt;
-    Some(Duration::from_micros(u64::from(micros)))
+    tcp_info_rtt(&info, length as usize)
+}
+
+#[cfg(target_os = "linux")]
+fn tcp_info_rtt(info: &libc::tcp_info, length: usize) -> Option<Duration> {
+    let rtt_end = std::mem::offset_of!(libc::tcp_info, tcpi_rtt) + size_of::<u32>();
+    (length >= rtt_end).then_some(Duration::from_micros(u64::from(info.tcpi_rtt)))
 }
 
 #[cfg(test)]
