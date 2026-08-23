@@ -22,6 +22,54 @@ cargo build --release --locked
 cargo test --all-targets --locked
 ```
 
+## Container image
+
+GHCR publishes `ghcr.io/nodepassproject/nowhere` for exactly two platforms:
+`linux/amd64` and `linux/arm64`. Each repository version tag publishes the
+matching container tag and refreshes `latest`.
+
+The runtime image uses `scratch`. It contains the statically linked executable,
+a CA bundle for `sni` certificate verification, and no shell, package manager,
+or dynamic libraries.
+
+Start a Portal with its generated certificate:
+
+```text
+docker run -d --rm --name nowhere-portal \
+  -p 2077:2077/tcp \
+  -p 2077:2077/udp \
+  ghcr.io/nodepassproject/nowhere:latest \
+  'portal://change-me@:2077'
+```
+
+For `tls=2`, mount the CA-issued PEM certificate chain and private key:
+
+```text
+docker run -d --rm --name nowhere-portal \
+  -p 2077:2077/tcp \
+  -p 2077:2077/udp \
+  -v /path/fullchain.pem:/cert.pem:ro \
+  -v /path/private-key.pem:/key.pem:ro \
+  ghcr.io/nodepassproject/nowhere:latest \
+  'portal://change-me@:2077?tls=2&crt=/cert.pem&key=/key.pem'
+```
+
+`crt` is the full certificate chain and `key` is its private key. A Vector
+enables verification with `sni=relay.example`; the image CA bundle trusts
+public CAs. For a private CA, mount its root certificate and set
+`SSL_CERT_FILE` to the mounted path.
+
+The TUI runs inside the same container as the relay:
+
+```text
+docker exec -it nowhere-portal /nowhere tui
+```
+
+The relay and TUI must use the same UID. The image does not force a user. With
+`--user`, the mounted key must be readable by that UID and `/tmp` must be
+writable, for example through `--tmpfs /tmp`. Read-only containers need the
+same tmpfs for TUI discovery.
+
 ## Command lines
 
 Bourne-compatible shells and PowerShell accept the documented single-quoted
