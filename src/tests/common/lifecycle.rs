@@ -58,7 +58,7 @@ fn lifecycle_records_only_the_current_state() {
     assert_eq!(lifecycle.state(), Some(LifeState::Starting));
 
     lifecycle.transition(&logger, LifeState::Ready, LifeReason::Listening);
-    lifecycle.transition(&logger, LifeState::Draining, LifeReason::SigTerm);
+    lifecycle.transition(&logger, LifeState::Draining, LifeReason::SigInt);
     lifecycle.transition(&logger, LifeState::Stopped, LifeReason::Drained);
     assert_eq!(lifecycle.state(), Some(LifeState::Stopped));
 }
