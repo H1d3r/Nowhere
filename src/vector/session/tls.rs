@@ -141,7 +141,7 @@ impl TlsManager {
         loop {
             tokio::select! {
                 _ = handle.closed() => break,
-                idle = handle.idle_for(TLS_MUX_IDLE_TIMEOUT) => {
+                idle = handle.idle_for(MUX_IDLE_TIMEOUT) => {
                     if !idle {
                         break;
                     }

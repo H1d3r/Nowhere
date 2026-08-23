@@ -20,7 +20,7 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::MUX_MARKER;
-use crate::mux::{MuxConfig, MuxHandle};
+use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle};
 use crate::portal::PortalInner;
 use crate::portal::admission::UnauthenticatedGuard;
 use crate::protocol::{AuthTransport, SessionId, read_auth_frame};
@@ -61,6 +61,27 @@ pub(super) async fn handle_tcp_incoming_with_bootstrap_timeout(
     admission: UnauthenticatedGuard,
     shutdown: CancellationToken,
     bootstrap_timeout: Duration,
+) {
+    handle_tcp_incoming_with_timeouts(
+        portal,
+        stream,
+        peer,
+        admission,
+        shutdown,
+        bootstrap_timeout,
+        MUX_IDLE_TIMEOUT,
+    )
+    .await;
+}
+
+pub(super) async fn handle_tcp_incoming_with_timeouts(
+    portal: Arc<PortalInner>,
+    stream: TcpStream,
+    peer: SocketAddr,
+    admission: UnauthenticatedGuard,
+    shutdown: CancellationToken,
+    bootstrap_timeout: Duration,
+    mux_idle_timeout: Duration,
 ) {
     if let Err(err) = stream.set_nodelay(true) {
         portal
@@ -168,7 +189,7 @@ pub(super) async fn handle_tcp_incoming_with_bootstrap_timeout(
             peer,
             local,
             shutdown,
-            flow_timeout,
+            mux_idle_timeout,
         )
         .await;
         return;
@@ -200,8 +221,9 @@ async fn handle_mux(
     peer: SocketAddr,
     local: Option<SocketAddr>,
     shutdown: CancellationToken,
-    flow_timeout: Duration,
+    idle_timeout: Duration,
 ) {
+    let flow_timeout = portal.runtime.handshake_timeout;
     let (mux, mut incoming) = match MuxHandle::start(tls_stream, MuxConfig::default()) {
         Ok(value) => value,
         Err(err) => {
@@ -229,6 +251,12 @@ async fn handle_mux(
             _ = portal.drain.cancelled() => break,
             accepted = incoming.accept() => accepted,
             _ = flow_tasks.join_next(), if !flow_tasks.is_empty() => continue,
+            idle = mux.idle_for(idle_timeout) => {
+                if idle && mux.active_streams() != 0 {
+                    continue;
+                }
+                break;
+            },
         };
         let Ok(Some(stream)) = accepted else { break };
         let expected_flow_id = stream.flow_id();

@@ -25,7 +25,7 @@ use crate::common::{
     handshake_timeout, parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown,
     udp_idle_timeout,
 };
-use crate::mux::{MuxConfig, MuxHandle, MuxStream};
+use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle, MuxStream};
 use crate::protocol::{
     AuthFrame, AuthKey, AuthTransport, Credentials, DatagramReassembler, FlowId, OwnedUdpFragment,
     OwnedUdpFrame, ReassemblyConfig, ReassemblyOutcome, SessionId, decode_udp_frame_owned,
@@ -39,7 +39,6 @@ use super::tls::{ClientTls, EXPORTER_LABEL};
 
 const QUIC_DATAGRAM_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 const TLS_MUX_FLOWS_PER_SHARD: usize = 12;
-const TLS_MUX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub(super) struct ClientSignals {

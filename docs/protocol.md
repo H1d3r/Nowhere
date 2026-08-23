@@ -208,8 +208,9 @@ both stream and connection credit before it enters the outbound queue.
 
 Client-side Shards open lazily. A new flow uses the least-loaded live Shard; a
 new Shard opens when all live Shards have 12 active flows. A fully idle Shard
-closes after 30 seconds. Sharding is runtime placement and does not add wire
-fields.
+closes after 30 seconds. Portal applies the same timeout to an authenticated
+Mux carrier with no active streams. Sharding is runtime placement and does not
+add wire fields.
 
 ## 4. FlowHeader
 

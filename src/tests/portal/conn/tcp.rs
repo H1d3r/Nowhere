@@ -12,10 +12,11 @@ use tokio::time::{sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-use crate::common::{LogLevel, Logger};
+use crate::common::{LogLevel, Logger, MUX_MARKER};
 use crate::portal::Portal;
 use crate::portal::conn::tcp::{
     AUTHENTICATED_LANE_BOOTSTRAP_TIMEOUT, handle_tcp_incoming_with_bootstrap_timeout,
+    handle_tcp_incoming_with_timeouts,
 };
 use crate::protocol::{
     Carrier, FlowHeader, FlowKind, FlowResult, FlowRole, encode_udp_packet, read_flow_result,
@@ -338,6 +339,56 @@ async fn tls_tcp_flow_header_timeout_closes_unused_connection() {
         .unwrap();
     shutdown.cancel();
     let _ = tls.shutdown().await;
+}
+
+#[tokio::test]
+async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen_addr = listener.local_addr().unwrap();
+    let portal = Portal::new(
+        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let portal_inner = portal.inner.clone();
+    let shutdown = CancellationToken::new();
+    let child_shutdown = shutdown.clone();
+    let server_task = tokio::spawn(async move {
+        let (stream, peer) = listener.accept().await.unwrap();
+        let admission = portal_inner
+            .unauthenticated_admission
+            .try_acquire(peer.ip())
+            .unwrap();
+        handle_tcp_incoming_with_timeouts(
+            portal_inner,
+            stream,
+            peer,
+            admission,
+            child_shutdown,
+            Duration::from_secs(1),
+            Duration::from_millis(100),
+        )
+        .await;
+    });
+
+    let mut tls = connect_test_tls(listen_addr).await;
+    let mut bootstrap = tls_auth_frame(&portal, &tls, [23; 16]).to_vec();
+    bootstrap.push(MUX_MARKER);
+    tls.write_all(&bootstrap).await.unwrap();
+    tls.flush().await.unwrap();
+
+    timeout(Duration::from_secs(1), server_task)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut byte = [0_u8; 1];
+    let read = tls.read(&mut byte).await;
+    assert!(
+        matches!(read, Ok(0))
+            || matches!(read, Err(ref error) if error.kind() == std::io::ErrorKind::UnexpectedEof)
+    );
+    assert_eq!(portal.inner.stats.link_tcp.load(Ordering::Relaxed), 0);
+    shutdown.cancel();
 }
 
 #[tokio::test]

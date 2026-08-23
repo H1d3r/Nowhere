@@ -26,8 +26,10 @@ Default limits are 512 KiB per stream and per Mux connection and 256 active
 streams per Mux. With client `mux=1`, Vector or Portal `next` places at most 12
 active flows on a shard before opening another, distributes new flows to the
 least-loaded shard, and closes a fully idle shard after 30 seconds. One
-authenticated client session admits at most 1,024 concurrent logical TCP flows and 256 logical UDP flows
-across all of its carriers. UoT and QUIC DATAGRAM flows share the UDP limit.
+authenticated inbound Mux carrier is subject to the same fully idle timeout.
+One authenticated client session admits at most 1,024 concurrent logical TCP
+flows and 256 logical UDP flows across all of its carriers. UoT and QUIC
+DATAGRAM flows share the UDP limit.
 Local fair credit prevents one stream from monopolizing a shared window. The
 finite frame queue has 512 slots, but payload admission is still capped by the
 512 KiB byte window; empty SYN/FIN/WINDOW frames cannot turn those slots into

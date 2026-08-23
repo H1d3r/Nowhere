@@ -4,6 +4,8 @@
 //! End-to-end Portal/Vector carrier matrix through Vector's SOCKS5 ingress.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,6 +17,7 @@ use url::Url;
 
 use crate::common::{LogLevel, Logger};
 use crate::portal::Portal;
+use crate::transport::Stats;
 use crate::vector::Vector;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -30,6 +33,7 @@ struct TestRuntime {
     endpoint: quinn::Endpoint,
     portal_tasks: Vec<JoinHandle<()>>,
     vector_task: JoinHandle<anyhow::Result<()>>,
+    portal_stats: Arc<Stats>,
     socks: SocketAddr,
 }
 
@@ -71,12 +75,12 @@ impl TestRuntime {
 }
 
 async fn free_tcp_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = tcp.local_addr().unwrap().port();
+    let udp = UdpSocket::bind(("127.0.0.1", port)).await.unwrap();
+    drop(udp);
+    drop(tcp);
+    port
 }
 
 async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
@@ -92,6 +96,7 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
     .unwrap();
     let endpoint = portal.listen_endpoints().unwrap().pop().unwrap();
     let listener = portal.listen_tcp_listeners().unwrap().pop().unwrap();
+    let portal_stats = portal.inner.stats.clone();
     let shutdown = CancellationToken::new();
     let quic_task = tokio::spawn(crate::portal::listener::accept_endpoint_loop(
         portal.inner.clone(),
@@ -121,6 +126,7 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
         endpoint,
         portal_tasks: vec![quic_task, tcp_task],
         vector_task,
+        portal_stats,
         socks,
     }
 }
@@ -233,6 +239,51 @@ async fn mux_full_duplex_tcp_exceeds_each_direction_credit_window() {
         target_task.await.unwrap();
         runtime.stop().await;
     }
+}
+
+#[tokio::test]
+async fn mux_thirteenth_active_tcp_flow_opens_a_second_shard() {
+    const FLOW_COUNT: usize = 13;
+
+    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_address = target.local_addr().unwrap();
+    let target_shutdown = CancellationToken::new();
+    let target_child_shutdown = target_shutdown.clone();
+    let target_task = tokio::spawn(async move {
+        let mut connections = Vec::with_capacity(FLOW_COUNT);
+        for _ in 0..FLOW_COUNT {
+            connections.push(target.accept().await.unwrap().0);
+        }
+        target_child_shutdown.cancelled().await;
+        drop(connections);
+    });
+    let runtime = start_runtime("tcp", "tcp", 1).await;
+
+    let flows = timeout(TEST_TIMEOUT, async {
+        let mut flows = Vec::with_capacity(FLOW_COUNT);
+        for _ in 0..FLOW_COUNT {
+            let mut flow = TcpStream::connect(runtime.socks).await.unwrap();
+            negotiate_socks(&mut flow).await;
+            flow.write_all(&ip_request(1, target_address))
+                .await
+                .unwrap();
+            read_ipv4_reply(&mut flow).await;
+            flows.push(flow);
+        }
+        while runtime.portal_stats.link_tcp.load(Ordering::Relaxed) != 2 {
+            tokio::task::yield_now().await;
+        }
+        flows
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(runtime.portal_stats.link_tcp.load(Ordering::Relaxed), 2);
+    assert_eq!(runtime.portal_stats.tcp_active.load(Ordering::Relaxed), 13);
+    drop(flows);
+    target_shutdown.cancel();
+    target_task.await.unwrap();
+    runtime.stop().await;
 }
 
 async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {

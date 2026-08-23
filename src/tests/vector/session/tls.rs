@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use super::*;
+use tokio::io::AsyncReadExt;
 
 #[tokio::test]
 async fn shard_selection_stops_at_twelve_active_flows() {
@@ -29,4 +30,47 @@ async fn shard_selection_stops_at_twelve_active_flows() {
     );
     peers.push(incoming.accept().await.unwrap().unwrap());
     assert!(select_available_mux(std::slice::from_ref(&handle)).is_none());
+}
+
+#[tokio::test]
+async fn shard_selection_uses_the_least_loaded_carrier() {
+    let (left_a, right_a) = tokio::io::duplex(1 << 20);
+    let (handle_a, _) = MuxHandle::start(left_a, MuxConfig::default()).unwrap();
+    let (_peer_a, mut incoming_a) = MuxHandle::start(right_a, MuxConfig::default()).unwrap();
+    let (left_b, right_b) = tokio::io::duplex(1 << 20);
+    let (handle_b, _) = MuxHandle::start(left_b, MuxConfig::default()).unwrap();
+    let (_peer_b, mut incoming_b) = MuxHandle::start(right_b, MuxConfig::default()).unwrap();
+
+    let _stream_a1 = handle_a.open_stream(1).await.unwrap();
+    let _peer_a1 = incoming_a.accept().await.unwrap().unwrap();
+    let _stream_a2 = handle_a.open_stream(2).await.unwrap();
+    let _peer_a2 = incoming_a.accept().await.unwrap().unwrap();
+    let _stream_b = handle_b.open_stream(3).await.unwrap();
+    let _peer_b = incoming_b.accept().await.unwrap().unwrap();
+
+    let selected = select_available_mux(&[handle_a, handle_b.clone()]).unwrap();
+    assert!(selected.same_carrier(&handle_b));
+}
+
+#[tokio::test]
+async fn closing_one_shard_does_not_affect_another() {
+    let (left_a, right_a) = tokio::io::duplex(1 << 20);
+    let (handle_a, _) = MuxHandle::start(left_a, MuxConfig::default()).unwrap();
+    let (_peer_a, mut incoming_a) = MuxHandle::start(right_a, MuxConfig::default()).unwrap();
+    let (left_b, right_b) = tokio::io::duplex(1 << 20);
+    let (handle_b, _) = MuxHandle::start(left_b, MuxConfig::default()).unwrap();
+    let (_peer_b, mut incoming_b) = MuxHandle::start(right_b, MuxConfig::default()).unwrap();
+
+    let mut stream_a = handle_a.open_stream(1).await.unwrap();
+    let _peer_stream_a = incoming_a.accept().await.unwrap().unwrap();
+    let mut stream_b = handle_b.open_stream(2).await.unwrap();
+    let mut peer_stream_b = incoming_b.accept().await.unwrap().unwrap();
+
+    handle_a.close();
+    assert!(stream_a.write_all(b"closed").await.is_err());
+
+    stream_b.write_all(b"live").await.unwrap();
+    let mut payload = [0_u8; 4];
+    peer_stream_b.read_exact(&mut payload).await.unwrap();
+    assert_eq!(&payload, b"live");
 }

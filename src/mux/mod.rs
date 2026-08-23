@@ -7,6 +7,7 @@ use std::io;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bytes::Bytes;
 use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
@@ -26,6 +27,7 @@ const WINDOW_UPDATE_BYTES: usize = 4 * 1024;
 // remains the hard payload bound.
 const FLOW_CHANNEL_FRAMES: usize = 512;
 const MIN_FAIR_CREDIT_BYTES: usize = 256 * 1024;
+pub(crate) const MUX_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MuxConfig {
