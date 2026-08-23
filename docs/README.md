@@ -20,11 +20,13 @@ Portal and Vector have the same transport behavior on Linux, macOS, and Windows.
 
 ## Protocol summary
 
-| Mux setting | TLS/TCP | QUIC/UDP | Failure scope |
+| Client Mux setting | TLS/TCP | QUIC/UDP | Failure scope |
 |---|---|---|---|
 | `mux=0` | Dedicated lane per flow | Native streams/datagrams | The dedicated flow closes with the carrier |
 | `mux=1` | Shared bounded Mux | Native streams/datagrams | Assigned flows close with the carrier |
 
 ALPN defaults to `now/1` and is configurable independently from Mux. Peers use
 the same exact ALPN. All four uplink/downlink carrier combinations use the same
-FlowHeader, Target, pairing, and relay semantics.
+FlowHeader, Target, pairing, and relay semantics. Portal accepts dedicated and
+`0xff`-marked Mux connections on the same TLS listener. The client setting is
+available on Vector and on Portal when `next` is enabled.

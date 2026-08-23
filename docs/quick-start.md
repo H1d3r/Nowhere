@@ -26,10 +26,10 @@ nowhere 'vector://secret@127.0.0.1:2077?up=udp&down=udp&socks=127.0.0.1:1080'
 
 Asymmetric examples use `up=tcp&down=udp` or `up=udp&down=tcp`.
 
-TLS Mux is enabled explicitly on both endpoints:
+TLS Mux is enabled on Vector. Portal recognizes the marked carrier
+automatically:
 
 ```text
-nowhere 'portal://secret@:2077?mux=1'
 nowhere 'vector://secret@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
 ```
 
