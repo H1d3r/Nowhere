@@ -5,6 +5,20 @@ are unsigned and use network byte order. Byte offsets start at zero. Reserved
 bits MUST be zero, and decoders reject unknown values unless this document says
 otherwise.
 
+## Contents
+
+1. [Carrier model](#1-carrier-model)
+2. [Connection authentication](#2-connection-authentication)
+3. [TLS mode dispatch and Mux frames](#3-tls-mode-dispatch-and-mux-frames)
+4. [FlowHeader](#4-flowheader)
+5. [Target](#5-target)
+6. [SetupResult](#6-setupresult)
+7. [TCP payload](#7-tcp-payload)
+8. [UDP over stream](#8-udp-over-stream-uot)
+9. [UDP over QUIC DATAGRAM](#9-udp-over-quic-datagram)
+10. [Portal forwarding budget](#10-portal-forwarding-budget)
+11. [Runtime limits and failure scope](#11-runtime-limits-and-failure-scope)
+
 ## 1. Carrier model
 
 TLS/TCP and QUIC negotiate one exact ALPN. The default is `now/1`; a configured
@@ -14,6 +28,19 @@ TLS 1.3.
 One client session has one random 16-byte `session_id`. Every physical carrier
 is authenticated with that ID, so Portal can pair logical lanes belonging to
 the same client session.
+
+```text
+session_id
+    |
+    +-- dedicated TLS connection --> one logical lane
+    +-- Mux TLS connection --------> multiple logical streams
+    +-- QUIC connection -----------> reliable streams + UDP DATAGRAM routes
+                                      |
+                                      +-- each flow uses a nonzero flow_id
+```
+
+`session_id` is the cross-carrier pairing scope. `flow_id` identifies one
+logical TCP or UDP flow inside that scope.
 
 ### Dedicated TLS lane
 
@@ -100,7 +127,7 @@ Every physical TLS connection and every QUIC connection begins with one
 AuthFrame on its first byte stream.
 
 ```text
-AuthFrame — 32 bytes
+AuthFrame - 32 bytes
 
  offset  0                                      16              32
          +---------------------------------------+---------------+
@@ -157,7 +184,7 @@ Every Mux frame starts with an 8-byte header. STREAM and DATAGRAM frames carry
 exactly `value` payload bytes; WINDOW carries no payload.
 
 ```text
-MuxHeader — 8 bytes
+MuxHeader - 8 bytes
 
  offset  0        1        2               4                       8
          +--------+--------+---------------+-----------------------+
@@ -206,18 +233,34 @@ are 512 KiB per-stream receive credit, 512 KiB connection-wide receive credit,
 256 active streams, and 512 queued outbound frame slots. Payload must obtain
 both stream and connection credit before it enters the outbound queue.
 
-Client-side Shards open lazily. A new flow uses the least-loaded live Shard; a
-new Shard opens when all live Shards have 12 active flows. A fully idle Shard
-closes after 30 seconds. Portal applies the same timeout to an authenticated
-Mux carrier with no active streams. Sharding is runtime placement and does not
-add wire fields.
+```text
+application write
+        |
+        v
++----------------+    +-------------------+    +----------------+    +----------+
+| stream credit  |--->| connection credit |--->| bounded queue  |--->| MuxFrame |
++----------------+    +-------------------+    +----------------+    +----------+
+        ^                       ^
+        | WINDOW(flow_id)       | WINDOW(flow_id=0)
+        +-----------------------+
+```
+
+Both credit checks precede queue admission. A stream therefore cannot reserve
+payload beyond either advertised receive window.
+
+Client-side Shards open lazily in separate uplink and downlink sets. A new flow
+uses the least-loaded live Shard for its TLS direction; a new Shard opens when
+all live Shards in that set have 12 active flows. A symmetric `tcp/tcp` flow
+uses one duplex stream from the uplink set. A fully idle Shard closes after 30
+seconds. Portal applies the same timeout to an authenticated Mux carrier with
+no active streams. Sharding is runtime placement and does not add wire fields.
 
 ## 4. FlowHeader
 
 Every logical lane begins with a 5-byte FlowHeader.
 
 ```text
-FlowHeader — 5 bytes
+FlowHeader - 5 bytes
 
  offset  0                        1                       5
          +------------------------+-----------------------+
@@ -259,26 +302,46 @@ When `up` and `down` select the same carrier, one DUPLEX lane is used. When
 they differ, Portal pairs OPEN and ATTACH by `(session_id, flow_id)`. Their
 kind, carrier selection, and hop metadata must agree.
 
+```text
+Same carrier
+
+Client                                            Portal
+  |---- DUPLEX + Target on selected carrier ------->|
+  |<=============== payload both ways =============>|
+
+Split carriers
+
+Client                                            Portal
+  |---- OPEN + Target on uplink carrier ----------->|
+  |---- ATTACH on downlink carrier ---------------->| pair by
+  |                                                 | (session_id, flow_id)
+  |================ uplink payload ================>|
+  |<=============== downlink payload ===============|
+```
+
+Both split lanes are client-initiated. OPEN identifies the payload uplink;
+ATTACH identifies the payload downlink.
+
 ## 5. Target
 
 Target uses SOCKS5 address encoding and follows DUPLEX or OPEN.
 
 ```text
-IPv4 target — 7 bytes
+IPv4 target - 7 bytes
 
 +--------+-------------------------------+---------------+
 | ATYP   | IPv4 address                  | port          |
 | 0x01   | 4 bytes                       | u16           |
 +--------+-------------------------------+---------------+
 
-Domain target — 4 + N bytes
+Domain target - 4 + N bytes
 
 +--------+--------+-----------------------+---------------+
 | ATYP   | length | ASCII/IDNA hostname   | port          |
 | 0x03   | u8=N   | N bytes               | u16           |
 +--------+--------+-----------------------+---------------+
 
-IPv6 target — 19 bytes
+IPv6 target - 19 bytes
 
 +--------+-----------------------------------------------+---------------+
 | ATYP   | IPv6 address                                  | port          |
@@ -296,7 +359,7 @@ Portal returns exactly one setup byte on the logical downlink before payload
 relay starts.
 
 ```text
-SetupResult — 1 byte
+SetupResult - 1 byte
 
 +--------+
 | result |
@@ -332,7 +395,7 @@ TLS-carried UDP uses a sequence of length-prefixed packets inside a dedicated
 lane or Mux logical stream.
 
 ```text
-UoT packet — 2 + N bytes
+UoT packet - 2 + N bytes
 
 +---------------+-----------------------+
 | payload_len   | UDP payload           |
@@ -354,7 +417,7 @@ Every DATAGRAM contains exactly one DATA, FRAGMENT, or CLOSE frame.
 ### Common DATA/CLOSE header
 
 ```text
-QUIC UDP DATA or CLOSE — 5 + N bytes
+QUIC UDP DATA or CLOSE - 5 + N bytes
 
  offset  0                        1                       5
          +------------------------+-----------------------+
@@ -389,15 +452,15 @@ Packets that exceed the current QUIC maximum DATAGRAM size are divided into
 2–255 fragments.
 
 ```text
-QUIC UDP FRAGMENT — 13 + N bytes
+QUIC UDP FRAGMENT - 13 + N bytes
 
- offset  0      1            5            9       10       11        13
-         +------+------------+------------+--------+--------+----------+
-         | 0x01 | flow_id    | packet_id  | frag_ix| count  | total_len|
-         | u8   | u32        | u32        | u8     | u8     | u16      |
-         +------+------------+------------+--------+--------+----------+
-         | fragment payload, N > 0                              ...   |
-         +------------------------------------------------------------+
+ offset  0      1            5            9          10        11           13
+         +------+------------+------------+----------+---------+------------+
+         | 0x01 | flow_id    | packet_id  | frag_ix  | count   | total_len  |
+         | u8   | u32        | u32        | u8       | u8      | u16        |
+         +------+------------+------------+----------+---------+------------+
+         | fragment payload, N > 0                                          |
+         +------------------------------------------------------------------+
 ```
 
 `packet_id` is nonzero and identifies one packet within the active reassembly

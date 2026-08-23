@@ -16,12 +16,37 @@ Portal accepts both forms on one listener. After the 32-byte authentication
 frame:
 
 - `0xff` identifies a Mux connection;
-- every other byte remains the first byte of a dedicated FlowHeader.
+- every other byte is the first byte of a dedicated FlowHeader.
 
 The marker cannot collide with a valid FlowHeader. Dedicated and marked Mux
 connections use the same listener without separate inbound configuration.
 An authenticated dedicated connection has 40 seconds to provide its first
 FlowHeader byte.
+
+```text
+                         first byte after AuthFrame
+                                      |
+                    +-----------------+-----------------+
+                    |                                   |
+                  0xff                              any other byte
+                    |                                   |
+                    v                                   v
+          +--------------------+              +--------------------+
+          | Mux frame decoder  |              | FlowHeader decoder |
+          | shared TLS carrier |              | dedicated TLS lane |
+          +--------------------+              +--------------------+
+```
+
+Portal dispatches every authenticated TLS connection by its framing:
+
+| Bytes after AuthFrame | Selected form | Result |
+|---|---|---|
+| Valid FlowHeader | Dedicated TLS | accepted |
+| `0xff`, then valid Mux frames | Marked Mux TLS | accepted |
+| Unmarked Mux bytes | Invalid FlowHeader | rejected |
+
+The `0xff` byte is the Mux mode marker. It is always present on a Mux carrier
+and never appears on a dedicated lane.
 
 ## Runtime contract
 
@@ -34,3 +59,7 @@ Peers must also use matching credentials and reachable carrier families. A
 Portal with `next=` uses its configured ALPN and `mux=0|1` selection for the
 next hop. The upstream Mux selection defaults to `0` and is ignored without an
 enabled `next`.
+
+Interoperability tests exercise both peer roles: one endpoint as Portal and the
+other as client. A complete matrix includes all four `up`/`down` carrier
+combinations, the default and a custom ALPN, dedicated TLS, and marked Mux.

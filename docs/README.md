@@ -16,13 +16,49 @@ The documentation has one source of truth for each concern:
 `protocol.md` is normative. Portal and Vector share one internal bounded TLS
 Mux engine.
 
-Portal and Vector have the same transport behavior on Linux, macOS, and Windows. Platform-specific packaging, process control, filesystem paths, and telemetry availability are documented separately instead of being mixed into the protocol.
+Portal and Vector have the same transport behavior on Linux, macOS, and
+Windows. Platform-specific packaging, process control, filesystem paths, and
+telemetry availability are documented separately instead of being mixed into
+the protocol.
+
+## System map
+
+```text
++-------------+  SOCKS5  +--------+  TLS/TCP or QUIC/UDP  +--------------+
+| Application |<-------->| Vector |<=====================>| Entry Portal |
++-------------+          +--------+                       +------+-------+
+                                                                 |
+                                                         +-------+-------+
+                                                         | outbound path |
+                                                         +-------+-------+
+                                                                 |
+                                      +--------------------------+---------------------------+
+                                      |                                                      |
+                                      v                                                      v
+                              +---------------+                                       +-------------+
+                              | direct/SOCKS5 |                                       | Native next |
+                              +-------+-------+                                       +------+------+
+                                      |                                                      |
+                                      v                                                      v
+                               +-------------+                                        +-------------+
+                               |   Target    |                                        | Next Portal |
+                               +-------------+                                        +------+------+
+                                                                                             |
+                                                                                             v
+                                                                                      +-------------+
+                                                                                      |   Target    |
+                                                                                      +-------------+
+```
+
+Each Portal chooses exactly one outbound path for a flow: direct target
+access, an outbound SOCKS5 proxy, or a native `next` Portal. The carrier choice
+on one hop does not constrain the carrier choice on another hop.
 
 ## Protocol summary
 
 | Client Mux setting | TLS/TCP | QUIC/UDP | Failure scope |
 |---|---|---|---|
-| `mux=0` | Dedicated lane per flow | Native streams/datagrams | The dedicated flow closes with the carrier |
+| `mux=0` | Dedicated lane per flow | Native streams/datagrams | One flow per carrier |
 | `mux=1` | Shared bounded Mux | Native streams/datagrams | Assigned flows close with the carrier |
 
 ALPN defaults to `now/1` and is configurable independently from Mux. Peers use
