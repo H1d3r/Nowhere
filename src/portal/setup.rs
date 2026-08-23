@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, MuxMode,
-    OutboundDialer, SocksConfig, bind_udp_addrs, first_raw_query_value, init_dialer_ip,
+    DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, OutboundDialer,
+    SocksConfig, bind_udp_addrs, first_raw_query_value, init_dialer_ip,
     new_server_configs_with_reload_interval, parse_alpn, query_first, rate_limit_bytes_per_second,
 };
 use crate::protocol::Credentials;
@@ -23,9 +23,9 @@ use super::listener::{configure_transport, format_endpoint_addr};
 use super::{NetworkMode, Portal, PortalInner, UdpFlowLimits, admission, outbound::PortalOutbound};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
-    "net", "tls", "crt", "key", "alpn", "mux", "rate", "etar", "dial", "socks", "next", "log",
+    "net", "tls", "crt", "key", "alpn", "rate", "etar", "dial", "socks", "next", "log",
 ];
-const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "sni", "pin"];
+const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "mux", "sni", "pin"];
 
 impl Portal {
     /// Builds a portal using the listen host encoded in the URL.
@@ -84,8 +84,6 @@ impl Portal {
         let runtime = super::config::PortalRuntimeConfig::from_env()
             .map_err(|e| anyhow::anyhow!("portal::new: invalid runtime configuration: {e}"))?;
         let alpn = parse_alpn(query.get("alpn").map(String::as_str))
-            .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?;
-        let mux = MuxMode::parse(query.get("mux").map(String::as_str))
             .map_err(|error| anyhow::anyhow!("portal::new: {error}"))?;
         let network_mode =
             NetworkMode::from_url(&parsed_url).map_err(|e| anyhow::anyhow!("portal::new: {e}"))?;
@@ -147,7 +145,7 @@ impl Portal {
             |(config, _)| format!("next={} {}", config.endpoint(), config.effective_route()),
         );
         let telemetry_summary = format!(
-            "net={network_mode} tls={tls_mode} alpn={alpn} mux={mux} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
+            "net={network_mode} tls={tls_mode} alpn={alpn} rate={rate_limit} etar={etar_limit} dial={dialer_ip} socks={socks_endpoint} {next_summary}",
         );
         let telemetry = TelemetryHub::for_current_process(
             InstanceRole::Portal,
@@ -171,7 +169,6 @@ impl Portal {
             inner: Arc::new(PortalInner {
                 credentials,
                 alpn,
-                mux,
                 tls_mode,
                 network_mode,
                 endpoint_addr,
@@ -208,7 +205,7 @@ impl Portal {
 
 fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<()> {
     for name in [
-        "log", "tls", "crt", "key", "alpn", "mux", "net", "rate", "etar", "dial", "socks",
+        "log", "tls", "crt", "key", "alpn", "net", "rate", "etar", "dial", "socks",
     ] {
         if query.get(name).is_some_and(String::is_empty) {
             anyhow::bail!("empty {name} parameter");

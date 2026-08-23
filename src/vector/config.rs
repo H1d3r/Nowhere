@@ -12,11 +12,38 @@ use url::Url;
 use crate::common::socks::{
     SocksCredentials, first_raw_socks_value, format_host_port, parse_host_port, parse_socks_value,
 };
-use crate::common::{DEFAULT_DIALER_IP, MuxMode, parse_alpn, query_first};
+use crate::common::{DEFAULT_DIALER_IP, parse_alpn, query_first};
 
 const VECTOR_QUERY_KEYS: &[&str] = &[
     "up", "down", "alpn", "mux", "sni", "pin", "rate", "etar", "socks", "log",
 ];
+
+/// Whether a client originates dedicated or Mux TLS carriers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MuxMode {
+    Disabled,
+    Enabled,
+}
+
+impl MuxMode {
+    fn parse(value: Option<&str>) -> Result<Self> {
+        match value {
+            None | Some("0") => Ok(Self::Disabled),
+            Some("1") => Ok(Self::Enabled),
+            Some(_) => bail!("mux must be 0 or 1"),
+        }
+    }
+
+    pub(crate) const fn enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+impl fmt::Display for MuxMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(if self.enabled() { "1" } else { "0" })
+    }
+}
 
 /// Physical carrier selected for one logical flow direction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,9 +160,10 @@ impl PortalClientConfig {
 
     pub(crate) fn effective_route(&self) -> String {
         format!(
-            "up={} down={} sni={} pin={}",
+            "up={} down={} mux={} sni={} pin={}",
             self.up,
             self.down,
+            self.mux,
             self.sni.as_deref().unwrap_or("none"),
             self.pin.as_deref().unwrap_or("none"),
         )

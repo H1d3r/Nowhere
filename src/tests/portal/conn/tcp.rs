@@ -3,7 +3,6 @@
 
 //! TCP/TLS portal connection tests.
 
-use std::io::ErrorKind;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -44,7 +43,7 @@ fn duplex_setup(flow_id: u32, kind: FlowKind, target: &str) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn dedicated_portal_accepts_delayed_flow_header() {
+async fn portal_accepts_delayed_dedicated_flow_header() {
     let echo_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let target = echo_listener.local_addr().unwrap();
     let echo_task = tokio::spawn(async move {
@@ -339,51 +338,6 @@ async fn tls_tcp_flow_header_timeout_closes_unused_connection() {
         .unwrap();
     shutdown.cancel();
     let _ = tls.shutdown().await;
-}
-
-#[tokio::test]
-async fn mux_portal_rejects_unmarked_dedicated_lane() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let listen_addr = listener.local_addr().unwrap();
-    let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?log=none&net=tcp&mux=1").unwrap(),
-        Logger::new(LogLevel::None, false),
-    )
-    .unwrap();
-    let portal_inner = portal.inner.clone();
-    let shutdown = CancellationToken::new();
-    let child_shutdown = shutdown.clone();
-    let server_task = tokio::spawn(async move {
-        let (stream, peer) = listener.accept().await.unwrap();
-        let admission = portal_inner
-            .unauthenticated_admission
-            .try_acquire(peer.ip())
-            .unwrap();
-        handle_tcp_incoming(portal_inner, stream, peer, admission, child_shutdown).await;
-    });
-
-    let mut tls = connect_test_tls(listen_addr).await;
-    let auth = tls_auth_frame(&portal, &tls, [23; 16]);
-    tls.write_all(&auth).await.unwrap();
-    sleep(Duration::from_millis(150)).await;
-
-    let mut request = duplex_setup(23, FlowKind::Tcp, "127.0.0.1:9");
-    request.extend_from_slice(b"ping");
-    tls.write_all(&request).await.unwrap();
-
-    let mut response = [0u8; 1];
-    let read = timeout(Duration::from_secs(3), tls.read(&mut response))
-        .await
-        .unwrap();
-    match read {
-        Ok(0) => {}
-        Err(err) if err.kind() == ErrorKind::UnexpectedEof => {}
-        other => panic!("expected mux portal to close the dedicated lane, got {other:?}"),
-    }
-
-    shutdown.cancel();
-    let _ = tls.shutdown().await;
-    server_task.await.unwrap();
 }
 
 #[tokio::test]

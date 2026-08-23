@@ -23,6 +23,7 @@ fn help_text_documents_usage_and_configuration_surface() {
         "pin=<sha256|none>",
         "alpn=<value>",
         "mux=0|1",
+        "Use TLS Mux for the native upstream.",
         "UDP ASSOCIATE",
         "rate=<mbps>",
         "etar=<mbps>",

@@ -100,6 +100,7 @@ fn validates_alpn_and_mux_inputs() {
         "vector://secret@example.com:2077?socks=:1080&mux=",
         "vector://secret@example.com:2077?socks=:1080&mux=2",
         "vector://secret@example.com:2077?socks=:1080&mux=true",
+        "vector://secret@example.com:2077?socks=:1080&mux=-1",
     ] {
         assert!(parse(raw).is_err(), "URL unexpectedly accepted: {raw}");
     }

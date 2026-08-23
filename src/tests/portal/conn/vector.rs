@@ -80,15 +80,11 @@ async fn free_tcp_port() -> u16 {
 }
 
 async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
-    start_runtime_modes(up, down, mux, mux).await
-}
-
-async fn start_runtime_modes(up: &str, down: &str, portal_mux: u8, vector_mux: u8) -> TestRuntime {
     let portal_port = free_tcp_port().await;
     let socks_port = free_tcp_port().await;
     let portal = Portal::new(
         Url::parse(&format!(
-            "portal://secret@127.0.0.1:{portal_port}?log=none&net=mix&mux={portal_mux}"
+            "portal://secret@127.0.0.1:{portal_port}?log=none&net=mix"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -111,7 +107,7 @@ async fn start_runtime_modes(up: &str, down: &str, portal_mux: u8, vector_mux: u
     ));
     let vector = Vector::new(
         Url::parse(&format!(
-            "vector://secret@127.0.0.1:{portal_port}?log=none&up={up}&down={down}&mux={vector_mux}&socks=127.0.0.1:{socks_port}"
+            "vector://secret@127.0.0.1:{portal_port}?log=none&up={up}&down={down}&mux={mux}&socks=127.0.0.1:{socks_port}"
         ))
         .unwrap(),
         Logger::new(LogLevel::None, false),
@@ -127,30 +123,6 @@ async fn start_runtime_modes(up: &str, down: &str, portal_mux: u8, vector_mux: u
         vector_task,
         socks,
     }
-}
-
-#[tokio::test]
-async fn mux_client_is_rejected_by_a_dedicated_only_portal_before_target_dial() {
-    let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let target_address = target.local_addr().unwrap();
-    let runtime = start_runtime_modes("tcp", "tcp", 0, 1).await;
-    timeout(TEST_TIMEOUT, async {
-        let mut socks = TcpStream::connect(runtime.socks).await.unwrap();
-        negotiate_socks(&mut socks).await;
-        socks
-            .write_all(&ip_request(1, target_address))
-            .await
-            .unwrap();
-        assert_ne!(read_ipv4_reply_code(&mut socks).await, 0);
-    })
-    .await
-    .unwrap();
-    assert!(
-        timeout(Duration::from_millis(100), target.accept())
-            .await
-            .is_err()
-    );
-    runtime.stop().await;
 }
 
 #[tokio::test]
@@ -270,7 +242,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     let logger = || Logger::new(LogLevel::None, false);
     let origin = Portal::new(
         Url::parse(&format!(
-            "portal://origin-secret@127.0.0.1:{origin_port}?log=none&net=mix&mux=1"
+            "portal://origin-secret@127.0.0.1:{origin_port}?log=none&net=mix"
         ))
         .unwrap(),
         logger(),
@@ -278,7 +250,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
     .unwrap();
     let relay = Portal::new(
         Url::parse(&format!(
-            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&net=mix&mux=1&next=origin-secret@127.0.0.1:{origin_port}&up={up}&down={down}"
+            "portal://relay-secret@127.0.0.1:{relay_port}?log=none&net=mix&next=origin-secret@127.0.0.1:{origin_port}&up={up}&down={down}&mux=1"
         ))
         .unwrap(),
         logger(),

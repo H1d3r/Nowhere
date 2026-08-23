@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::{Lifecycle, Logger, MuxMode, TLSMode};
+use crate::common::{Lifecycle, Logger, TLSMode};
 use crate::protocol::Credentials;
 use crate::telemetry::TelemetryHub;
 use crate::transport::{Buffers, RateLimiter, Stats};
@@ -45,7 +45,6 @@ pub struct Portal {
 struct PortalInner {
     credentials: Credentials,
     alpn: String,
-    mux: MuxMode,
     tls_mode: TLSMode,
     network_mode: NetworkMode,
     endpoint_addr: String,

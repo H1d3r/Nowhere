@@ -16,16 +16,6 @@ fn alpn_rejects_empty_and_oversized_values() {
 }
 
 #[test]
-fn mux_is_a_strict_boolean() {
-    assert_eq!(MuxMode::parse(None).unwrap(), MuxMode::Disabled);
-    assert_eq!(MuxMode::parse(Some("0")).unwrap(), MuxMode::Disabled);
-    assert_eq!(MuxMode::parse(Some("1")).unwrap(), MuxMode::Enabled);
-    for value in ["", "2", "true", "-1"] {
-        assert!(MuxMode::parse(Some(value)).is_err());
-    }
-}
-
-#[test]
 fn mux_marker_cannot_start_a_dedicated_flow_header() {
     assert!(crate::protocol::decode_flow_header(&[MUX_MARKER, 0, 0, 0, 1]).is_err());
 }

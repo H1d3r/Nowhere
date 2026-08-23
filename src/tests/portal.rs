@@ -33,7 +33,7 @@ fn empty_host_listens_on_both_wildcard_families() {
     assert_eq!(portal.inner.network_mode, NetworkMode::Mix);
     assert_eq!(
         portal.effective_url(),
-        "portal://:2077?net=mix&tls=1&alpn=now/1&mux=0&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
+        "portal://:2077?net=mix&tls=1&alpn=now/1&rate=0&etar=0&dial=127.0.0.1&socks=none&next=none"
     );
 }
 
@@ -135,7 +135,7 @@ fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
     assert_eq!(portal.inner.outbound.next_endpoint(), "relay.example:2080");
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
-        Some("up=udp down=udp sni=none pin=none")
+        Some("up=udp down=udp mux=0 sni=none pin=none")
     );
     let effective = portal.effective_url();
     assert!(effective.contains("next=relay.example:2080"));
@@ -147,20 +147,24 @@ fn native_next_defaults_to_quic_and_redacts_the_shared_key() {
 fn native_next_reuses_transport_identity_and_source_binding() {
     let portal = Portal::new(
         Url::parse(
-            "portal://relay-key@127.0.0.1:2077?dial=127.0.0.2&alpn=private/2&mux=1&next=secret@[::1]:2080&up=tcp&down=tcp&sni=origin.example&pin=abc",
+            "portal://relay-key@127.0.0.1:2077?dial=127.0.0.2&alpn=private/2&next=secret@[::1]:2080&up=tcp&down=tcp&mux=1&sni=origin.example&pin=abc",
         )
         .unwrap(),
         test_logger(),
     )
     .unwrap();
     assert_eq!(portal.inner.alpn, "private/2");
-    assert_eq!(portal.inner.mux, MuxMode::Enabled);
 
     assert_eq!(portal.inner.outbound.dialer_ip(), "127.0.0.2");
     assert_eq!(portal.inner.outbound.next_endpoint(), "[::1]:2080");
     assert_eq!(
         portal.inner.outbound.next_transport().as_deref(),
-        Some("up=tcp down=tcp sni=origin.example pin=abc")
+        Some("up=tcp down=tcp mux=1 sni=origin.example pin=abc")
+    );
+    assert!(
+        portal
+            .effective_url()
+            .contains("&up=tcp&down=tcp&mux=1&sni=origin.example&pin=abc")
     );
 }
 
@@ -186,9 +190,9 @@ fn native_next_and_socks_are_mutually_exclusive() {
 #[test]
 fn disabled_next_ignores_all_native_upstream_options() {
     for suffix in [
-        "up=mix&down=invalid&sni=127.0.0.1&pin=anything",
-        "next=none&up=mix&down=invalid&sni=127.0.0.1&pin=anything",
-        "next=none&up=%GG&pin=%FF",
+        "up=mix&down=invalid&mux=2&sni=127.0.0.1&pin=anything",
+        "next=none&up=mix&down=invalid&mux=true&sni=127.0.0.1&pin=anything",
+        "next=none&up=%GG&mux=%GG&pin=%FF",
     ] {
         let portal = Portal::new(
             Url::parse(&format!("portal://relay-key@127.0.0.1:2077?{suffix}")).unwrap(),
@@ -197,12 +201,20 @@ fn disabled_next_ignores_all_native_upstream_options() {
         .unwrap();
         assert_eq!(portal.inner.outbound.next_endpoint(), "none");
         assert_eq!(portal.inner.outbound.next_transport(), None);
+        assert!(!portal.effective_url().contains("mux="));
     }
 }
 
 #[test]
 fn enabled_next_validates_only_effective_upstream_options() {
-    for suffix in ["up=mix", "down=mix", "sni=127.0.0.1"] {
+    for suffix in [
+        "up=mix",
+        "down=mix",
+        "mux=",
+        "mux=2",
+        "mux=true",
+        "sni=127.0.0.1",
+    ] {
         let result = Portal::new(
             Url::parse(&format!(
                 "portal://relay-key@127.0.0.1:2077?next=secret@origin.example:2080&{suffix}"
@@ -289,8 +301,6 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
         "portal://secret@127.0.0.1:2077#fragment",
         "portal://secret@127.0.0.1:2077?net=",
         "portal://secret@127.0.0.1:2077?alpn=",
-        "portal://secret@127.0.0.1:2077?mux=",
-        "portal://secret@127.0.0.1:2077?mux=2",
         "portal://secret@127.0.0.1:2077?socks=",
         "portal://secret@127.0.0.1:2077?rate=-1",
         "portal://secret@127.0.0.1:2077?dial=not-an-ip",
@@ -308,7 +318,7 @@ fn portal_url_contract_rejects_invalid_structure_and_selected_values() {
 fn portal_ignores_unknown_parameters_and_keeps_first_duplicate() {
     let portal = Portal::new(
         Url::parse(
-            "portal://secret@127.0.0.1:2077?unknown=value&spec=ignored&alpn=private/2&pool=8&net=tcp&net=udp&rate=1&rate=2",
+            "portal://secret@127.0.0.1:2077?unknown=value&spec=ignored&alpn=private/2&mux=2&pool=8&net=tcp&net=udp&rate=1&rate=2",
         )
         .unwrap(),
         test_logger(),
@@ -317,23 +327,26 @@ fn portal_ignores_unknown_parameters_and_keeps_first_duplicate() {
     assert_eq!(portal.inner.network_mode, NetworkMode::Tcp);
     assert_eq!(portal.inner.rate_limit, 1);
     assert_eq!(portal.inner.alpn, "private/2");
-    assert_eq!(portal.inner.mux, MuxMode::Disabled);
     assert!(portal.effective_url().contains("?net=tcp&tls=1&"));
     assert!(portal.effective_url().contains("alpn=private/2"));
+    assert!(!portal.effective_url().contains("mux="));
     assert!(!portal.effective_url().contains("pool="));
 }
 
 #[test]
-fn alpn_and_mux_are_explicit_while_pool_remains_removed() {
-    let portal = Portal::new(
-        Url::parse("portal://secret@127.0.0.1:2077?alpn=private/2&mux=1&pool=99").unwrap(),
-        test_logger(),
-    )
-    .unwrap();
-    assert_eq!(portal.inner.alpn, "private/2");
-    assert_eq!(portal.inner.mux, MuxMode::Enabled);
-    assert!(portal.effective_url().contains("alpn=private/2&mux=1"));
-    assert!(!portal.effective_url().contains("pool="));
+fn portal_mux_is_ignored_without_next() {
+    for value in ["", "0", "1", "2", "true"] {
+        let portal = Portal::new(
+            Url::parse(&format!(
+                "portal://secret@127.0.0.1:2077?alpn=private/2&mux={value}"
+            ))
+            .unwrap(),
+            test_logger(),
+        )
+        .unwrap();
+        assert_eq!(portal.inner.alpn, "private/2");
+        assert!(!portal.effective_url().contains("mux="));
+    }
 }
 
 #[test]

@@ -63,8 +63,6 @@ Portal parameters:
   crt=<path>       PEM certificate chain for tls=2.
   key=<path>       PEM private key for tls=2.
   alpn=<value>     Exact TLS/QUIC ALPN. Default: now/1.
-  mux=0|1          0 accepts dedicated TLS lanes; 1 accepts Mux TLS only.
-                   Default: 0.
   rate=<mbps>      Client-to-target traffic limit. 0 disables it.
   etar=<mbps>      Target-to-client traffic limit. 0 disables it.
   dial=<ip|auto>   Local source IP for outbound target connections. Default: auto.
@@ -74,9 +72,10 @@ Portal parameters:
                    none to disable. Mutually exclusive with socks.
   up=tcp|udp       Native upstream upload carrier. Default: udp.
   down=tcp|udp     Native upstream download carrier. Default: udp.
+  mux=0|1          Use TLS Mux for the native upstream. Default: 0.
   sni=<name|none>  Native upstream certificate DNS name. Default: none.
   pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
-                   These four options are ignored unless next is enabled.
+                   These five options are ignored unless next is enabled.
   log=<level>      none, debug, info, warn, error, event. Default: info.
 
 Vector parameters:

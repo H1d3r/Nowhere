@@ -294,7 +294,7 @@ fn full_sidebar_keeps_long_lifecycle_labels_visible() {
 fn selected_uses_available_height_for_complete_config() {
     let mut app = app_with_instance();
     app.instances[0].meta.config_summary =
-        "net=mix tls=1 alpn=now/1 mux=0 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp sni=origin.example pin=present"
+        "net=mix tls=1 alpn=now/1 rate=0 etar=0 dial=auto socks=none next=origin.example:3077 up=udp down=tcp mux=0 sni=origin.example pin=present"
             .to_owned();
 
     let output = rendered(160, 40, &app);

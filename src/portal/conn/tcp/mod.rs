@@ -160,7 +160,7 @@ pub(super) async fn handle_tcp_incoming_with_bootstrap_timeout(
         _ => return,
     };
     let flow_timeout = portal.runtime.handshake_timeout;
-    if first == MUX_MARKER && portal.mux.enabled() {
+    if first == MUX_MARKER {
         handle_mux(
             portal,
             tls_stream,
@@ -171,18 +171,6 @@ pub(super) async fn handle_tcp_incoming_with_bootstrap_timeout(
             flow_timeout,
         )
         .await;
-        return;
-    }
-    if portal.mux.enabled() {
-        portal.logger.debug(format_args!(
-            "portal::conn::tcp: dedicated lane rejected while mux is enabled"
-        ));
-        return;
-    }
-    if first == MUX_MARKER {
-        portal.logger.debug(format_args!(
-            "portal::conn::tcp: mux carrier rejected while mux is disabled"
-        ));
         return;
     }
 
