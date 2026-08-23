@@ -50,6 +50,7 @@ pub(crate) enum LifeReason {
     Startup,
     Listening,
     SigInt,
+    #[cfg(unix)]
     SigTerm,
     TcpListenerExit,
     QuicListenerExit,
@@ -67,6 +68,7 @@ impl fmt::Display for LifeReason {
             Self::Startup => "STARTUP",
             Self::Listening => "LISTENING",
             Self::SigInt => "SIGINT",
+            #[cfg(unix)]
             Self::SigTerm => "SIGTERM",
             Self::TcpListenerExit => "TCP_LISTENER_EXIT",
             Self::QuicListenerExit => "QUIC_LISTENER_EXIT",

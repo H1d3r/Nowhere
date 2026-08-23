@@ -31,6 +31,7 @@ fn lifecycle_vocabulary_is_stable() {
         (LifeReason::Startup, "STARTUP"),
         (LifeReason::Listening, "LISTENING"),
         (LifeReason::SigInt, "SIGINT"),
+        #[cfg(unix)]
         (LifeReason::SigTerm, "SIGTERM"),
         (LifeReason::TcpListenerExit, "TCP_LISTENER_EXIT"),
         (LifeReason::QuicListenerExit, "QUIC_LISTENER_EXIT"),
