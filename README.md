@@ -38,49 +38,34 @@ downlink independently instead of forcing both directions onto one transport.
   <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
 </p>
 
-The built-in TUI turns every visible Portal and Vector into a live operational
-view. It remains deliberately separate from process management: opening or
-closing a dashboard never starts, stops, or owns a service instance.
-
-| View | Signals and controls |
-| --- | --- |
-| **Overview** | Uplink, downlink, TCP, UDP, TLS, and QUIC histories; active connections; carriers; CPU and RSS where available; selected-instance metadata |
-| **Logs** | Independent Access and Runtime feeds with filtering, pause and resume, paging, horizontal panning, and local privacy masking |
-| **Discovery** | Automatic per-user instance discovery with stable selection and concurrent read-only viewers |
-
-Start it from any terminal in the same user environment:
+The read-only TUI discovers Portal and Vector instances for the current user.
+It presents traffic, carriers, process metrics, Access logs, and Runtime logs
+without owning the service lifecycle. Start it from another terminal:
 
 ```bash
-nowhere
-# Equivalent explicit form
 nowhere tui
 ```
-
-Telemetry uses a per-user registry and a loopback control socket. It does not
-consume or redirect stdout and stderr, and history is held only by connected
-dashboards.
 
 ## How it works
 
 ```text
-  Application
-   TCP / UDP
-       |
-     SOCKS5
-       |
-       v
-+--------------+   Uplink: TLS/TCP or QUIC/UDP    +--------------+
-|              |=================================>|              |
-|    Vector    |                                  |    Portal    |
-|              |<=================================|              |
-+--------------+  Downlink: TLS/TCP or QUIC/UDP   +--------------+
-                                                          |
-                                                  direct or SOCKS5
-                                                          |
-                                                          v
-                                                    +------------+
-                                                    |   Target   |
-                                                    +------------+
+ Application
+  TCP / UDP
+      |
+    SOCKS5
+      |
+      v
++------------+  Uplink carrier   +--------------+  Native `next` uplink   +-------------+
+|   Vector   |==================>| Entry Portal |========================>| Next Portal |
+|            |<==================|              |<========================| (optional)  |
++------------+  Downlink carrier +--------------+  Native `next` downlink +-------------+
+                                         |                                       |
+                                 direct or SOCKS5                        direct or SOCKS5
+                                         |                                       |
+                                         v                                       v
+                                  +------------+                          +------------+
+                                  |   Target   |                          |   Target   |
+                                  +------------+                          +------------+
 ```
 
 Portal defaults to `net=mix`, accepting both carrier families on the same port
@@ -98,25 +83,16 @@ Vector's `up` and `down` parameters form four first-class modes:
 | `udp/tcp` | QUIC/UDP | TLS/TCP |
 | `udp/udp` | QUIC/UDP | QUIC/UDP |
 
-TCP application traffic uses a dedicated TLS lane, an optional shared TLS Mux
-stream, or a bidirectional QUIC stream. UDP application traffic uses
-length-prefixed UoT over TLS or QUIC DATAGRAM. Split paths rejoin through
-authenticated session and flow identity, never by source address.
+TCP and UDP share the same authenticated flow identity across all four modes.
+See the [wire protocol](docs/protocol.md) for carrier framing and pairing.
 
 ## Engineered for a small data path
 
-| Area | Design |
-| --- | --- |
-| Framing | 32-byte connection authentication, 5-byte flow header, one-byte setup result, and an 8-byte TLS Mux header |
-| UDP overhead | 5 bytes for common QUIC DATAGRAM packets and 2 bytes for UoT packets |
-| Hot path | Stack-encoded headers, binary targets, allocation-free DATAGRAM decoding, and reusable buffers |
-| Reuse | Shared QUIC connections and optional, lazily opened TLS Mux shards carry many logical flows |
-| Authentication | Credentials are bound to each TLS or QUIC connection through a TLS exporter |
-| Resource control | Explicit bounds cover connections, streams, flows, windows, queues, reassembly, rate limits, and idle state |
-
-Certificate reload, graceful shutdown, outbound SOCKS5, source binding,
-directional rate limits, access paths, and EVENT logging are part of the core
-runtime rather than external wrappers.
+The data path uses compact binary frames, connection-bound authentication,
+reusable buffers, bounded queues, and native QUIC streams and DATAGRAMs. TLS
+flows use dedicated lanes or lazily opened Mux Shards. Detailed framing and
+resource bounds live in [Protocol](docs/protocol.md) and
+[Security](docs/security.md).
 
 ### Native Portal chaining
 
@@ -128,16 +104,12 @@ nowhere \
   'portal://relay-key@:2077?next=origin-key@origin.example:2077&up=udp&down=udp'
 ```
 
-`next` is mutually exclusive with outbound `socks`. It is lazy, so an
-unavailable upstream never prevents the relay listener from becoming ready.
-TCP and UDP payloads remain in the native binary flow path—there is no local
-SOCKS listener, SOCKS framing, or per-packet connection setup between Portals.
-Native forwarding is bounded to seven Portal hops.
+`next` is lazy and mutually exclusive with outbound `socks`. Portal forwarding
+uses the native flow protocol and is bounded to seven hops.
 
 ## Quick start
 
-Nowhere requires a supported Linux, macOS, or Windows target and a stable Rust
-toolchain when building from source.
+Building from source requires a supported target and a stable Rust toolchain.
 
 ### 1. Build
 
@@ -155,28 +127,16 @@ The default `net=mix` mode accepts TLS/TCP and QUIC/UDP on port `2077`:
 
 ### 3. Start Vector
 
-This Vector exposes SOCKS5 on `127.0.0.1:1080` and uses dedicated TLS/TCP lanes
-in both directions:
+This Vector exposes SOCKS5 on `127.0.0.1:1080`:
 
 ```bash
 ./target/release/nowhere \
   'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&socks=127.0.0.1:1080'
 ```
 
-Enable TLS Mux on both endpoints when shared Shards are desired:
-
-```bash
-./target/release/nowhere 'portal://change-me@127.0.0.1:2077?mux=1'
-./target/release/nowhere \
-  'vector://change-me@127.0.0.1:2077?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
-```
-
-To split the carriers, change the directional parameters:
-
-```bash
-./target/release/nowhere \
-  'vector://change-me@127.0.0.1:2077?up=udp&down=tcp&socks=127.0.0.1:1080'
-```
+Mux, split-carrier, certificate, and chaining examples are in the
+[configuration guide](docs/configuration.md) and
+[quick start](docs/quick-start.md).
 
 ### 4. Inspect
 
@@ -196,41 +156,21 @@ nowhere 'portal://change-me@:2077?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhe
 nowhere 'vector://change-me@relay.example:2077?sni=relay.example&socks=127.0.0.1:1080'
 ```
 
-Alternatively, set `pin` to the lowercase `CERT_SHA256` value printed by
-Portal. Pinning takes priority over `sni` certificate-chain and name checks.
-Portal and Vector use the exact configured ALPN, `now/1` by default. Set the
-same nonempty `alpn` value on both endpoints when customization is required.
-ALPN does not select Mux; `mux=0|1` controls TLS multiplexing explicitly.
-
-Read the [security model](docs/security.md) before exposing a Portal outside a
-trusted environment.
+Certificate pinning is also available. Review the
+[security model](docs/security.md) and [configuration](docs/configuration.md)
+before exposing a Portal publicly.
 
 ## Operational boundaries
 
-| Boundary | Behavior |
-| --- | --- |
-| Platform | Portal, Vector, carriers, relay, TUI, and local discovery run on Linux, macOS, and Windows; Linux additionally reports process CPU and RSS |
-| Visibility | Discovery is scoped to the current user's platform-specific registry and validated control endpoint |
-| Ownership | The TUI is read-only and has no service lifecycle or configuration authority |
-| Concurrency | Multiple TUIs may observe one instance at the same time |
-| Logging | stdout and stderr remain independent from structured TUI telemetry |
-| Persistence | TUI metric history and feeds begin at connection time and are not persisted |
-
-See [Platforms](docs/platforms.md) for supported release targets, native paths,
-process control, and telemetry differences.
+Portal, Vector, relay, TUI, and local discovery run on every supported
+platform; process telemetry varies by operating system. See
+[Platforms](docs/platforms.md) and [Operations](docs/operations.md).
 
 ## Documentation map
 
-| Guide | Start here when you need to |
-| --- | --- |
-| [Quick start](docs/quick-start.md) | Build a local Portal and Vector |
-| [Platforms](docs/platforms.md) | Review supported targets and platform-specific behavior |
-| [Configuration](docs/configuration.md) | Review command URLs, defaults, identity, limits, and environment variables |
-| [Operations](docs/operations.md) | Operate logs, telemetry, capacity, failure behavior, certificates, and shutdown |
-| [Security](docs/security.md) | Understand trust boundaries, authentication, permissions, and resource controls |
-| [Wire protocol](docs/protocol.md) | Implement authentication, flow setup, framing, and lifecycles |
-| [Compatibility](docs/compatibility.md) | Understand ALPN selection and peer interoperability |
-| [Integrations](docs/integrations.md) | Implement alternate clients or configure chained Portals |
+Start with the [documentation index](docs/README.md). It links the focused
+guides for configuration, protocol, security, operations, platforms, and
+integrations.
 
 ## Development
 
