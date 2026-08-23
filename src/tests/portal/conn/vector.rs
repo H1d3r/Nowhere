@@ -74,18 +74,26 @@ impl TestRuntime {
     }
 }
 
-async fn free_tcp_port() -> u16 {
-    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = tcp.local_addr().unwrap().port();
-    let udp = UdpSocket::bind(("127.0.0.1", port)).await.unwrap();
-    drop(udp);
-    drop(tcp);
-    port
+async fn reserve_mixed_port() -> (u16, TcpListener, UdpSocket) {
+    for _ in 0..32 {
+        let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = tcp.local_addr().unwrap().port();
+        match UdpSocket::bind(("127.0.0.1", port)).await {
+            Ok(udp) => return (port, tcp, udp),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
+            Err(error) => panic!("failed to reserve UDP test port {port}: {error}"),
+        }
+    }
+    panic!("failed to reserve one local port for TCP and UDP");
+}
+
+async fn reserve_tcp_port() -> (u16, TcpListener) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    (listener.local_addr().unwrap().port(), listener)
 }
 
 async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
-    let portal_port = free_tcp_port().await;
-    let socks_port = free_tcp_port().await;
+    let (portal_port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
     let portal = Portal::new(
         Url::parse(&format!(
             "portal://secret@127.0.0.1:{portal_port}?log=none&net=mix"
@@ -94,7 +102,9 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
+    drop(udp_reservation);
     let endpoint = portal.listen_endpoints().unwrap().pop().unwrap();
+    drop(tcp_reservation);
     let listener = portal.listen_tcp_listeners().unwrap().pop().unwrap();
     let portal_stats = portal.inner.stats.clone();
     let shutdown = CancellationToken::new();
@@ -110,6 +120,7 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
         shutdown.clone(),
         shutdown.clone(),
     ));
+    let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
             "vector://secret@127.0.0.1:{portal_port}?log=none&up={up}&down={down}&mux={mux}&socks=127.0.0.1:{socks_port}"
@@ -118,6 +129,7 @@ async fn start_runtime(up: &str, down: &str, mux: u8) -> TestRuntime {
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
+    drop(socks_reservation);
     let vector_task = tokio::spawn(vector.run());
     let socks = SocketAddr::from(([127, 0, 0, 1], socks_port));
     wait_for_socks(socks).await;
@@ -287,10 +299,8 @@ async fn mux_thirteenth_active_tcp_flow_opens_a_second_shard() {
 }
 
 async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
-    let origin_port = free_tcp_port().await;
-    let relay_port = free_tcp_port().await;
-    let socks_port = free_tcp_port().await;
     let logger = || Logger::new(LogLevel::None, false);
+    let (origin_port, origin_tcp_reservation, origin_udp_reservation) = reserve_mixed_port().await;
     let origin = Portal::new(
         Url::parse(&format!(
             "portal://origin-secret@127.0.0.1:{origin_port}?log=none&net=mix"
@@ -299,6 +309,12 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
         logger(),
     )
     .unwrap();
+    drop(origin_udp_reservation);
+    let origin_endpoint = origin.listen_endpoints().unwrap().pop().unwrap();
+    drop(origin_tcp_reservation);
+    let origin_listener = origin.listen_tcp_listeners().unwrap().pop().unwrap();
+
+    let (relay_port, relay_tcp_reservation, relay_udp_reservation) = reserve_mixed_port().await;
     let relay = Portal::new(
         Url::parse(&format!(
             "portal://relay-secret@127.0.0.1:{relay_port}?log=none&net=mix&next=origin-secret@127.0.0.1:{origin_port}&up={up}&down={down}&mux=1"
@@ -307,12 +323,18 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
         logger(),
     )
     .unwrap();
+    drop(relay_udp_reservation);
+    let relay_endpoint = relay.listen_endpoints().unwrap().pop().unwrap();
+    drop(relay_tcp_reservation);
+    let relay_listener = relay.listen_tcp_listeners().unwrap().pop().unwrap();
+
     let shutdown = CancellationToken::new();
     let mut endpoints = Vec::with_capacity(2);
     let mut portal_tasks = Vec::with_capacity(4);
-    for portal in [&origin, &relay] {
-        let endpoint = portal.listen_endpoints().unwrap().pop().unwrap();
-        let listener = portal.listen_tcp_listeners().unwrap().pop().unwrap();
+    for (portal, endpoint, listener) in [
+        (&origin, origin_endpoint, origin_listener),
+        (&relay, relay_endpoint, relay_listener),
+    ] {
         portal_tasks.push(tokio::spawn(crate::portal::listener::accept_endpoint_loop(
             portal.inner.clone(),
             endpoint.clone(),
@@ -327,6 +349,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
         )));
         endpoints.push(endpoint);
     }
+    let (socks_port, socks_reservation) = reserve_tcp_port().await;
     let vector = Vector::new(
         Url::parse(&format!(
             "vector://relay-secret@127.0.0.1:{relay_port}?log=none&mux=1&socks=127.0.0.1:{socks_port}"
@@ -335,6 +358,7 @@ async fn start_chain_runtime(up: &str, down: &str) -> ChainRuntime {
         logger(),
     )
     .unwrap();
+    drop(socks_reservation);
     let vector_task = tokio::spawn(vector.run());
     let socks = SocketAddr::from(([127, 0, 0, 1], socks_port));
     wait_for_socks(socks).await;
