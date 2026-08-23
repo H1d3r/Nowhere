@@ -27,18 +27,19 @@ async fn connect_tls_from_separate_loopback(
     connect_test_tls(SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port))).await
 }
 
-async fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+async fn reserve_mixed_port() -> (u16, TcpListener, UdpSocket) {
+    for _ in 0..32 {
+        let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = tcp.local_addr().unwrap().port();
+        if let Ok(udp) = UdpSocket::bind(("127.0.0.1", port)).await {
+            return (port, tcp, udp);
+        }
+    }
+    panic!("failed to reserve one local port for TCP and UDP");
 }
 
-async fn start_mixed(
-    port: u16,
-) -> (
+async fn start_mixed() -> (
+    u16,
     Portal,
     quinn::Endpoint,
     quinn::Endpoint,
@@ -47,6 +48,7 @@ async fn start_mixed(
     tokio::task::JoinHandle<()>,
     tokio::task::JoinHandle<()>,
 ) {
+    let (port, tcp_reservation, udp_reservation) = reserve_mixed_port().await;
     let portal = Portal::new_with_listen_host(
         Url::parse(&format!(
             "portal://secret@localhost:{port}?log=none&net=mix"
@@ -56,6 +58,8 @@ async fn start_mixed(
         Logger::new(LogLevel::None, false),
     )
     .unwrap();
+    drop(tcp_reservation);
+    drop(udp_reservation);
     let endpoint = portal
         .listen_endpoints()
         .unwrap()
@@ -84,6 +88,7 @@ async fn start_mixed(
     let (client_endpoint, quic) =
         connect_test_quic_to(SocketAddr::from(([127, 0, 0, 1], port))).await;
     (
+        port,
         portal,
         endpoint,
         client_endpoint,
@@ -117,9 +122,8 @@ fn request(header: FlowHeader, target: SocketAddr, payload: &[u8]) -> Vec<u8> {
 
 #[tokio::test]
 async fn asymmetric_tcp_flows_pair_in_both_directions() {
-    let port = free_port().await;
-    let (portal, endpoint, client_endpoint, quic, shutdown, quic_task, tcp_task) =
-        start_mixed(port).await;
+    let (port, portal, endpoint, client_endpoint, quic, shutdown, quic_task, tcp_task) =
+        start_mixed().await;
     let session = [0x5a; 16];
     authenticate_quic(&portal, &quic, session).await;
 
@@ -201,9 +205,8 @@ async fn asymmetric_tcp_flows_pair_in_both_directions() {
 
 #[tokio::test]
 async fn asymmetric_udp_flows_pair_in_both_directions() {
-    let port = free_port().await;
-    let (portal, endpoint, client_endpoint, quic, shutdown, quic_task, tcp_task) =
-        start_mixed(port).await;
+    let (port, portal, endpoint, client_endpoint, quic, shutdown, quic_task, tcp_task) =
+        start_mixed().await;
     let session = [0x6b; 16];
     authenticate_quic(&portal, &quic, session).await;
 

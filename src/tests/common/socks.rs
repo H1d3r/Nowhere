@@ -124,11 +124,7 @@ async fn tcp_connect_uses_only_no_auth_and_preserves_domain() {
         stream.write_all(&payload).await.unwrap();
     });
 
-    let config = parse(&format!(
-        "portal://secret@127.0.0.1:2077?socks=localhost:{}",
-        endpoint.port()
-    ))
-    .unwrap();
+    let config = parse(&format!("portal://secret@127.0.0.1:2077?socks={endpoint}")).unwrap();
     let dialer = OutboundDialer::new("auto".to_string(), config);
     let target = Target::domain("target.test", 443).unwrap();
     let mut stream = dialer
