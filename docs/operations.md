@@ -40,7 +40,7 @@ duplex stream from the uplink set.
 
 ```text
                          +-------------------------+
-new TLS-carried Flow --->| live Shard below 12?    |
+new TLS-carried Flow --->| live Shard below 4?     |
                          +------------+------------+
                                       |
                         +-------------+---------------+
@@ -57,7 +57,7 @@ new TLS-carried Flow --->| live Shard below 12?    |
                               open logical stream
 ```
 
-While load grows from zero, a direction uses `ceil(active flows / 12)` Shards.
+While load grows from zero, a direction uses `ceil(active flows / 4)` Shards.
 After load falls, an empty Shard remains available during its idle period:
 
 ```text

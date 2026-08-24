@@ -38,7 +38,7 @@ use super::config::PortalClientConfig;
 use super::tls::{ClientTls, EXPORTER_LABEL};
 
 const QUIC_DATAGRAM_BUFFER_SIZE: usize = 4 * 1024 * 1024;
-const TLS_MUX_FLOWS_PER_SHARD: usize = 12;
+const TLS_MUX_FLOWS_PER_SHARD: usize = 4;
 
 #[derive(Clone)]
 pub(super) struct ClientSignals {

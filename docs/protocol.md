@@ -250,7 +250,7 @@ payload beyond either advertised receive window.
 
 Client-side Shards open lazily in separate uplink and downlink sets. A new flow
 uses the least-loaded live Shard for its TLS direction; a new Shard opens when
-all live Shards in that set have 12 active flows. A symmetric `tcp/tcp` flow
+all live Shards in that set have 4 active flows. A symmetric `tcp/tcp` flow
 uses one duplex stream from the uplink set. A fully idle Shard closes after 30
 seconds. Portal applies the same timeout to an authenticated Mux carrier with
 no active streams. Sharding is runtime placement and does not add wire fields.

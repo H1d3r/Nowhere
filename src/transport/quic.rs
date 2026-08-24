@@ -30,14 +30,14 @@ impl QuicFlowControl {
 
 /// Reads the process-wide QUIC flow-control profile.
 ///
-/// The balanced default covers common WAN bandwidth-delay products while the
-/// throughput profile preserves the established high-BDP values.
+/// The throughput profile preserves the established high-BDP values; memory
+/// and balanced remain available through the environment override.
 pub(crate) fn quic_flow_control() -> Result<QuicFlowControl> {
     parse_quic_profile(std::env::var("NOW_QUIC_MEMORY_PROFILE").ok().as_deref())
 }
 
 fn parse_quic_profile(value: Option<&str>) -> Result<QuicFlowControl> {
-    match value.unwrap_or("balanced") {
+    match value.unwrap_or("throughput") {
         "memory" => Ok(QuicFlowControl::MEMORY),
         "balanced" => Ok(QuicFlowControl::BALANCED),
         "throughput" => Ok(QuicFlowControl::THROUGHPUT),

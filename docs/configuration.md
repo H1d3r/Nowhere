@@ -74,7 +74,7 @@ traffic. The direction names retain the same meaning through a native Portal
 chain.
 
 With `mux=1`, Shards open lazily according to active flow pressure. New flows
-use the least-loaded shard; a shard carries 12 active flows before another
+use the least-loaded shard; a shard carries 4 active flows before another
 opens and closes after 30 seconds fully idle. With `mux=0`, every TLS-carried
 Flow owns one on-demand lane that closes with the Flow.
 
@@ -109,7 +109,7 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_MAX_TCP_FLOWS` | `1024` | TCP flows per authenticated client session |
 | `NOW_MAX_UDP_FLOWS` | `256` | UDP flows per authenticated client session |
 | `NOW_QUIC_UDP_QUEUE_BYTES` | `4 MiB` | QUIC datagram and reassembly byte budget |
-| `NOW_QUIC_MEMORY_PROFILE` | `balanced` | QUIC profile: `memory`, `balanced`, or `throughput` |
+| `NOW_QUIC_MEMORY_PROFILE` | `throughput` | QUIC profile: `memory`, `balanced`, or `throughput` |
 | `NOW_MAX_PENDING_PAIRS` | `1024` | Pending split-flow pairs per Portal session |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Portal split-flow pairing deadline |
 | `NOW_FLOW_SETUP_TIMEOUT` | `20s` | Client wait for `SetupResult` |
@@ -129,7 +129,7 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 Mux limits are library defaults with strict validation: 512 KiB per stream and
 connection, 256 active streams per Mux, and 512 queued frame slots. Payload in
 the queue is also charged against the 512 KiB connection window, so slot capacity
-does not multiply the byte bound. The application uses a 12-flow shard density
+does not multiply the byte bound. The application uses a 4-flow shard density
 and retires fully idle shards after 30 seconds. `NOW_MAX_TCP_FLOWS` is the hard
 per-session logical TCP limit shared by TLS and QUIC. `NOW_MAX_UDP_FLOWS` is the
 corresponding UDP limit shared by UoT and QUIC DATAGRAM. Excess flows fail

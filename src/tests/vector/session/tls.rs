@@ -5,7 +5,7 @@ use super::*;
 use tokio::io::AsyncReadExt;
 
 #[tokio::test]
-async fn shard_selection_stops_at_twelve_active_flows() {
+async fn shard_selection_stops_at_four_active_flows() {
     let (left, right) = tokio::io::duplex(1 << 20);
     let (handle, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
     let (_peer, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();

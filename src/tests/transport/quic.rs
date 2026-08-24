@@ -16,8 +16,11 @@ fn profiles_keep_streams_within_connection_limits() {
 }
 
 #[test]
-fn balanced_is_the_resource_safe_default() {
-    assert_eq!(parse_quic_profile(None).unwrap(), QuicFlowControl::BALANCED);
+fn throughput_is_the_default_profile() {
+    assert_eq!(
+        parse_quic_profile(None).unwrap(),
+        QuicFlowControl::THROUGHPUT
+    );
 }
 
 #[test]
