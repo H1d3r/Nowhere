@@ -3,6 +3,7 @@
 
 //! End-to-end Portal/Vector carrier matrix through Vector's SOCKS5 ingress.
 
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -76,12 +77,19 @@ impl TestRuntime {
 
 async fn reserve_mixed_port() -> (u16, TcpListener, UdpSocket) {
     for _ in 0..32 {
-        let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = tcp.local_addr().unwrap().port();
-        match UdpSocket::bind(("127.0.0.1", port)).await {
-            Ok(udp) => return (port, tcp, udp),
-            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => continue,
-            Err(error) => panic!("failed to reserve UDP test port {port}: {error}"),
+        let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let port = udp.local_addr().unwrap().port();
+        match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(tcp) => return (port, tcp, udp),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::AddrInUse | ErrorKind::PermissionDenied
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => panic!("failed to reserve TCP test port {port}: {error}"),
         }
     }
     panic!("failed to reserve one local port for TCP and UDP");
