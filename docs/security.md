@@ -41,7 +41,7 @@ and DATA for unknown streams close the carrier. Late terminal and credit frames
 for a terminal stream are idempotent.
 
 Default limits are 512 KiB per stream and per Mux connection and 256 active
-streams per Mux. With client `mux=1`, Vector or Portal `next` places at most 12
+streams per Mux. With client `mux=1`, Vector or Portal `next` places at most 4
 active flows on a shard before opening another, distributes new flows to the
 least-loaded shard, and closes a fully idle shard after 30 seconds. One
 authenticated inbound Mux carrier is subject to the same fully idle timeout.
@@ -60,7 +60,7 @@ authenticated client session
     +-- TCP budget: 1,024 active flows
     |     |
     |     +-- dedicated TLS lane
-    |     +-- Mux stream --> TLS Shard, target density 12
+    |     +-- Mux stream --> TLS Shard, target density 4
     |     +-- QUIC reliable stream
     |
     +-- UDP budget: 256 active flows

@@ -18,7 +18,7 @@ The important memory bounds are the 1,024 concurrent TCP flows and 256 UDP flows
 per authenticated client session, the 512 KiB per-stream and per-Mux receive
 windows, 256 streams per Mux, bounded reusable relay-buffer caches, and QUIC UDP
 queue/reassembly limits. UoT and QUIC DATAGRAM share the UDP flow limit. TLS
-shards originated with `mux=1` by Vector or a Portal `next` client target 12
+shards originated with `mux=1` by Vector or a Portal `next` client target 4
 active flows, use least-loaded placement, and close after 30 seconds fully
 idle. Frame queue slots do not bypass byte credit. Windows are granted as
 permits and payload is admitted incrementally.
@@ -27,10 +27,9 @@ At a session flow limit, TCP setup returns a failure immediately. A SOCKS5 UDP
 packet whose logical route cannot be admitted receives no UDP response; the
 association remains available for existing routes.
 
-QUIC uses the shared `balanced` memory profile by default. Select `throughput`
-only for high-bandwidth, high-RTT paths after capacity testing; select `memory`
-when connection density matters more than a single flow's bandwidth-delay
-product.
+QUIC uses the shared `throughput` memory profile by default. Select `balanced`
+or `memory` when connection density matters more than a single flow's
+bandwidth-delay product.
 
 ### TLS Shard placement
 
