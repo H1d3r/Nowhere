@@ -58,7 +58,7 @@ fn ignores_unknown_values_and_keeps_the_first_duplicate() {
 
 #[test]
 fn rejects_invalid_selected_values_but_accepts_disabled_identity_options() {
-    assert!(parse("vector://secret@example.com:2077?socks=:1080&up=mix").is_err());
+    assert!(parse("vector://secret@example.com:2077?socks=:1080&up=auto").is_err());
     assert!(parse("vector://secret@example.com:2077?socks=:1080&rate=-1").is_err());
     for sni in ["", "none"] {
         let config = parse(&format!(

@@ -50,6 +50,7 @@ impl fmt::Display for MuxMode {
 pub(crate) enum CarrierMode {
     Tcp,
     Udp,
+    Mix,
 }
 
 impl CarrierMode {
@@ -58,8 +59,13 @@ impl CarrierMode {
             None => Ok(Self::Udp),
             Some("tcp") => Ok(Self::Tcp),
             Some("udp") => Ok(Self::Udp),
-            Some(_) => bail!("vector::config: {name} must be tcp or udp"),
+            Some("mix") => Ok(Self::Mix),
+            Some(_) => bail!("vector::config: {name} must be tcp, udp, or mix"),
         }
+    }
+
+    pub(crate) const fn is_mix(self) -> bool {
+        matches!(self, Self::Mix)
     }
 }
 
@@ -96,6 +102,11 @@ impl PortalClientConfig {
             .map_err(|error| anyhow!("vector::config: {error}"))?;
         let mux = MuxMode::parse(query.get("mux").map(String::as_str))
             .map_err(|error| anyhow!("vector::config: {error}"))?;
+        let mux = if up == CarrierMode::Udp && down == CarrierMode::Udp {
+            MuxMode::Disabled
+        } else {
+            mux
+        };
         let sni = query
             .get("sni")
             .filter(|value| !value.is_empty() && value.as_str() != "none")
@@ -175,6 +186,7 @@ impl fmt::Display for CarrierMode {
         formatter.write_str(match self {
             Self::Tcp => "tcp",
             Self::Udp => "udp",
+            Self::Mix => "mix",
         })
     }
 }
@@ -291,6 +303,11 @@ impl VectorConfig {
             (CarrierMode::Tcp, CarrierMode::Udp) => 1,
             (CarrierMode::Udp, CarrierMode::Tcp) => 2,
             (CarrierMode::Udp, CarrierMode::Udp) => 3,
+            (CarrierMode::Mix, CarrierMode::Tcp) => 4,
+            (CarrierMode::Mix, CarrierMode::Udp) => 5,
+            (CarrierMode::Tcp, CarrierMode::Mix) => 6,
+            (CarrierMode::Udp, CarrierMode::Mix) => 7,
+            (CarrierMode::Mix, CarrierMode::Mix) => 8,
         }
     }
 

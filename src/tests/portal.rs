@@ -208,8 +208,8 @@ fn disabled_next_ignores_all_native_upstream_options() {
 #[test]
 fn enabled_next_validates_only_effective_upstream_options() {
     for suffix in [
-        "up=mix",
-        "down=mix",
+        "up=auto",
+        "down=tls",
         "mux=",
         "mux=2",
         "mux=true",
