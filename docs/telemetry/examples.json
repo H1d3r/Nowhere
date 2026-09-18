@@ -1,6 +1,23 @@
 {
   "valid": [
     {
+      "type": "hello",
+      "data": {
+        "instance": {
+          "telemetry_protocol": "nowhere.telemetry",
+          "id": "0123456789abcdef0123456789abcdef",
+          "role": "portal",
+          "pid": 42,
+          "version": "2.0.1",
+          "endpoint": "*:2077",
+          "config_summary": "listen=*:2077 tls=1 rate=0 etar=0 dial=auto morph=0 socks=none next=none",
+          "telemetry_interval_ms": 1000
+        },
+        "lifecycle": "READY",
+        "lifecycle_reason": "LISTENING"
+      }
+    },
+    {
       "type": "subscribe",
       "data": {
         "request_id": 1,

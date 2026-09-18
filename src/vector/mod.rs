@@ -206,13 +206,21 @@ impl Vector {
             telemetry_interval().context("vector::Vector::new: invalid NOW_TELEMETRY_INTERVAL")?;
         let credentials = Credentials::new(&parsed_url)?;
         let telemetry_summary = format!(
-            "portal={} up={} down={} mux={} morph={} socks={}",
+            "portal={} up={} down={} mux={} morph={} socks={} rate={} etar={} sni={} pin={}",
             config.portal_endpoint(),
             config.up,
             config.down,
             config.mux,
             u8::from(config.morph),
             config.socks.endpoint(),
+            config.rate_mbps,
+            config.etar_mbps,
+            config.sni.as_deref().unwrap_or("none"),
+            if config.pin.is_some() {
+                "present"
+            } else {
+                "none"
+            },
         );
         let telemetry = TelemetryHub::for_current_process(
             InstanceRole::Vector,

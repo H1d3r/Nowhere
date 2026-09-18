@@ -36,9 +36,9 @@ pub(crate) struct InstanceDescriptor {
     #[serde(skip)]
     pub(crate) incarnation: u64,
     pub(crate) version: String,
-    #[serde(skip)]
+    #[serde(default)]
     pub(crate) endpoint: String,
-    #[serde(skip)]
+    #[serde(default)]
     pub(crate) config_summary: String,
     pub(crate) telemetry_interval_ms: u64,
 }
@@ -61,14 +61,8 @@ impl InstanceDescriptor {
             uid,
             incarnation,
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            endpoint: {
-                let _ = endpoint.into();
-                "local".to_owned()
-            },
-            config_summary: {
-                let _ = config_summary.into();
-                String::new()
-            },
+            endpoint: super::privacy::endpoint(&endpoint.into()),
+            config_summary: super::privacy::config_summary(&config_summary.into()),
             telemetry_interval_ms: telemetry_interval.as_millis().min(u64::MAX as u128) as u64,
         })
     }
@@ -93,14 +87,8 @@ impl InstanceDescriptor {
             uid,
             incarnation: 0,
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            endpoint: {
-                let _ = endpoint;
-                "local".to_owned()
-            },
-            config_summary: {
-                let _ = config_summary;
-                String::new()
-            },
+            endpoint: super::privacy::endpoint(&endpoint),
+            config_summary: super::privacy::config_summary(&config_summary),
             telemetry_interval_ms: telemetry_interval.as_millis().min(u64::MAX as u128) as u64,
         }
     }

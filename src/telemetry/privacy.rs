@@ -14,6 +14,68 @@ use crate::protocol::Target;
 
 const ALIAS_CAPACITY: usize = 4_096;
 
+/// Operator metadata contains validated endpoints and effective options, never URLs.
+pub(crate) fn endpoint(value: &str) -> String {
+    let address = if value.starts_with(':') {
+        format!("0.0.0.0{value}")
+    } else {
+        value.to_owned()
+    };
+    if value.len() <= 512
+        && !value.contains(['@', '?', '#', '%', '\\'])
+        && !value.chars().any(|c| c.is_control() || c.is_whitespace())
+        && crate::common::validate_endpoint_url_input(&format!("portal://{address}"), "telemetry")
+            .is_ok()
+        && url::Url::parse(&format!("portal://{address}"))
+            .ok()
+            .and_then(|url| crate::common::ServiceEndpoint::parse(&url, true, "telemetry").ok())
+            .is_some()
+    {
+        value.to_owned()
+    } else {
+        "<redacted>".to_owned()
+    }
+}
+
+pub(crate) fn config_summary(value: &str) -> String {
+    value
+        .split_whitespace()
+        .take(64)
+        .filter_map(|token| {
+            let (key, value) = token.split_once('=')?;
+            let option = key.strip_prefix("next.").unwrap_or(key);
+            let safe = match option {
+                "listen" | "portal" | "socks" | "next" => {
+                    if value == "none" {
+                        value.to_owned()
+                    } else {
+                        endpoint(value)
+                    }
+                }
+                "up" | "down" | "net" if matches!(value, "tcp" | "udp" | "mix") => value.to_owned(),
+                "tls" if matches!(value, "0" | "1" | "2") => value.to_owned(),
+                "mux" | "morph" if matches!(value, "0" | "1") => value.to_owned(),
+                "rate" | "etar" => value.parse::<i32>().ok()?.to_string(),
+                "dial" if value == "auto" || value.parse::<std::net::IpAddr>().is_ok() => {
+                    value.to_owned()
+                }
+                "sni"
+                    if value.len() <= 253
+                        && value
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-')) =>
+                {
+                    value.to_owned()
+                }
+                "pin" => if value == "none" { "none" } else { "present" }.to_owned(),
+                _ => return None,
+            };
+            Some(format!("{key}={safe}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub(super) fn lifecycle_reason(value: &str) -> &str {
     match value {
         "STARTUP"

@@ -154,7 +154,18 @@ impl Portal {
             .unwrap_or_else(|| "none".to_owned());
         let next_summary = next.as_ref().map_or_else(
             || "next=none".to_owned(),
-            |(config, _)| format!("next={} {}", config.endpoint(), config.effective_route()),
+            |(config, _)| {
+                format!(
+                    "next={} {}",
+                    config.endpoint(),
+                    config
+                        .effective_route()
+                        .split_whitespace()
+                        .map(|option| format!("next.{option}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            },
         );
         let telemetry_summary = format!(
             "listen={endpoint_addr} tls={tls_mode} rate={rate_limit} etar={etar_limit} dial={dialer_ip} morph={} socks={socks_endpoint} {next_summary}",

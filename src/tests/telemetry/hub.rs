@@ -24,11 +24,13 @@ fn descriptor() -> InstanceDescriptor {
 }
 
 #[test]
-fn descriptor_does_not_serialize_sensitive_metadata() {
+fn descriptor_serializes_operator_metadata_without_local_identity() {
     let hub = TelemetryHub::new(descriptor());
     let encoded = serde_json::to_string(hub.descriptor()).unwrap();
-    assert!(!encoded.contains("2000"));
-    assert!(!encoded.contains("config_summary"));
+    assert!(encoded.contains("2000"));
+    assert!(encoded.contains("config_summary"));
+    assert!(!encoded.contains("\"uid\""));
+    assert!(!encoded.contains("incarnation"));
 }
 
 #[test]

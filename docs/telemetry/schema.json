@@ -33,6 +33,16 @@
           "type": "integer",
           "minimum": 250,
           "maximum": 60000
+        },
+        "endpoint": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Validated service endpoint, without credentials or URL query parameters."
+        },
+        "config_summary": {
+          "type": "string",
+          "maxLength": 33792,
+          "description": "Allowlisted effective key=value options. Pin values indicate presence only; upstream options use next. prefixes."
         }
       },
       "required": [

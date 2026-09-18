@@ -136,3 +136,36 @@ fn lifecycle_reasons_remain_useful_and_safe_across_publication() {
         "STOPPED: STATE_CHANGED"
     );
 }
+
+#[test]
+fn operator_metadata_preserves_ports_and_effective_options_without_secrets() {
+    for address in [
+        ":2077",
+        "0.0.0.0:2077",
+        "[::1]:2077",
+        "relay.example/tcp4:2077/udp6:3077",
+        "*/tcp:2077",
+    ] {
+        assert_eq!(endpoint(address), address);
+    }
+    for address in [
+        "key@relay.example:2077",
+        "relay.example:2077?key=secret",
+        "relay.example:2077/private",
+        "relay.example/tcp:2077/../tcp:3000",
+        "relay.example:2077\x1b[31m",
+        "relay.example:2077#secret",
+    ] {
+        assert_eq!(endpoint(address), "<redacted>", "{address}");
+    }
+    assert_eq!(
+        config_summary(
+            "listen=0.0.0.0:2077 tls=1 rate=100 etar=-1 dial=0.0.0.0 morph=1 socks=127.0.0.1:1080 next=relay.example:3077 next.up=udp next.down=mix next.mux=1 next.sni=relay.example next.pin=012345secret key=secret crt=/private/cert socks_password=secret secret"
+        ),
+        "listen=0.0.0.0:2077 tls=1 rate=100 etar=-1 dial=0.0.0.0 morph=1 socks=127.0.0.1:1080 next=relay.example:3077 next.up=udp next.down=mix next.mux=1 next.sni=relay.example next.pin=present"
+    );
+    assert_eq!(
+        config_summary("socks=user:password@127.0.0.1:1080 sni=bad\x1b[31m mux=secret"),
+        "socks=<redacted>"
+    );
+}

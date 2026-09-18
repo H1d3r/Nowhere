@@ -503,3 +503,63 @@ async fn listener_bind_failure_moves_lifecycle_to_stopped() {
     assert!(portal.run().await.is_err());
     assert_eq!(lifecycle.state(), Some(crate::common::LifeState::Stopped));
 }
+
+#[test]
+fn telemetry_metadata_retains_portal_and_upstream_configuration_without_credentials() {
+    let portal = Portal::new(
+        Url::parse("portal://shared-secret@0.0.0.0:2077?tls=1&rate=50&etar=80&morph=1&next=upstream-secret@relay.example:3077&up=udp&down=tcp&mux=1&sni=relay.example").unwrap(),
+        test_logger(),
+    ).unwrap();
+    let descriptor = portal.inner.telemetry.descriptor();
+    assert_eq!(descriptor.endpoint, "0.0.0.0:2077");
+    for option in [
+        "listen=0.0.0.0:2077",
+        "tls=1",
+        "rate=50",
+        "etar=80",
+        "morph=1",
+        "socks=none",
+        "next=relay.example:3077",
+        "next.up=udp",
+        "next.down=tcp",
+        "next.mux=1",
+        "next.sni=relay.example",
+        "next.pin=none",
+        "next.morph=1",
+    ] {
+        assert!(
+            descriptor
+                .config_summary
+                .split_whitespace()
+                .any(|value| value == option),
+            "missing {option}: {}",
+            descriptor.config_summary
+        );
+    }
+    let encoded = serde_json::to_string(descriptor).unwrap();
+    for secret in ["shared-secret", "upstream-secret", "user", "password"] {
+        assert!(!encoded.contains(secret));
+    }
+}
+
+#[test]
+fn telemetry_metadata_retains_portal_socks_endpoint_without_credentials() {
+    let portal = Portal::new(
+        Url::parse("portal://shared-secret@0.0.0.0:2077?socks=user:password@127.0.0.1:1080")
+            .unwrap(),
+        test_logger(),
+    )
+    .unwrap();
+    assert!(
+        portal
+            .inner
+            .telemetry
+            .descriptor()
+            .config_summary
+            .contains("socks=127.0.0.1:1080")
+    );
+    let encoded = serde_json::to_string(portal.inner.telemetry.descriptor()).unwrap();
+    for secret in ["shared-secret", "user", "password"] {
+        assert!(!encoded.contains(secret));
+    }
+}

@@ -52,3 +52,21 @@ async fn socks_bind_failure_moves_lifecycle_to_stopped() {
     assert!(vector.run().await.is_err());
     assert_eq!(lifecycle.state(), Some(crate::common::LifeState::Stopped));
 }
+
+#[test]
+fn telemetry_metadata_retains_vector_configuration_without_credentials() {
+    let vector = Vector::new(
+        Url::parse("vector://shared-secret@relay.example:2077?up=udp&down=tcp&mux=1&morph=1&socks=user:password@127.0.0.1:1080&rate=50&etar=80&sni=relay.example").unwrap(),
+        Logger::new(crate::common::LogLevel::None, false),
+    ).unwrap();
+    let descriptor = vector.inner.telemetry.descriptor();
+    assert_eq!(descriptor.endpoint, "127.0.0.1:1080");
+    assert_eq!(
+        descriptor.config_summary,
+        "portal=relay.example:2077 up=udp down=tcp mux=1 morph=1 socks=127.0.0.1:1080 rate=50 etar=80 sni=relay.example pin=none"
+    );
+    let encoded = serde_json::to_string(descriptor).unwrap();
+    for secret in ["shared-secret", "user", "password"] {
+        assert!(!encoded.contains(secret));
+    }
+}
