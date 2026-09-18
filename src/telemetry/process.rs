@@ -140,18 +140,23 @@ pub(super) fn process_uid() -> u32 {
 }
 
 pub(super) fn process_incarnation(pid: u32) -> Result<u64> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
         let _ = pid;
         Ok(now_unix_ms())
     }
+    #[cfg(windows)]
+    return read_process_incarnation(pid)
+        .ok_or_else(|| anyhow::anyhow!("telemetry process identity unavailable"));
     #[cfg(target_os = "linux")]
     read_process_incarnation(pid)
         .ok_or_else(|| anyhow::anyhow!("telemetry: failed to read /proc/{pid}/stat start time"))
 }
 
 pub(crate) fn read_process_incarnation(pid: u32) -> Option<u64> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    return windows_creation(pid);
+    #[cfg(all(not(target_os = "linux"), not(windows)))]
     {
         let _ = pid;
         None
@@ -173,11 +178,47 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        // Only a confirmed missing process permits registry cleanup.
+        result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        // The registry is per-user and validated again by the server hello.
-        pid != 0
+        use windows_sys::Win32::{Foundation::*, System::Threading::*};
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if process.is_null() {
+            return std::io::Error::last_os_error().raw_os_error()
+                != Some(ERROR_INVALID_PARAMETER as i32);
+        }
+        let mut code = 0;
+        let ok = unsafe { GetExitCodeProcess(process, &mut code) };
+        unsafe {
+            CloseHandle(process);
+        }
+        ok == 0 || code == 259
     }
+}
+
+#[cfg(windows)]
+fn windows_creation(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::{Foundation::*, System::Threading::*};
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if process.is_null() {
+        return None;
+    }
+    let mut created = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut exit = created;
+    let mut kernel = created;
+    let mut user = created;
+    let ok = unsafe { GetProcessTimes(process, &mut created, &mut exit, &mut kernel, &mut user) };
+    unsafe {
+        CloseHandle(process);
+    }
+    if ok == 0 {
+        return None;
+    }
+    let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+    Some(ticks.checked_sub(116_444_736_000_000_000)? / 10_000)
 }

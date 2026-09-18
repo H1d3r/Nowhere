@@ -34,6 +34,16 @@ tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring
 tokio-util = "0.7.19"
 url = "2.5.8"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+] }
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
