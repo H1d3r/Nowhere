@@ -238,19 +238,18 @@ pub(crate) struct RuntimeEvent {
     pub(crate) timestamp_ms: u64,
     pub(crate) level: RuntimeLevel,
     pub(crate) kind: RuntimeKind,
-    #[serde(rename = "code")]
     pub(crate) message: String,
     pub(crate) client: Option<String>,
 }
 
 impl RuntimeEvent {
-    pub(crate) fn new(level: RuntimeLevel, kind: RuntimeKind, _message: impl Into<String>) -> Self {
+    pub(crate) fn new(level: RuntimeLevel, kind: RuntimeKind, message: impl Into<String>) -> Self {
         Self {
             sequence: 0,
             timestamp_ms: now_unix_ms(),
             level,
             kind,
-            message: format!("{kind:?}_{level:?}").to_ascii_uppercase(),
+            message: super::privacy::runtime_message(kind, level, &message.into()),
             client: None,
         }
     }
@@ -329,3 +328,7 @@ impl Default for LifecycleSnapshot {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/telemetry/contract.rs"]
+pub(crate) mod contract_tests;

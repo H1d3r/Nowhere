@@ -131,25 +131,7 @@ impl TelemetryHub {
             "STOPPED".to_owned()
         };
         let reason = reason.into();
-        let reason = if matches!(
-            reason.as_str(),
-            "STARTUP"
-                | "LISTENING"
-                | "SIGINT"
-                | "SIGTERM"
-                | "TCP_LISTENER_EXIT"
-                | "QUIC_LISTENER_EXIT"
-                | "SOCKS_LISTENER_EXIT"
-                | "DRAINED"
-                | "CLEANUP_COMPLETE"
-                | "TIMEOUT"
-                | "FORCED"
-                | "START_FAILED"
-        ) {
-            reason
-        } else {
-            "STATE_CHANGED".to_owned()
-        };
+        let reason = super::privacy::lifecycle_reason(&reason).to_owned();
         self.lifecycle.send_replace(LifecycleSnapshot {
             state: state.clone(),
             reason: reason.clone(),
@@ -209,7 +191,7 @@ impl TelemetryHub {
         if self.detail_clients.load(Ordering::Relaxed) == 0 {
             return;
         }
-        event.message = format!("{:?}_{:?}", event.kind, event.level).to_ascii_uppercase();
+        event.message = super::privacy::runtime_message(event.kind, event.level, &event.message);
         event.client = event.client.map(|v| {
             self.privacy
                 .as_ref()
@@ -253,7 +235,7 @@ impl TelemetryHub {
                 .take(16)
                 .map(|v| privacy.alias("peer", v))
                 .collect(),
-            target: privacy.alias("target", &start.target),
+            target: super::privacy::target(&start.target),
             initial_uplink: start.initial_uplink.map(carrier_name).map(str::to_owned),
             initial_downlink: start.initial_downlink.map(carrier_name).map(str::to_owned),
             path: None,
@@ -297,7 +279,7 @@ impl TelemetryHub {
             upload_bytes,
             download_bytes,
             outcome,
-            error: error.map(|_| "FLOW_FAILED".to_owned()),
+            error: error.map(|value| super::privacy::error_reason(&value).to_owned()),
         }));
     }
 }

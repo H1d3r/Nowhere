@@ -1,0 +1,890 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nowhere:telemetry",
+  "title": "Nowhere local telemetry contract",
+  "$defs": {
+    "instance": {
+      "type": "object",
+      "properties": {
+        "telemetry_protocol": {
+          "const": "nowhere.telemetry"
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$",
+          "maxLength": 32
+        },
+        "role": {
+          "enum": [
+            "portal",
+            "vector"
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "version": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "telemetry_interval_ms": {
+          "type": "integer",
+          "minimum": 250,
+          "maximum": 60000
+        }
+      },
+      "required": [
+        "telemetry_protocol",
+        "id",
+        "role",
+        "pid",
+        "version",
+        "telemetry_interval_ms"
+      ],
+      "additionalProperties": false
+    },
+    "hello": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/instance"
+        },
+        "lifecycle": {
+          "enum": [
+            "STARTING",
+            "READY",
+            "DRAINING",
+            "STOPPED"
+          ]
+        },
+        "lifecycle_reason": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "instance",
+        "lifecycle",
+        "lifecycle_reason"
+      ],
+      "additionalProperties": false
+    },
+    "subscribe": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "subscription": {
+          "enum": [
+            "summary",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "subscription"
+      ],
+      "additionalProperties": false
+    },
+    "subscribed": {
+      "type": "object",
+      "properties": {
+        "request_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "subscription": {
+          "enum": [
+            "summary",
+            "detail"
+          ]
+        }
+      },
+      "required": [
+        "request_id",
+        "subscription"
+      ],
+      "additionalProperties": false
+    },
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "uptime_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tcp_logical_up": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tcp_logical_down": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "udp_logical_up": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "udp_logical_down": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tls_payload_up": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tls_payload_down": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "quic_payload_up": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "quic_payload_down": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tls_carriers_active": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "quic_carriers_active": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "ping_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "tcp_active": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "udp_active": {
+          "type": "integer",
+          "minimum": -9223372036854775808,
+          "maximum": 9223372036854775807
+        },
+        "cpu_percent": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rss_bytes": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "open_fds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp_ms",
+        "uptime_ms",
+        "tcp_logical_up",
+        "tcp_logical_down",
+        "udp_logical_up",
+        "udp_logical_down",
+        "tls_payload_up",
+        "tls_payload_down",
+        "quic_payload_up",
+        "quic_payload_down",
+        "tls_carriers_active",
+        "quic_carriers_active",
+        "ping_ms",
+        "tcp_active",
+        "udp_active",
+        "cpu_percent",
+        "rss_bytes",
+        "open_fds"
+      ],
+      "additionalProperties": false
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "STARTING",
+            "READY",
+            "DRAINING",
+            "STOPPED"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "timestamp_ms"
+      ],
+      "additionalProperties": false
+    },
+    "runtime_event": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warn",
+            "error"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "lifecycle",
+            "listener",
+            "authentication",
+            "session",
+            "carrier",
+            "mux",
+            "backpressure",
+            "datagram",
+            "reconnect"
+          ]
+        },
+        "client": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^C[0-9]{3,20}$",
+              "maxLength": 21
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 160,
+          "pattern": "^[ -~]+$",
+          "description": "Safe diagnostic template and optional classified reason; never a raw error chain."
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp_ms",
+        "level",
+        "kind",
+        "message",
+        "client"
+      ],
+      "additionalProperties": false
+    },
+    "access_start": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "protocol": {
+          "enum": [
+            "tcp",
+            "udp"
+          ]
+        },
+        "client": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^C[0-9]{3,20}$",
+              "maxLength": 21
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path_peers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^P[0-9]{3,20}$",
+            "maxLength": 21
+          },
+          "maxItems": 16
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 261,
+          "description": "Validated destination host:port, bracketed for IPv6; <redacted> for invalid input."
+        },
+        "initial_uplink": {
+          "anyOf": [
+            {
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_downlink": {
+          "anyOf": [
+            {
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sequence",
+        "truncated",
+        "id",
+        "timestamp_ms",
+        "protocol",
+        "client",
+        "path_peers",
+        "target",
+        "initial_uplink",
+        "initial_downlink"
+      ],
+      "additionalProperties": false
+    },
+    "access_finish": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "protocol": {
+          "enum": [
+            "tcp",
+            "udp"
+          ]
+        },
+        "client": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^C[0-9]{3,20}$",
+              "maxLength": 21
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path_peers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^P[0-9]{3,20}$",
+            "maxLength": 21
+          },
+          "maxItems": 16
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 261,
+          "description": "Validated destination host:port, bracketed for IPv6; <redacted> for invalid input."
+        },
+        "initial_uplink": {
+          "anyOf": [
+            {
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_downlink": {
+          "anyOf": [
+            {
+              "enum": [
+                "tcp",
+                "udp"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "upload_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "download_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "outcome": {
+          "enum": [
+            "success",
+            "error",
+            "timeout",
+            "cancelled",
+            "rejected"
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "enum": [
+                "certificate expired",
+                "unknown certificate issuer",
+                "certificate verification failed",
+                "connection refused",
+                "DNS lookup failed",
+                "connection timed out",
+                "network unreachable",
+                "connection reset by peer",
+                "broken pipe",
+                "unexpected EOF",
+                "connection closed",
+                "authentication failed",
+                "resource limit reached",
+                "permission denied",
+                "handshake failed",
+                "protocol error",
+                "operation cancelled",
+                "operation failed",
+                "idle timeout",
+                "flow pairing timed out",
+                "service draining",
+                "target connection failed",
+                "invalid request",
+                "metadata conflict",
+                "session replaced",
+                "internal error",
+                "flow setup rejected",
+                "datagram route unavailable"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "sequence",
+        "truncated",
+        "id",
+        "timestamp_ms",
+        "protocol",
+        "client",
+        "path_peers",
+        "target",
+        "initial_uplink",
+        "initial_downlink",
+        "duration_ms",
+        "upload_bytes",
+        "download_bytes",
+        "outcome",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "gap": {
+      "type": "object",
+      "properties": {
+        "missed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "missed"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_COMMAND",
+            "RATE_LIMITED"
+          ]
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    "registry": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "object",
+          "properties": {
+            "registry_name": {
+              "type": "string",
+              "pattern": "^nowhere\\.[0-9a-f]{32}$"
+            },
+            "uid": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            "incarnation": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 18446744073709551615
+            }
+          },
+          "required": [
+            "registry_name",
+            "uid",
+            "pid",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "endpoint": {
+          "type": "string",
+          "maxLength": 255
+        },
+        "namespace": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "protocol": {
+          "const": "nowhere.telemetry"
+        },
+        "transport": {
+          "enum": [
+            "unix_socket",
+            "named_pipe"
+          ]
+        }
+      },
+      "required": [
+        "instance",
+        "endpoint",
+        "namespace",
+        "protocol",
+        "transport"
+      ],
+      "additionalProperties": false
+    },
+    "hello_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "hello"
+        },
+        "data": {
+          "$ref": "#/$defs/hello"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "subscribe_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "subscribe"
+        },
+        "data": {
+          "$ref": "#/$defs/subscribe"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "subscribed_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "subscribed"
+        },
+        "data": {
+          "$ref": "#/$defs/subscribed"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "snapshot_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "snapshot"
+        },
+        "data": {
+          "$ref": "#/$defs/snapshot"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "lifecycle_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "lifecycle"
+        },
+        "data": {
+          "$ref": "#/$defs/lifecycle"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "runtime_event_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "runtime_event"
+        },
+        "data": {
+          "$ref": "#/$defs/runtime_event"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "access_start_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "access_start"
+        },
+        "data": {
+          "$ref": "#/$defs/access_start"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "access_finish_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "access_finish"
+        },
+        "data": {
+          "$ref": "#/$defs/access_finish"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "gap_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "gap"
+        },
+        "data": {
+          "$ref": "#/$defs/gap"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "error_message": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "data": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "required": [
+        "type",
+        "data"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/registry"
+    },
+    {
+      "$ref": "#/$defs/hello_message"
+    },
+    {
+      "$ref": "#/$defs/subscribe_message"
+    },
+    {
+      "$ref": "#/$defs/subscribed_message"
+    },
+    {
+      "$ref": "#/$defs/snapshot_message"
+    },
+    {
+      "$ref": "#/$defs/lifecycle_message"
+    },
+    {
+      "$ref": "#/$defs/runtime_event_message"
+    },
+    {
+      "$ref": "#/$defs/access_start_message"
+    },
+    {
+      "$ref": "#/$defs/access_finish_message"
+    },
+    {
+      "$ref": "#/$defs/gap_message"
+    },
+    {
+      "$ref": "#/$defs/error_message"
+    }
+  ]
+}

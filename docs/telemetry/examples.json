@@ -1,0 +1,80 @@
+{
+  "valid": [
+    {
+      "type": "subscribe",
+      "data": {
+        "request_id": 1,
+        "subscription": "detail"
+      }
+    },
+    {
+      "type": "subscribed",
+      "data": {
+        "request_id": 1,
+        "subscription": "detail"
+      }
+    },
+    {
+      "type": "gap",
+      "data": {
+        "missed": 3
+      }
+    },
+    {
+      "type": "runtime_event",
+      "data": {
+        "sequence": 1,
+        "timestamp_ms": 1770000000000,
+        "level": "warn",
+        "kind": "carrier",
+        "message": "TLS carrier connection failed: connection refused",
+        "client": "C001"
+      }
+    },
+    {
+      "type": "access_finish",
+      "data": {
+        "sequence": 2,
+        "truncated": false,
+        "id": 1,
+        "timestamp_ms": 1770000000462,
+        "duration_ms": 462,
+        "protocol": "tcp",
+        "client": "C001",
+        "path_peers": [
+          "P001"
+        ],
+        "target": "example.com:443",
+        "initial_uplink": "tcp",
+        "initial_downlink": "udp",
+        "upload_bytes": 1864,
+        "download_bytes": 6431,
+        "outcome": "success",
+        "error": null
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "type": "subscribe",
+      "data": {
+        "request_id": 1,
+        "subscription": "raw"
+      }
+    },
+    {
+      "type": "subscribe",
+      "data": {
+        "request_id": 1,
+        "subscription": "detail",
+        "reveal": true
+      }
+    },
+    {
+      "type": "execute",
+      "data": {
+        "command": "ls"
+      }
+    }
+  ]
+}

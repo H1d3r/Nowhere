@@ -3,8 +3,8 @@ use std::sync::atomic::Ordering;
 use crate::protocol::Carrier;
 use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    AccessOutcome, AccessStart, InstanceRole, ServerMessage, TELEMETRY_PROTOCOL, TelemetryHub,
-    TrafficProtocol,
+    AccessOutcome, AccessStart, InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel,
+    ServerMessage, TELEMETRY_PROTOCOL, TelemetryHub, TrafficProtocol,
 };
 use crate::transport::Stats;
 
@@ -102,4 +102,28 @@ fn detail_guards_balance_switches_and_drop() {
     drop(second);
     assert_eq!(hub.detail_clients.load(Ordering::Relaxed), 0);
     drop(receiver);
+}
+
+#[test]
+fn publisher_rechecks_runtime_diagnostics_before_delivery() {
+    let hub = TelemetryHub::new(descriptor());
+    let mut events = hub.event_receiver();
+    let _detail = hub.detail_guard();
+    let mut event = RuntimeEvent::new(
+        RuntimeLevel::Warn,
+        RuntimeKind::Carrier,
+        "QUIC carrier connected",
+    );
+    event.message = "QUIC carrier connected: secret-key /private/key.pem\x1b[31m".to_owned();
+    event.client = Some("203.0.113.5:4321".to_owned());
+    hub.emit_runtime(event);
+    let Ok(ServerMessage::RuntimeEvent(event)) = events.try_recv() else {
+        panic!("missing runtime event")
+    };
+    assert_eq!(event.message, "QUIC carrier connected: operation failed");
+    assert_eq!(event.client.as_deref(), Some("C001"));
+    let encoded = serde_json::to_string(&event).unwrap();
+    assert!(encoded.contains("\"message\""));
+    assert!(!encoded.contains("secret-key"));
+    assert!(!encoded.contains("203.0.113.5"));
 }
