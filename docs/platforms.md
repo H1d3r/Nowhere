@@ -106,10 +106,62 @@ The TUI runs inside the same container as the relay:
 docker exec -it nowhere-portal /nowhere tui
 ```
 
-The relay and TUI must use the same UID. The image does not force a user. With
-`--user`, the mounted key must be readable by that UID and `/tmp` must be
-writable, for example through `--tmpfs /tmp`. Read-only containers need the
-same tmpfs for TUI discovery.
+The relay and TUI must use the same UID and system temporary directory.
+Telemetry uses a private Unix socket, not a published network port. Run third-party
+collectors inside the same container. Host-to-container, sidecar and cross-container
+subscription are outside the supported contract; do not share telemetry directories
+across PID or user namespaces.
+
+The image supplies `/tmp` with mode `1777` and does not force a user. A non-root
+UID can create its own mode-`0700` directory. Mounted certificates and keys must
+also be readable by that UID. Read-only containers need writable temporary storage:
+
+```text
+docker run -d --rm --name nowhere-portal \
+  --user 10001:10001 --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777 \
+  -p 2000:2000/tcp -p 2000:2000/udp \
+  ghcr.io/nodepassproject/nowhere:latest \
+  'portal://change-me@:2000'
+docker exec --user 10001:10001 -it nowhere-portal /nowhere tui
+```
+
+For Kubernetes, mount an in-memory `emptyDir` at `/tmp`, give the service and
+exec/collector the same UID, and ensure the mounted directory permits that UID
+to create its private directory. For example, this container/volume fragment
+uses a group-writable temporary mount and requires no privileged init process:
+
+```yaml
+spec:
+  securityContext:
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+  containers:
+    - name: nowhere
+      image: ghcr.io/nodepassproject/nowhere:latest
+      args: ['portal://change-me@:2000']
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: temporary
+          mountPath: /tmp
+  volumes:
+    - name: temporary
+      emptyDir:
+        medium: Memory
+        sizeLimit: 16Mi
+```
+
+A missing, full or unwritable temporary mount disables telemetry with a warning;
+forwarding continues. No TCP fallback, extra capabilities or host networking
+are needed. Registry files are written once; messages and history are not stored
+in the mount. Process memory and tmpfs count against container resource budgets.
+Normal shutdown removes instance files; forced termination can leave files until
+safe discovery cleanup or destruction of the temporary mount.
 
 ## Command lines
 
@@ -137,9 +189,10 @@ managers may send SIGINT or SIGTERM. Windows services should use a wrapper
 that forwards a console termination event and allows `NOW_SHUTDOWN_TIMEOUT` to
 complete.
 
-Local TUI discovery uses a per-user registry in the operating system's
-temporary directory and a loopback TCP control socket. It does not depend on
-Unix domain sockets or `/proc`.
+Local TUI discovery uses a protected per-user registry in the system temporary
+directory and local IPC: Unix domain sockets or Windows named pipes. Linux also
+checks boot, PID namespace and user namespace identity before PID-based cleanup.
+See the [telemetry contract](telemetry.md).
 
 ## Telemetry
 

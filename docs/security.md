@@ -124,12 +124,24 @@ cannot leave an unbounded allocator cache behind.
 
 ## Local telemetry
 
-The TUI control plane binds only IPv4 loopback and publishes a descriptor in
-the platform's per-user temporary directory. The client validates the registry
-identity against the server hello. No shared keys or payload bytes enter
-telemetry. Unix registry files receive owner-only permissions; every platform
-also validates the per-user descriptor and server identity before displaying
-an instance.
+Telemetry uses protected Unix domain sockets or local-only Windows named pipes,
+with access restricted to the same operating-system user. It has no network
+listener and never falls back to TCP. The client validates discovery, endpoint
+and peer identity; a self-reported hello is not independent authentication.
+
+No shared keys, business payloads, raw endpoints or configuration summaries enter
+telemetry output. Client, target and peer identities are instance-local keyed
+pseudonyms; correlation, timing and traffic size remain observable. Events expose
+fixed codes rather than arbitrary error strings. The TUI cannot reveal raw
+addresses. Independent stdout/stderr business logs retain their own policy.
+
+Same-user compromise and administrator access are outside this isolation boundary.
+Authorized collectors control what they store or forward after receipt. Queues,
+connections, frames and commands are bounded. Telemetry initializes only if
+permissions and identity can be established; otherwise forwarding continues
+without it. Container subscription is supported within the same container and
+user, not through shared cross-namespace directories. See the
+[telemetry contract](telemetry.md) for exact fields, limits and discovery rules.
 
 ## Threat boundary
 

@@ -12,6 +12,7 @@ Each document owns one part of the Nowhere interface.
 | Understand peer and carrier contracts | [Interoperability](interoperability.md) |
 | Implement the wire format | [Protocol](protocol.md) |
 | Connect another client or service | [Integrations](integrations.md) |
+| Local telemetry contract and schema | [Telemetry](telemetry.md) |
 
 [Configuration](configuration.md) defines command URLs and runtime settings.
 [Protocol](protocol.md) defines bytes exchanged between peers. The other guides

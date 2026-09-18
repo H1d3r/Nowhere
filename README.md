@@ -174,11 +174,12 @@ Open the local TUI from another terminal:
 ## Live operations
 
 <p align="center">
-  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, privacy-aware access logs, runtime events, filtering, pause, and help">
+  <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, anonymous access logs, runtime events, filtering, pause, and help">
 </p>
 
 The read-only TUI discovers local Portal and Vector instances and presents
-traffic, carrier, process, and log data without controlling their lifecycle.
+traffic, carrier, process, and anonymized event data without controlling their lifecycle.
+Third-party clients use the same [local telemetry contract](docs/telemetry.md).
 
 ## Public deployment
 
