@@ -85,23 +85,20 @@ fn render_selected_card(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ]),
         Line::from(vec![
             Span::styled("LST ", dim(app)),
-            Span::raw(format::truncate(
+            Span::raw(format::instance_endpoint(
                 &instance.meta.endpoint,
                 content_width.saturating_sub(4),
             )),
         ]),
     ];
     for (index, config) in config_lines.into_iter().enumerate() {
-        lines.push(
-            Line::from(vec![
-                Span::styled(if index == 0 { "CFG " } else { "    " }, dim(app)),
-                Span::raw(config),
-            ])
-            .style(dim(app)),
-        );
+        lines.push(Line::from(vec![
+            Span::styled(if index == 0 { "CFG " } else { "    " }, dim(app)),
+            Span::raw(config),
+        ]));
     }
     frame.render_widget(
-        Paragraph::new(lines).block(panel(" SELECTED ", false, app)),
+        Paragraph::new(lines).block(panel(" SELECTED · i config ", false, app)),
         area,
     );
 }
@@ -376,43 +373,40 @@ fn render_labeled_graph(
     render_sparkline(frame, graph, data, color, app);
 }
 
-fn wrap_tokens(value: &str, width: usize, max_lines: usize) -> Vec<String> {
+pub(super) fn wrap_tokens(value: &str, width: usize, max_lines: usize) -> Vec<String> {
     if width == 0 || max_lines == 0 {
         return Vec::new();
     }
-    let words = value.split_whitespace().collect::<Vec<_>>();
-    if words.is_empty() {
-        return vec!["—".to_owned()];
-    }
-    let mut lines = Vec::with_capacity(max_lines);
+    let mut lines = Vec::new();
     let mut current = String::new();
-    for (index, word) in words.iter().enumerate() {
-        let next_width =
-            current.chars().count() + usize::from(!current.is_empty()) + word.chars().count();
-        if next_width <= width {
-            if !current.is_empty() {
-                current.push(' ');
-            }
+    for word in value.split_whitespace() {
+        if !current.is_empty() && current.chars().count() + 1 + word.chars().count() <= width {
+            current.push(' ');
             current.push_str(word);
             continue;
         }
-        if lines.len() + 1 == max_lines {
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(&words[index..].join(" "));
-            lines.push(format::truncate(&current, width));
-            return lines;
+        if !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
         }
-        if current.is_empty() {
-            lines.push(format::truncate(word, width));
-        } else {
-            lines.push(current);
-            current = (*word).to_owned();
+        let chars: Vec<_> = word.chars().collect();
+        for chunk in chars.chunks(width) {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            current = chunk.iter().collect();
         }
     }
-    if !current.is_empty() && lines.len() < max_lines {
-        lines.push(format::truncate(&current, width));
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        return vec!["—".to_owned()];
+    }
+    if lines.len() > max_lines {
+        lines.truncate(max_lines);
+        let last = lines.last_mut().unwrap();
+        last.push('…');
+        *last = format::truncate(last, width);
     }
     lines
 }

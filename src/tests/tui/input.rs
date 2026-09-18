@@ -114,3 +114,32 @@ fn legacy_log_shortcuts_are_unbound() {
     assert!(!handle_key(&mut app, key(KeyCode::Char('4'))));
     assert_eq!(app.focus, Focus::Instances);
 }
+
+#[test]
+fn complete_config_navigation_is_bounded_and_returns_to_the_same_instance() {
+    let mut app = App::default();
+    app.apply(UiEvent::Upsert {
+        meta: InstanceMeta {
+            id: "test".into(),
+            endpoint: "0.0.0.0:2077".into(),
+            config_summary: "tls=1 rate=100 morph=1".into(),
+            ..InstanceMeta::default()
+        },
+        lifecycle: Lifecycle::Ready,
+        snapshot: None,
+    });
+    handle_key(&mut app, key(KeyCode::Char('i')));
+    assert!(app.show_config);
+    handle_key(&mut app, key(KeyCode::End));
+    assert_eq!(app.config_scroll, 3);
+    handle_key(&mut app, key(KeyCode::Down));
+    assert_eq!(app.config_scroll, 3);
+    handle_key(&mut app, key(KeyCode::Up));
+    assert_eq!(app.config_scroll, 2);
+    handle_key(&mut app, key(KeyCode::Home));
+    assert_eq!(app.config_scroll, 0);
+    handle_key(&mut app, key(KeyCode::Esc));
+    assert!(!app.show_config);
+    assert!(!app.should_quit);
+    assert_eq!(app.selected().unwrap().meta.id, "test");
+}

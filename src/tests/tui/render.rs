@@ -514,3 +514,26 @@ fn runtime_error_message_stays_on_the_event_row() {
 
 #[path = "render/completion_and_graphs.rs"]
 mod completion_and_graphs;
+
+#[test]
+fn config_overlay_keeps_complete_values_and_scrolls_to_last_option() {
+    let mut app = app_with_instance();
+    app.instances[0].meta.config_summary = "portal=a-very-long-relay-hostname.example:2077 up=udp down=tcp mux=1 morph=1 socks=127.0.0.1:1080 rate=100 etar=200 sni=relay.example pin=present".into();
+    app.show_config = true;
+    let output = rendered(72, 20, &app);
+    assert!(output.contains("a-very-long-relay-hostname.example:2077"));
+    assert!(output.contains("0.0.0.0:2000"));
+    app.config_scroll = 10;
+    let output = rendered(72, 20, &app);
+    assert!(output.contains("pin"));
+    assert!(output.contains("present"));
+}
+
+#[test]
+fn selected_config_wraps_long_values_instead_of_dropping_their_tail() {
+    let lines = super::metrics::wrap_tokens("portal=long-hostname.example:2077 mux=1", 16, 4);
+    assert_eq!(
+        lines.join("").replace(' ', ""),
+        "portal=long-hostname.example:2077mux=1"
+    );
+}

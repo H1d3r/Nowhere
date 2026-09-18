@@ -114,12 +114,16 @@ fn selection_survives_sorting_and_offline_instances_expire() {
         snapshot: None,
     });
     assert_eq!(app.selected().unwrap().meta.id, "second");
+    app.show_config = true;
+    app.config_scroll = 3;
     app.apply(UiEvent::Offline {
         id: "second".to_owned(),
     });
     let future = Instant::now() + OFFLINE_RETENTION + Duration::from_secs(1);
     app.tick(future);
     assert_eq!(app.selected().unwrap().meta.id, "first");
+    assert!(!app.show_config);
+    assert_eq!(app.config_scroll, 0);
 }
 
 #[test]

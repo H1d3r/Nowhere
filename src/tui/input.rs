@@ -27,6 +27,33 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         }
     }
 
+    if app.show_config {
+        let max_scroll = app.selected().map_or(0, |instance| {
+            instance.meta.config_summary.split_whitespace().count()
+        });
+        app.config_scroll = app.config_scroll.min(max_scroll);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => app.show_config = false,
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.config_scroll = app.config_scroll.saturating_sub(1)
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.config_scroll = app.config_scroll.saturating_add(1).min(max_scroll)
+            }
+            KeyCode::PageUp => app.config_scroll = app.config_scroll.saturating_sub(10),
+            KeyCode::PageDown => {
+                app.config_scroll = app.config_scroll.saturating_add(10).min(max_scroll)
+            }
+            KeyCode::Home => app.config_scroll = 0,
+            KeyCode::End => app.config_scroll = max_scroll,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.should_quit = true
+            }
+            _ => return false,
+        }
+        return true;
+    }
+
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.should_quit = true;
         return true;
@@ -35,6 +62,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char('?') => app.show_help = true,
+        KeyCode::Char('i') if app.selected().is_some() => {
+            app.show_config = true;
+            app.config_scroll = 0;
+        }
         KeyCode::Char('/') if app.page == Page::Logs => app.filter_editing = true,
         KeyCode::Char('c') if app.page == Page::Logs => app.clear_current_feed(),
         KeyCode::Char(' ') if app.page == Page::Logs => {

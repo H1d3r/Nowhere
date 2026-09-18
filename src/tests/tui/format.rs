@@ -37,3 +37,30 @@ fn truncates_on_character_boundaries() {
     assert_eq!(truncate("Nowhere", 5), "Nowh…");
     assert_eq!(truncate("遥测数据", 3), "遥测…");
 }
+
+#[test]
+fn abbreviated_instance_addresses_keep_single_and_dual_ports() {
+    assert_eq!(instance_endpoint("0.0.0.0:2077", 20), "0.0.0.0:2077");
+    let single = instance_endpoint("a-very-long-relay.example:2077", 20);
+    assert!(single.ends_with(":2077"));
+    assert_eq!(single.chars().count(), 20);
+    let dual = instance_endpoint("a-very-long-relay.example/tcp4:2077/udp6:3077", 20);
+    assert!(dual.ends_with(":2077/3077"));
+    assert_eq!(dual.chars().count(), 20);
+}
+
+#[test]
+fn abbreviated_ipv6_addresses_keep_brackets_and_port() {
+    let address = instance_endpoint("[2001:db8:abcd:1234::1]:2077", 20);
+    assert!(address.starts_with('['));
+    assert!(address.ends_with("]:2077"));
+    assert_eq!(address.chars().count(), 20);
+    for width in 0..8 {
+        assert!(
+            instance_endpoint("relay.example:2077", width)
+                .chars()
+                .count()
+                <= width
+        );
+    }
+}

@@ -17,8 +17,12 @@ pub(super) fn hello_ui_event(hello: &Hello) -> UiEvent {
             pid: descriptor.pid,
             uid: descriptor.uid,
             version: descriptor.version.clone(),
-            endpoint: "local".to_owned(),
-            config_summary: descriptor.config_summary.clone(),
+            endpoint: if descriptor.endpoint.is_empty() {
+                "—".to_owned()
+            } else {
+                crate::telemetry::display_endpoint(&descriptor.endpoint)
+            },
+            config_summary: crate::telemetry::display_config(&descriptor.config_summary),
             telemetry_interval_ms: descriptor.telemetry_interval_ms,
             telemetry_protocol: descriptor.telemetry_protocol.clone(),
         },

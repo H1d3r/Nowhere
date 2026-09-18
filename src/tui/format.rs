@@ -118,6 +118,40 @@ pub fn truncate(value: &str, max_chars: usize) -> String {
     result
 }
 
+/// Prefer complete addresses; abbreviate only the host so ports remain useful.
+pub fn instance_endpoint(value: &str, width: usize) -> String {
+    if value.chars().count() <= width {
+        return value.to_owned();
+    }
+    if let Some((host, carriers)) = value.split_once('/') {
+        let ports = carriers
+            .split('/')
+            .filter_map(|carrier| carrier.rsplit_once(':').map(|(_, port)| port))
+            .collect::<Vec<_>>()
+            .join("/");
+        let suffix = format!(":{ports}");
+        return abbreviate_host(host, &suffix, width);
+    }
+    if let Some((host, port)) = value.rsplit_once(':') {
+        let suffix = format!(":{port}");
+        return abbreviate_host(host, &suffix, width);
+    }
+    truncate(value, width)
+}
+
+fn abbreviate_host(host: &str, suffix: &str, width: usize) -> String {
+    if suffix.len() >= width {
+        return truncate(suffix, width);
+    }
+    let host_width = width.saturating_sub(suffix.len());
+    let host = if host.starts_with('[') && host.ends_with(']') && host_width >= 3 {
+        format!("[{}]", truncate(&host[1..host.len() - 1], host_width - 2))
+    } else {
+        truncate(host, host_width)
+    };
+    format!("{host}{suffix}")
+}
+
 #[cfg(test)]
 #[path = "../tests/tui/format.rs"]
 mod tests;

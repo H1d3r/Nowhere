@@ -67,6 +67,9 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
     if app.show_help {
         render_help(frame, area, app);
     }
+    if app.show_config {
+        render_config(frame, area, app);
+    }
 }
 
 fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -113,7 +116,7 @@ fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let mut spans = vec![Span::raw(match app.page {
-        Page::Overview => " 1 overview  2 logs  ↑↓ select  Tab logs  ? help  q quit ",
+        Page::Overview => " 1 overview  2 logs  ↑↓ select  Tab logs  i config  ? help  q quit ",
         Page::Logs => {
             " 1 overview  2 logs  ↑↓ select/scroll  Tab focus  ←→ pan  Space pause  / filter  q quit "
         }
@@ -273,7 +276,10 @@ fn render_instances(frame: &mut Frame<'_>, area: Rect, app: &App) {
                         format!(
                             "{} {}",
                             instance.meta.role.short(),
-                            format::truncate(&instance.meta.endpoint, 14)
+                            format::instance_endpoint(
+                                &instance.meta.endpoint,
+                                usize::from(area.width.saturating_sub(8))
+                            )
                         ),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
@@ -348,6 +354,7 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from("  PgUp / PgDn   scroll ten records"),
         Line::from("  /             filter both logs"),
         Line::from("  c             clear focused local log"),
+        Line::from("  i             complete instance configuration"),
         Line::from("  q / Ctrl-C    quit"),
         Line::from(""),
         Line::from(
@@ -361,6 +368,63 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ),
         popup,
     );
+}
+
+fn render_config(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let Some(instance) = app.selected() else {
+        return;
+    };
+    let popup = centered(
+        area,
+        area.width.saturating_sub(4).min(100),
+        area.height.saturating_sub(4),
+    );
+    frame.render_widget(Clear, popup);
+    let option_count = instance.meta.config_summary.split_whitespace().count() + 1;
+    let block = panel(" CONFIG · ↑↓ scroll · Esc/i close ", true, app).title_bottom(
+        Line::from(format!(
+            " option {}/{} · PgUp/PgDn · Home/End ",
+            app.config_scroll.min(option_count - 1) + 1,
+            option_count
+        ))
+        .style(dim(app)),
+    );
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let mut options = vec![("endpoint", instance.meta.endpoint.as_str())];
+    options.extend(
+        instance
+            .meta
+            .config_summary
+            .split_whitespace()
+            .filter_map(|option| option.split_once('=')),
+    );
+    let key_width = options
+        .iter()
+        .map(|(key, _)| key.len())
+        .max()
+        .unwrap_or(8)
+        .min(16);
+    let value_width = usize::from(inner.width)
+        .saturating_sub(key_width + 3)
+        .max(1);
+    let mut lines = vec![];
+    for (key, value) in options
+        .iter()
+        .skip(app.config_scroll.min(options.len().saturating_sub(1)))
+    {
+        let chars: Vec<_> = value.chars().collect();
+        for (index, chunk) in chars.chunks(value_width).enumerate() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!(" {:key_width$}  ", if index == 0 { key } else { &"" }),
+                    dim(app),
+                ),
+                Span::raw(chunk.iter().collect::<String>()),
+            ]));
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {

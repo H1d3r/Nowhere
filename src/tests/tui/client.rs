@@ -25,12 +25,14 @@ fn hello() -> Hello {
 fn maps_hello_without_sensitive_fields() {
     let UiEvent::Upsert {
         meta, lifecycle, ..
-    } = hello_ui_event(&hello())
+    } = hello_ui_event(&serde_json::from_str(&serde_json::to_string(&hello()).unwrap()).unwrap())
     else {
         panic!("expected upsert");
     };
     assert_eq!(meta.role, InstanceRole::Portal);
     assert_eq!(meta.pid, 42);
+    assert_eq!(meta.endpoint, ":2000");
+    assert_eq!(meta.config_summary, "net=mix");
     assert_eq!(lifecycle, Lifecycle::Ready);
 }
 

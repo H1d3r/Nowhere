@@ -174,6 +174,8 @@ pub struct App {
     pub filter: String,
     pub filter_editing: bool,
     pub show_help: bool,
+    pub show_config: bool,
+    pub config_scroll: usize,
     pub should_quit: bool,
     pub global_error: Option<String>,
     pub capabilities: Capabilities,
@@ -284,6 +286,8 @@ impl App {
                 .map(|instance| instance.meta.id.clone());
             self.feed_scroll = 0;
             self.reset_horizontal_scroll();
+            self.show_config = false;
+            self.config_scroll = 0;
         }
     }
 
