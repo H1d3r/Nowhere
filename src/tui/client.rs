@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 
 use crate::telemetry::{
     AccessFinished, AccessOutcome, AccessStarted, DiscoveredInstance, Hello,
-    InstanceRole as WireRole, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage, Subscription,
+    InstanceRole as WireRole, RuntimeEvent, RuntimeLevel, ServerMessage, Subscription,
     TelemetryClient, TelemetrySnapshot as WireSnapshot, TrafficProtocol, discover_instances,
 };
 
@@ -23,6 +23,9 @@ use super::model::{
     AccessPhase, AccessRecord, AccessStatus, EventLevel, InstanceId, InstanceMeta, InstanceRole,
     Lifecycle, RuntimeRecord, TelemetrySnapshot, UiEvent,
 };
+
+#[cfg(test)]
+use crate::telemetry::RuntimeKind;
 
 mod adapter;
 
@@ -47,7 +50,7 @@ pub struct ClientHandle {
     pub commands: mpsc::UnboundedSender<UiCommand>,
 }
 
-/// Starts registry discovery and one read-only loopback connection per instance.
+/// Starts registry discovery and one read-only local IPC connection per instance.
 pub fn start() -> Result<ClientHandle> {
     let (event_tx, events) = mpsc::channel(CLIENT_EVENT_CAPACITY);
     let (commands, command_rx) = mpsc::unbounded_channel();
@@ -128,10 +131,10 @@ async fn connection_manager(
                             );
                         }
                     }
-                    Err(error) => {
+                    Err(_error) => {
                         let _ = event_tx.send(UiEvent::Error {
                             id: None,
-                            message: format!("instance discovery failed: {error}"),
+                            message: "LOCAL_IPC_DISCOVERY_FAILED".to_owned(),
                         }).await;
                     }
                 }
@@ -238,12 +241,12 @@ async fn connection_task(
     .await;
     let client = match connected {
         Ok(Ok(client)) => client,
-        Ok(Err(error)) => {
+        Ok(Err(_error)) => {
             let _ = connection_tx.send(ConnectionEvent::Ended {
                 key,
                 generation,
                 id: None,
-                error: Some(error.to_string()),
+                error: Some("LOCAL_IPC_CONNECTION_FAILED".to_owned()),
             });
             return;
         }
@@ -277,8 +280,8 @@ async fn connection_task(
                 if subscription == Subscription::Summary {
                     starts.clear();
                 }
-                if let Err(error) = writer.subscribe(subscription).await {
-                    break Some(error.to_string());
+                if let Err(_error) = writer.subscribe(subscription).await {
+                    break Some("LOCAL_IPC_CONNECTION_FAILED".to_owned());
                 }
             }
             message = reader.next_message() => {
@@ -290,7 +293,7 @@ async fn connection_task(
                             }
                         }
                     }
-                    Err(error) => break Some(error.to_string()),
+                    Err(_error) => break Some("LOCAL_IPC_CONNECTION_FAILED".to_owned()),
                 }
             }
         }

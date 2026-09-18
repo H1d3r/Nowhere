@@ -1,11 +1,11 @@
 use super::*;
 use crate::telemetry::wire::{InstanceDescriptor, LifecycleSnapshot};
-use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, TELEMETRY_VERSION};
+use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, TELEMETRY_PROTOCOL};
 
 fn hello() -> Hello {
     Hello {
         instance: InstanceDescriptor {
-            telemetry_version: TELEMETRY_VERSION,
+            telemetry_protocol: TELEMETRY_PROTOCOL.to_owned(),
             id: "0:42:7".to_owned(),
             role: WireRole::Portal,
             pid: 42,
@@ -37,6 +37,8 @@ fn maps_hello_without_sensitive_fields() {
 #[test]
 fn completion_inherits_access_path() {
     let started = AccessStarted {
+        sequence: 0,
+        truncated: false,
         id: 9,
         timestamp_ms: 1,
         protocol: TrafficProtocol::Tcp,
@@ -51,6 +53,8 @@ fn completion_inherits_access_path() {
     };
     let mut starts = HashMap::from([(9, access_start_ui_value(started))]);
     let finished = AccessFinished {
+        sequence: 0,
+        truncated: false,
         id: 9,
         timestamp_ms: 2,
         duration_ms: 1,
@@ -83,26 +87,21 @@ fn peer_close_is_a_quiet_normal_end() {
 }
 
 #[test]
-fn lifecycle_runtime_updates_status_and_feed() {
+fn runtime_codes_do_not_override_lifecycle() {
     let events = server_ui_events(
         ServerMessage::RuntimeEvent(RuntimeEvent {
+            sequence: 1,
             timestamp_ms: 1,
             level: RuntimeLevel::Info,
             kind: RuntimeKind::Lifecycle,
-            message: "DRAINING: SHUTDOWN".to_owned(),
+            message: "LIFECYCLE_INFO".to_owned(),
             client: None,
         }),
         "instance",
         &mut HashMap::new(),
     );
-    assert!(matches!(
-        events.first(),
-        Some(UiEvent::Lifecycle {
-            lifecycle: Lifecycle::Draining,
-            ..
-        })
-    ));
-    assert!(matches!(events.get(1), Some(UiEvent::Runtime { .. })));
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events.first(), Some(UiEvent::Runtime { .. })));
 }
 
 #[test]

@@ -17,10 +17,10 @@ pub(super) fn hello_ui_event(hello: &Hello) -> UiEvent {
             pid: descriptor.pid,
             uid: descriptor.uid,
             version: descriptor.version.clone(),
-            endpoint: descriptor.endpoint.clone(),
+            endpoint: "local".to_owned(),
             config_summary: descriptor.config_summary.clone(),
             telemetry_interval_ms: descriptor.telemetry_interval_ms,
-            telemetry_version: descriptor.telemetry_version,
+            telemetry_protocol: descriptor.telemetry_protocol.clone(),
         },
         lifecycle: Lifecycle::from_label(&hello.lifecycle),
         snapshot: None,
@@ -33,6 +33,7 @@ pub(super) fn server_ui_events(
     starts: &mut HashMap<u64, AccessRecord>,
 ) -> Vec<UiEvent> {
     match message {
+        ServerMessage::Subscribed { .. } => vec![],
         ServerMessage::Hello(hello) => vec![hello_ui_event(&hello)],
         ServerMessage::Snapshot(snapshot) => vec![UiEvent::Snapshot {
             id: id.to_owned(),
@@ -43,23 +44,18 @@ pub(super) fn server_ui_events(
             lifecycle: Lifecycle::from_label(&lifecycle.state),
         }],
         ServerMessage::RuntimeEvent(event) => {
-            let mut events = Vec::with_capacity(2);
-            if event.kind == RuntimeKind::Lifecycle
-                && let Some(state) = event.message.split(':').next()
-            {
-                events.push(UiEvent::Lifecycle {
-                    id: id.to_owned(),
-                    lifecycle: Lifecycle::from_label(state),
-                });
-            }
-            events.push(UiEvent::Runtime {
+            vec![UiEvent::Runtime {
                 id: id.to_owned(),
                 record: runtime_ui_value(event),
-            });
-            events
+            }]
         }
         ServerMessage::AccessStart(start) => {
             let record = access_start_ui_value(start);
+            // Finishes are self-contained; bound correlation memory even when
+            // active flows are long-lived or their finishes were not delivered.
+            if starts.len() >= 2_048 {
+                starts.clear();
+            }
             starts.insert(record.event_id, record.clone());
             vec![UiEvent::Access {
                 id: id.to_owned(),
@@ -96,10 +92,10 @@ fn snapshot_ui_value(value: WireSnapshot) -> TelemetrySnapshot {
         tcp_logical_down: value.tcp_logical_down,
         udp_logical_up: value.udp_logical_up,
         udp_logical_down: value.udp_logical_down,
-        tls_wire_up: value.tls_wire_up,
-        tls_wire_down: value.tls_wire_down,
-        quic_wire_up: value.quic_wire_up,
-        quic_wire_down: value.quic_wire_down,
+        tls_payload_up: value.tls_payload_up,
+        tls_payload_down: value.tls_payload_down,
+        quic_payload_up: value.quic_payload_up,
+        quic_payload_down: value.quic_payload_down,
         tcp_active: value.tcp_active,
         udp_active: value.udp_active,
         tls_carriers_active: value.tls_carriers_active,
@@ -168,9 +164,12 @@ pub(super) fn access_finish_ui_value(
         download_bytes,
         outcome,
         error,
+        ..
     } = value;
     let mut record = starts.remove(&id).unwrap_or_else(|| {
         access_start_ui_value(AccessStarted {
+            sequence: 0,
+            truncated: false,
             id,
             timestamp_ms,
             protocol,

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Versioned messages exchanged between a Nowhere service and local TUI clients.
+//! Messages exchanged between a Nowhere service and local TUI clients.
 
 use std::time::Duration;
 
@@ -12,8 +12,8 @@ use crate::protocol::Carrier;
 
 use super::process::{now_unix_ms, process_incarnation, process_uid};
 
-/// Local telemetry generation, aligned with the Nowhere application major version.
-pub(crate) const TELEMETRY_VERSION: u16 = 2;
+/// Fixed local telemetry contract, independent of the application release.
+pub(crate) const TELEMETRY_PROTOCOL: &str = "nowhere.telemetry";
 /// Maximum accepted JSON payload, excluding the four-byte length prefix.
 pub(crate) const MAX_FRAME_SIZE: usize = 64 * 1024;
 
@@ -27,14 +27,18 @@ pub(crate) enum InstanceRole {
 /// Non-secret metadata identifying a single process incarnation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct InstanceDescriptor {
-    pub(crate) telemetry_version: u16,
+    pub(crate) telemetry_protocol: String,
     pub(crate) id: String,
     pub(crate) role: InstanceRole,
     pub(crate) pid: u32,
+    #[serde(skip)]
     pub(crate) uid: u32,
+    #[serde(skip)]
     pub(crate) incarnation: u64,
     pub(crate) version: String,
+    #[serde(skip)]
     pub(crate) endpoint: String,
+    #[serde(skip)]
     pub(crate) config_summary: String,
     pub(crate) telemetry_interval_ms: u64,
 }
@@ -50,24 +54,27 @@ impl InstanceDescriptor {
         let uid = process_uid();
         let incarnation = process_incarnation(pid)?;
         Ok(Self {
-            telemetry_version: TELEMETRY_VERSION,
-            id: format!("{uid}:{pid}:{incarnation}"),
+            telemetry_protocol: TELEMETRY_PROTOCOL.to_owned(),
+            id: super::privacy::random_id()?,
             role,
             pid,
             uid,
             incarnation,
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            endpoint: endpoint.into(),
-            config_summary: config_summary.into(),
+            endpoint: {
+                let _ = endpoint.into();
+                "local".to_owned()
+            },
+            config_summary: {
+                let _ = config_summary.into();
+                String::new()
+            },
             telemetry_interval_ms: telemetry_interval.as_millis().min(u64::MAX as u128) as u64,
         })
     }
 
     pub(crate) fn registry_name(&self) -> String {
-        format!(
-            "nowhere.{}.{}.{}.{}",
-            TELEMETRY_VERSION, self.uid, self.pid, self.incarnation
-        )
+        format!("nowhere.{}", self.id)
     }
 
     pub(super) fn unavailable(
@@ -79,15 +86,21 @@ impl InstanceDescriptor {
         let pid = std::process::id();
         let uid = process_uid();
         Self {
-            telemetry_version: TELEMETRY_VERSION,
+            telemetry_protocol: TELEMETRY_PROTOCOL.to_owned(),
             id: format!("{uid}:{pid}:unavailable"),
             role,
             pid,
             uid,
             incarnation: 0,
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            endpoint,
-            config_summary,
+            endpoint: {
+                let _ = endpoint;
+                "local".to_owned()
+            },
+            config_summary: {
+                let _ = config_summary;
+                String::new()
+            },
             telemetry_interval_ms: telemetry_interval.as_millis().min(u64::MAX as u128) as u64,
         }
     }
@@ -102,10 +115,10 @@ pub(crate) struct TelemetrySnapshot {
     pub(crate) tcp_logical_down: u64,
     pub(crate) udp_logical_up: u64,
     pub(crate) udp_logical_down: u64,
-    pub(crate) tls_wire_up: u64,
-    pub(crate) tls_wire_down: u64,
-    pub(crate) quic_wire_up: u64,
-    pub(crate) quic_wire_down: u64,
+    pub(crate) tls_payload_up: u64,
+    pub(crate) tls_payload_down: u64,
+    pub(crate) quic_payload_up: u64,
+    pub(crate) quic_payload_down: u64,
     pub(crate) tcp_active: i64,
     pub(crate) udp_active: i64,
     pub(crate) tls_carriers_active: u64,
@@ -152,10 +165,14 @@ pub(crate) struct AccessStart {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct AccessStarted {
+    pub(crate) sequence: u64,
+    pub(crate) truncated: bool,
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) protocol: TrafficProtocol,
+    #[serde(skip)]
     pub(crate) flow_id: Option<u64>,
+    #[serde(skip)]
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
     #[serde(default)]
@@ -163,16 +180,21 @@ pub(crate) struct AccessStarted {
     pub(crate) target: String,
     pub(crate) initial_uplink: Option<String>,
     pub(crate) initial_downlink: Option<String>,
+    #[serde(skip)]
     pub(crate) path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct AccessFinished {
+    pub(crate) sequence: u64,
+    pub(crate) truncated: bool,
     pub(crate) id: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) duration_ms: u64,
     pub(crate) protocol: TrafficProtocol,
+    #[serde(skip)]
     pub(crate) flow_id: Option<u64>,
+    #[serde(skip)]
     pub(crate) session_tag: Option<String>,
     pub(crate) client: Option<String>,
     #[serde(default)]
@@ -180,6 +202,7 @@ pub(crate) struct AccessFinished {
     pub(crate) target: String,
     pub(crate) initial_uplink: Option<String>,
     pub(crate) initial_downlink: Option<String>,
+    #[serde(skip)]
     pub(crate) path: Option<String>,
     pub(crate) upload_bytes: u64,
     pub(crate) download_bytes: u64,
@@ -211,20 +234,23 @@ pub(crate) enum RuntimeKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RuntimeEvent {
+    pub(crate) sequence: u64,
     pub(crate) timestamp_ms: u64,
     pub(crate) level: RuntimeLevel,
     pub(crate) kind: RuntimeKind,
+    #[serde(rename = "code")]
     pub(crate) message: String,
     pub(crate) client: Option<String>,
 }
 
 impl RuntimeEvent {
-    pub(crate) fn new(level: RuntimeLevel, kind: RuntimeKind, message: impl Into<String>) -> Self {
+    pub(crate) fn new(level: RuntimeLevel, kind: RuntimeKind, _message: impl Into<String>) -> Self {
         Self {
+            sequence: 0,
             timestamp_ms: now_unix_ms(),
             level,
             kind,
-            message: message.into(),
+            message: format!("{kind:?}_{level:?}").to_ascii_uppercase(),
             client: None,
         }
     }
@@ -243,22 +269,39 @@ pub(crate) enum Subscription {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+#[serde(
+    tag = "type",
+    content = "data",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub(crate) enum ClientMessage {
-    Subscribe { subscription: Subscription },
+    Subscribe {
+        request_id: u64,
+        subscription: Subscription,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum ServerMessage {
     Hello(Hello),
+    Subscribed {
+        request_id: u64,
+        subscription: Subscription,
+    },
     Snapshot(TelemetrySnapshot),
     Lifecycle(LifecycleSnapshot),
     RuntimeEvent(RuntimeEvent),
     AccessStart(AccessStarted),
     AccessFinish(AccessFinished),
-    Gap { missed: u64 },
-    Error { message: String },
+    Gap {
+        missed: u64,
+    },
+    Error {
+        #[serde(rename = "code")]
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

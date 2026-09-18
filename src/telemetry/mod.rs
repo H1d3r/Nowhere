@@ -10,6 +10,8 @@
 mod checkpoint;
 mod hub;
 mod ipc;
+mod local;
+mod privacy;
 mod process;
 pub(crate) mod wire;
 
@@ -20,5 +22,5 @@ pub(crate) use process::now_unix_ms;
 pub(crate) use wire::{
     AccessFinished, AccessOutcome, AccessStart, AccessStarted, ClientMessage, Hello, InstanceRole,
     MAX_FRAME_SIZE, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage, Subscription,
-    TELEMETRY_VERSION, TelemetrySnapshot, TrafficProtocol,
+    TELEMETRY_PROTOCOL, TelemetrySnapshot, TrafficProtocol,
 };

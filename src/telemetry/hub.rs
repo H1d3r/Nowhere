@@ -4,7 +4,7 @@
 //! In-process structured telemetry publisher.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{broadcast, watch};
@@ -23,7 +23,9 @@ const EVENT_CAPACITY: usize = 1_024;
 /// The in-process publisher shared by runtime orchestration and every flow.
 pub(crate) struct TelemetryHub {
     descriptor: InstanceDescriptor,
-    listening_descriptor: OnceLock<InstanceDescriptor>,
+    privacy: Option<super::privacy::Privacy>,
+    detail_clients: AtomicU64,
+    event_sequence: Mutex<u64>,
     lifecycle: watch::Sender<LifecycleSnapshot>,
     snapshots: watch::Sender<TelemetrySnapshot>,
     events: broadcast::Sender<ServerMessage>,
@@ -65,12 +67,20 @@ impl TelemetryHub {
         descriptor: InstanceDescriptor,
         unavailable_reason: Option<String>,
     ) -> Arc<Self> {
+        let privacy = super::privacy::Privacy::new().ok();
+        let unavailable_reason = unavailable_reason.or_else(|| {
+            privacy
+                .is_none()
+                .then(|| "telemetry entropy unavailable".to_owned())
+        });
         let (snapshots, _) = watch::channel(TelemetrySnapshot::default());
         let (lifecycle, _) = watch::channel(LifecycleSnapshot::default());
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         Arc::new(Self {
             descriptor,
-            listening_descriptor: OnceLock::new(),
+            privacy,
+            detail_clients: AtomicU64::new(0),
+            event_sequence: Mutex::new(0),
             lifecycle,
             snapshots,
             events,
@@ -83,16 +93,27 @@ impl TelemetryHub {
     }
 
     pub(crate) fn descriptor(&self) -> &InstanceDescriptor {
-        self.listening_descriptor.get().unwrap_or(&self.descriptor)
+        &self.descriptor
     }
 
-    /// Publishes actual bound addresses before the telemetry server starts.
-    pub(crate) fn set_listening_addresses(&self, tcp: &str, udp: &str) {
-        let mut descriptor = self.descriptor.clone();
-        descriptor
-            .config_summary
-            .push_str(&format!(" tcp={tcp} udp={udp}"));
-        let _ = self.listening_descriptor.set(descriptor);
+    pub(crate) fn detail_guard(self: &Arc<Self>) -> DetailGuard {
+        self.detail_clients.fetch_add(1, Ordering::Relaxed);
+        DetailGuard(self.clone())
+    }
+
+    fn publish_event(&self, mut event: ServerMessage) {
+        let mut sequence = self
+            .event_sequence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *sequence += 1;
+        match &mut event {
+            ServerMessage::RuntimeEvent(e) => e.sequence = *sequence,
+            ServerMessage::AccessStart(e) => e.sequence = *sequence,
+            ServerMessage::AccessFinish(e) => e.sequence = *sequence,
+            _ => return,
+        }
+        let _ = self.events.send(event);
     }
 
     pub(crate) fn unavailable_reason(&self) -> Option<&str> {
@@ -101,7 +122,34 @@ impl TelemetryHub {
 
     pub(crate) fn set_lifecycle(&self, state: impl Into<String>, reason: impl Into<String>) {
         let state = state.into();
+        let state = if matches!(
+            state.as_str(),
+            "STARTING" | "READY" | "DRAINING" | "STOPPED"
+        ) {
+            state
+        } else {
+            "STOPPED".to_owned()
+        };
         let reason = reason.into();
+        let reason = if matches!(
+            reason.as_str(),
+            "STARTUP"
+                | "LISTENING"
+                | "SIGINT"
+                | "SIGTERM"
+                | "TCP_LISTENER_EXIT"
+                | "QUIC_LISTENER_EXIT"
+                | "SOCKS_LISTENER_EXIT"
+                | "DRAINED"
+                | "CLEANUP_COMPLETE"
+                | "TIMEOUT"
+                | "FORCED"
+                | "START_FAILED"
+        ) {
+            reason
+        } else {
+            "STATE_CHANGED".to_owned()
+        };
         self.lifecycle.send_replace(LifecycleSnapshot {
             state: state.clone(),
             reason: reason.clone(),
@@ -137,10 +185,10 @@ impl TelemetryHub {
             tcp_logical_down: stats.tcp_tx.load(Ordering::Relaxed),
             udp_logical_up: stats.udp_rx.load(Ordering::Relaxed),
             udp_logical_down: stats.udp_tx.load(Ordering::Relaxed),
-            tls_wire_up: stats.up_tcp.load(Ordering::Relaxed),
-            tls_wire_down: stats.down_tcp.load(Ordering::Relaxed),
-            quic_wire_up: stats.up_udp.load(Ordering::Relaxed),
-            quic_wire_down: stats.down_udp.load(Ordering::Relaxed),
+            tls_payload_up: stats.up_tcp.load(Ordering::Relaxed),
+            tls_payload_down: stats.down_tcp.load(Ordering::Relaxed),
+            quic_payload_up: stats.up_udp.load(Ordering::Relaxed),
+            quic_payload_down: stats.down_udp.load(Ordering::Relaxed),
             tcp_active: i64::from(stats.tcp_active.load(Ordering::Relaxed)),
             udp_active: i64::from(stats.udp_active.load(Ordering::Relaxed)),
             tls_carriers_active,
@@ -157,8 +205,18 @@ impl TelemetryHub {
         self.snapshots.send_replace(snapshot);
     }
 
-    pub(crate) fn emit_runtime(&self, event: RuntimeEvent) {
-        let _ = self.events.send(ServerMessage::RuntimeEvent(event));
+    pub(crate) fn emit_runtime(&self, mut event: RuntimeEvent) {
+        if self.detail_clients.load(Ordering::Relaxed) == 0 {
+            return;
+        }
+        event.message = format!("{:?}_{:?}", event.kind, event.level).to_ascii_uppercase();
+        event.client = event.client.map(|v| {
+            self.privacy
+                .as_ref()
+                .expect("available privacy")
+                .alias("client", &v)
+        });
+        self.publish_event(ServerMessage::RuntimeEvent(event));
     }
 
     pub(crate) fn start_access(
@@ -169,33 +227,38 @@ impl TelemetryHub {
         // subscribed. Avoid building and cloning path strings when no detail
         // client can observe this flow; this is especially important for
         // high-rate short connections.
-        if self.events.receiver_count() == 0 {
+        if self.detail_clients.load(Ordering::Relaxed) == 0 || self.privacy.is_none() {
             return AccessSpan::disabled(Arc::clone(self));
         }
         let mut start = build();
-        if start.id == 0 {
-            start.id = self.next_access_id.fetch_add(1, Ordering::Relaxed);
-        }
+        start.id = self.next_access_id.fetch_add(1, Ordering::Relaxed);
         if start.timestamp_ms == 0 {
             start.timestamp_ms = now_unix_ms();
         }
+        let _ = (&start.flow_id, &start.session_tag, &start.path);
         let started_at = Instant::now();
+        let privacy = self.privacy.as_ref().expect("available privacy");
         let started = AccessStarted {
+            sequence: 0,
+            truncated: start.path_peers.len() > 16,
             id: start.id,
             timestamp_ms: start.timestamp_ms,
             protocol: start.protocol,
-            flow_id: start.flow_id,
-            session_tag: start.session_tag,
-            client: start.client,
-            path_peers: start.path_peers,
-            target: start.target,
+            flow_id: None,
+            session_tag: None,
+            client: start.client.map(|v| privacy.alias("client", &v)),
+            path_peers: start
+                .path_peers
+                .iter()
+                .take(16)
+                .map(|v| privacy.alias("peer", v))
+                .collect(),
+            target: privacy.alias("target", &start.target),
             initial_uplink: start.initial_uplink.map(carrier_name).map(str::to_owned),
             initial_downlink: start.initial_downlink.map(carrier_name).map(str::to_owned),
-            path: start.path,
+            path: None,
         };
-        let _ = self
-            .events
-            .send(ServerMessage::AccessStart(started.clone()));
+        self.publish_event(ServerMessage::AccessStart(started.clone()));
         AccessSpan::new(Arc::clone(self), started, started_at)
     }
 
@@ -216,26 +279,26 @@ impl TelemetryHub {
     ) {
         let (upload_bytes, download_bytes) = bytes;
         let (outcome, error) = completion;
-        let _ = self
-            .events
-            .send(ServerMessage::AccessFinish(AccessFinished {
-                id: started.id,
-                timestamp_ms: now_unix_ms(),
-                duration_ms: started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                protocol: started.protocol,
-                flow_id: started.flow_id,
-                session_tag: started.session_tag.clone(),
-                client: started.client.clone(),
-                path_peers: started.path_peers.clone(),
-                target: started.target.clone(),
-                initial_uplink: started.initial_uplink.clone(),
-                initial_downlink: started.initial_downlink.clone(),
-                path: started.path.clone(),
-                upload_bytes,
-                download_bytes,
-                outcome,
-                error,
-            }));
+        self.publish_event(ServerMessage::AccessFinish(AccessFinished {
+            sequence: 0,
+            truncated: started.truncated,
+            id: started.id,
+            timestamp_ms: now_unix_ms(),
+            duration_ms: started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            protocol: started.protocol,
+            flow_id: started.flow_id,
+            session_tag: started.session_tag.clone(),
+            client: started.client.clone(),
+            path_peers: started.path_peers.clone(),
+            target: started.target.clone(),
+            initial_uplink: started.initial_uplink.clone(),
+            initial_downlink: started.initial_downlink.clone(),
+            path: started.path.clone(),
+            upload_bytes,
+            download_bytes,
+            outcome,
+            error: error.map(|_| "FLOW_FAILED".to_owned()),
+        }));
     }
 }
 
@@ -324,3 +387,10 @@ fn carrier_name(carrier: Carrier) -> &'static str {
 #[cfg(test)]
 #[path = "../tests/telemetry/hub.rs"]
 mod tests;
+
+pub(crate) struct DetailGuard(Arc<TelemetryHub>);
+impl Drop for DetailGuard {
+    fn drop(&mut self) {
+        self.0.detail_clients.fetch_sub(1, Ordering::Relaxed);
+    }
+}

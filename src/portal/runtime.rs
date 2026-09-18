@@ -79,31 +79,6 @@ impl Portal {
                     .info(format_args!("portal::run: listening on TLS/TCP {address}"));
             }
         }
-        let addresses = |addrs: Vec<std::net::SocketAddr>| {
-            if addrs.is_empty() {
-                "none".to_owned()
-            } else {
-                addrs
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            }
-        };
-        self.inner.telemetry.set_listening_addresses(
-            &addresses(
-                tcp_listeners
-                    .iter()
-                    .map(TcpListener::local_addr)
-                    .collect::<std::io::Result<_>>()?,
-            ),
-            &addresses(
-                endpoints
-                    .iter()
-                    .map(Endpoint::local_addr)
-                    .collect::<std::io::Result<_>>()?,
-            ),
-        );
         let telemetry_shutdown = CancellationToken::new();
         let mut telemetry_tasks: JoinSet<()> = JoinSet::new();
         match TelemetryServer::bind(self.inner.telemetry.clone()) {
@@ -114,8 +89,8 @@ impl Portal {
                     telemetry_shutdown.clone(),
                 ));
             }
-            Err(error) => self.inner.logger.warn(format_args!(
-                "portal::run: TUI telemetry unavailable; continuing without it: {error:#}"
+            Err(_) => self.inner.logger.warn(format_args!(
+                "portal::run: LOCAL_IPC_UNAVAILABLE; continuing without telemetry"
             )),
         }
 

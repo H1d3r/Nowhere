@@ -290,8 +290,8 @@ impl Vector {
                     telemetry_shutdown.clone(),
                 ));
             }
-            Err(error) => self.inner.logger.warn(format_args!(
-                "vector::Vector::run: TUI telemetry unavailable; continuing without it: {error:#}"
+            Err(_) => self.inner.logger.warn(format_args!(
+                "vector::Vector::run: LOCAL_IPC_UNAVAILABLE; continuing without telemetry"
             )),
         }
         self.inner.logger.info(format_args!(

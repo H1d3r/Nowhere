@@ -18,10 +18,10 @@ pub struct TelemetrySnapshot {
     pub tcp_logical_down: u64,
     pub udp_logical_up: u64,
     pub udp_logical_down: u64,
-    pub tls_wire_up: u64,
-    pub tls_wire_down: u64,
-    pub quic_wire_up: u64,
-    pub quic_wire_down: u64,
+    pub tls_payload_up: u64,
+    pub tls_payload_down: u64,
+    pub quic_payload_up: u64,
+    pub quic_payload_down: u64,
     pub tcp_active: i64,
     pub udp_active: i64,
     pub tls_carriers_active: u64,
@@ -48,11 +48,11 @@ impl TelemetrySnapshot {
     }
 
     pub fn tls_bytes(&self) -> u64 {
-        self.tls_wire_up.saturating_add(self.tls_wire_down)
+        self.tls_payload_up.saturating_add(self.tls_payload_down)
     }
 
     pub fn quic_bytes(&self) -> u64 {
-        self.quic_wire_up.saturating_add(self.quic_wire_down)
+        self.quic_payload_up.saturating_add(self.quic_payload_down)
     }
 
     pub(super) fn counter_reset_from(&self, old: &Self) -> bool {

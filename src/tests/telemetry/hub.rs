@@ -3,14 +3,14 @@ use std::sync::atomic::Ordering;
 use crate::protocol::Carrier;
 use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    AccessOutcome, AccessStart, InstanceRole, ServerMessage, TELEMETRY_VERSION, TelemetryHub,
+    AccessOutcome, AccessStart, InstanceRole, ServerMessage, TELEMETRY_PROTOCOL, TelemetryHub,
     TrafficProtocol,
 };
 use crate::transport::Stats;
 
 fn descriptor() -> InstanceDescriptor {
     InstanceDescriptor {
-        telemetry_version: TELEMETRY_VERSION,
+        telemetry_protocol: TELEMETRY_PROTOCOL.to_owned(),
         id: "1:2:3".to_owned(),
         role: InstanceRole::Portal,
         pid: 2,
@@ -24,18 +24,18 @@ fn descriptor() -> InstanceDescriptor {
 }
 
 #[test]
-fn listener_summary_uses_bound_addresses_without_inventing_a_second_family() {
+fn descriptor_does_not_serialize_sensitive_metadata() {
     let hub = TelemetryHub::new(descriptor());
-    hub.set_listening_addresses("0.0.0.0:2000", "none");
-    let summary = &hub.descriptor().config_summary;
-    assert!(summary.ends_with("tcp=0.0.0.0:2000 udp=none"));
-    assert!(!summary.contains("[::]"));
+    let encoded = serde_json::to_string(hub.descriptor()).unwrap();
+    assert!(!encoded.contains("2000"));
+    assert!(!encoded.contains("config_summary"));
 }
 
 #[test]
 fn access_span_finishes_only_once() {
     let hub = TelemetryHub::new(descriptor());
     let mut events = hub.event_receiver();
+    let _detail = hub.detail_guard();
     let span = hub.start_access(|| AccessStart {
         id: 0,
         timestamp_ms: 1,
@@ -87,4 +87,19 @@ fn snapshot_contains_existing_transport_counters() {
     assert_eq!(snapshot.tcp_logical_up, 42);
     assert_eq!(snapshot.tls_carriers_active, 2);
     assert_eq!(snapshot.ping_ms, 17);
+}
+
+#[test]
+fn detail_guards_balance_switches_and_drop() {
+    let hub = TelemetryHub::new(descriptor());
+    let receiver = hub.event_receiver();
+    let _span = hub.start_access(|| panic!("a summary receiver is not detail"));
+    let first = hub.detail_guard();
+    let second = hub.detail_guard();
+    assert_eq!(hub.detail_clients.load(Ordering::Relaxed), 2);
+    drop(first);
+    assert_eq!(hub.detail_clients.load(Ordering::Relaxed), 1);
+    drop(second);
+    assert_eq!(hub.detail_clients.load(Ordering::Relaxed), 0);
+    drop(receiver);
 }
