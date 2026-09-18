@@ -93,7 +93,7 @@ pub(super) async fn open_lane(
                 client.telemetry.emit_runtime(RuntimeEvent::new(
                     RuntimeLevel::Warn,
                     RuntimeKind::Carrier,
-                    format!("TLS carrier connection failed: {error}"),
+                    format!("TLS carrier connection failed: {error:#}"),
                 ));
                 error
             })?;
@@ -131,7 +131,7 @@ pub(super) async fn open_lane(
                     client.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Warn,
                         RuntimeKind::Reconnect,
-                        format!("QUIC carrier connection failed: {error}"),
+                        format!("QUIC carrier connection failed: {error:#}"),
                     ));
                     return Err(error);
                 }
@@ -142,7 +142,7 @@ pub(super) async fn open_lane(
                     client.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Warn,
                         RuntimeKind::Carrier,
-                        format!("QUIC carrier stream open failed: {error}"),
+                        format!("QUIC carrier stream open failed: {error:#}"),
                     ));
                     return Err(error);
                 }
@@ -434,7 +434,13 @@ impl std::fmt::Display for OpenFlowError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Setup(result) => write!(formatter, "flow setup rejected: {}", result.as_str()),
-            Self::Transport(error) | Self::Protocol(error) => error.fmt(formatter),
+            Self::Transport(error) | Self::Protocol(error) => {
+                if formatter.alternate() {
+                    write!(formatter, "{error:#}")
+                } else {
+                    error.fmt(formatter)
+                }
+            }
         }
     }
 }

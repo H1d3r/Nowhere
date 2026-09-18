@@ -152,7 +152,7 @@ async fn open_and_relay_udp_target(
     let protocol_target = match to_target(&target) {
         Ok(target) => target,
         Err(error) => {
-            access.finish(AccessOutcome::Error, Some(error.to_string()));
+            access.finish(AccessOutcome::Error, Some(format!("{error:#}")));
             return;
         }
     };
@@ -161,7 +161,7 @@ async fn open_and_relay_udp_target(
         result = open_udp(vector.client.clone(), &protocol_target, 0) => match result {
             Ok(tunnel) => tunnel,
             Err(error) => {
-                access.finish(error.access_outcome(), Some(error.to_string()));
+                access.finish(error.access_outcome(), Some(format!("{error:#}")));
                 vector.logger.debug(format_args!(
                     "vector::socks::open_and_relay_udp_target: target {target} failed: {error}"
                 ));
@@ -276,7 +276,7 @@ async fn relay_udp_target(
                 match sent {
                     Some(Ok(true)) => access.add_upload(payload_len as u64),
                     Some(Ok(false)) => {}
-                    Some(Err(error)) => break UdpCompletion::Error(error.to_string()),
+                    Some(Err(error)) => break UdpCompletion::Error(format!("{error:#}")),
                     None => break UdpCompletion::Cancelled,
                 }
                 idle.as_mut().reset(Instant::now() + udp_idle_timeout());
@@ -285,7 +285,7 @@ async fn relay_udp_target(
                 let packet = match received {
                     Ok(Some(packet)) => packet,
                     Ok(None) => break UdpCompletion::Success,
-                    Err(error) => break UdpCompletion::Error(error.to_string()),
+                    Err(error) => break UdpCompletion::Error(format!("{error:#}")),
                 };
                 let size = packet.len();
                 let endpoint = *client
@@ -308,7 +308,7 @@ async fn relay_udp_target(
                 };
                 match sent {
                     Some(Ok(_)) => access.add_download(size as u64),
-                    Some(Err(error)) => break UdpCompletion::Error(error.to_string()),
+                    Some(Err(error)) => break UdpCompletion::Error(format!("{error:#}")),
                     None => break UdpCompletion::Cancelled,
                 }
                 idle.as_mut().reset(Instant::now() + udp_idle_timeout());

@@ -109,7 +109,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
             portal.logger.debug(format_args!(
                 "portal::conn::relay_paired_udp: target dial failed: {err}"
             ));
-            let error = err.to_string();
+            let error = format!("{err:#}");
             access.finish(error_outcome(&error), Some(error));
             return;
         }
@@ -172,7 +172,7 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
             return;
         }
         Err(error) => {
-            access.finish(AccessOutcome::Error, Some(error.to_string()));
+            access.finish(AccessOutcome::Error, Some(format!("{error:#}")));
             return;
         }
     }
@@ -295,11 +295,11 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
                 } => break UdpCompletion::Success("downlink closed"),
                 result = &mut uplink_pipeline => break match result {
                     Ok(()) => UdpCompletion::Success("uplink closed"),
-                    Err(err) => UdpCompletion::Error(format!("uplink or target write error: {err}")),
+                    Err(err) => UdpCompletion::Error(format!("uplink or target write error: {err:#}")),
                 },
                 result = &mut downlink_pipeline => break match result {
                     Ok(()) => UdpCompletion::Success("downlink closed"),
-                    Err(err) => UdpCompletion::Error(format!("target read or downlink write error: {err}")),
+                    Err(err) => UdpCompletion::Error(format!("target read or downlink write error: {err:#}")),
                 },
                 _ = activity.notified() => {
                     idle_sleep

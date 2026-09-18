@@ -105,7 +105,7 @@ pub(in crate::vector) async fn serve_listener(
                     vector.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Error,
                         RuntimeKind::Listener,
-                        format!("SOCKS accept failed: {error}"),
+                        format!("SOCKS accept failed: {error:#}"),
                     ));
                     vector.logger.error(format_args!(
                         "vector::socks::serve_listener: accept failed: {error}"
@@ -151,7 +151,7 @@ async fn handle_client(
                 RuntimeEvent::new(
                     RuntimeLevel::Warn,
                     RuntimeKind::Authentication,
-                    format!("SOCKS5 handshake failed: {error}"),
+                    format!("SOCKS5 handshake failed: {error:#}"),
                 )
                 .with_client(peer.to_string()),
             );
@@ -197,7 +197,7 @@ async fn handle_client(
                     }
                 }
                 Err(error) => {
-                    access.finish(error.access_outcome(), Some(error.to_string()));
+                    access.finish(error.access_outcome(), Some(format!("{error:#}")));
                     write_reply(
                         &mut stream,
                         error.socks_reply(),

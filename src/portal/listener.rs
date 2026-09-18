@@ -50,7 +50,7 @@ pub(super) async fn accept_endpoint_loop(
                         portal.telemetry.emit_runtime(RuntimeEvent::new(
                             RuntimeLevel::Warn,
                             RuntimeKind::Listener,
-                            format!("failed to send QUIC Retry: {err}"),
+                            format!("failed to send QUIC Retry: {err:#}"),
                         ));
                         portal.logger.error(format_args!(
                             "portal::accept_endpoint_loop: failed to send QUIC Retry: {err}"
@@ -122,7 +122,7 @@ pub(super) async fn accept_tcp_loop(
                     portal.telemetry.emit_runtime(RuntimeEvent::new(
                         RuntimeLevel::Error,
                         RuntimeKind::Listener,
-                        format!("TCP accept failed: {err}"),
+                        format!("TCP accept failed: {err:#}"),
                     ));
                     portal.logger.error(format_args!(
                         "portal::accept_tcp_loop: failed to accept TCP connection: {err}"

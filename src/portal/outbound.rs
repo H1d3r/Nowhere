@@ -352,10 +352,12 @@ impl OutboundError {
     }
 
     fn flow(error: OpenFlowError) -> Self {
-        Self {
-            setup: error.setup_result(),
-            error: anyhow!(error.to_string()),
-        }
+        let setup = error.setup_result();
+        let error = match error {
+            OpenFlowError::Setup(result) => anyhow!("flow setup rejected: {}", result.as_str()),
+            OpenFlowError::Transport(error) | OpenFlowError::Protocol(error) => error,
+        };
+        Self { setup, error }
     }
 
     fn transport(error: impl Into<anyhow::Error>) -> Self {

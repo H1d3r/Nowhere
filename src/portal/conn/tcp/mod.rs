@@ -168,7 +168,7 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
                 RuntimeEvent::new(
                     RuntimeLevel::Warn,
                     RuntimeKind::Authentication,
-                    format!("TLS/TCP authentication failed: {err}"),
+                    format!("TLS/TCP authentication failed: {err:#}"),
                 )
                 .with_client(peer.to_string()),
             );

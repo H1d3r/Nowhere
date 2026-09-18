@@ -46,7 +46,7 @@ pub(super) async fn handle_incoming(
             portal.telemetry.emit_runtime(RuntimeEvent::new(
                 RuntimeLevel::Warn,
                 RuntimeKind::Carrier,
-                format!("QUIC TLS handshake failed: {err}"),
+                format!("QUIC TLS handshake failed: {err:#}"),
             ));
             portal.logger.debug(format_args!(
                 "portal::conn::handle_incoming: QUIC TLS handshake failed: {err}"
@@ -91,7 +91,7 @@ async fn handle_connection(
                     RuntimeEvent::new(
                         RuntimeLevel::Warn,
                         RuntimeKind::Authentication,
-                        format!("QUIC authentication failed: {err}"),
+                        format!("QUIC authentication failed: {err:#}"),
                     )
                     .with_client(conn.remote_address().to_string()),
                 );
@@ -195,7 +195,7 @@ async fn handle_connection(
                             portal.telemetry.emit_runtime(RuntimeEvent::new(
                                 RuntimeLevel::Warn,
                                 RuntimeKind::Carrier,
-                                format!("QUIC carrier stream loop closed: {err}"),
+                                format!("QUIC carrier stream loop closed: {err:#}"),
                             ));
                             portal.logger.debug(format_args!("portal::conn::handle_connection: bidirectional stream accept loop closed: {err}"));
                         }

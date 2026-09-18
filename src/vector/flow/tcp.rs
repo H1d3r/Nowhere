@@ -273,7 +273,7 @@ pub(in crate::vector) async fn relay_tcp(
     match &result {
         Ok(()) => access.finish(AccessOutcome::Success, None),
         Err(error) => {
-            let error = error.to_string();
+            let error = format!("{error:#}");
             access.finish(access_error_outcome(&error), Some(error));
         }
     }

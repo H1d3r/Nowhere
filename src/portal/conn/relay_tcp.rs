@@ -109,7 +109,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             portal.logger.debug(format_args!(
                 "portal::conn::relay_paired_tcp: target dial failed: {err}"
             ));
-            let error = err.to_string();
+            let error = format!("{err:#}");
             access.finish(error_outcome(&error), Some(error));
             return;
         }
@@ -124,7 +124,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             return;
         }
         Err(error) => {
-            access.finish(AccessOutcome::Error, Some(error.to_string()));
+            access.finish(AccessOutcome::Error, Some(format!("{error:#}")));
             return;
         }
     }
@@ -187,7 +187,7 @@ pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired
             access.finish(AccessOutcome::Success, None);
         }
         RelayCompletion::Relay(Err(error)) => {
-            let error = error.to_string();
+            let error = format!("{error:#}");
             access.finish(error_outcome(&error), Some(error));
         }
         RelayCompletion::Cancelled => access.finish(AccessOutcome::Cancelled, None),
