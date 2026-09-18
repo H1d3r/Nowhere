@@ -3,6 +3,27 @@ use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
+async fn idle_carrier_flushes_data_without_a_followup_frame() {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let (left, right) = tokio::io::duplex(1024);
+        let buffered = tokio::io::BufWriter::with_capacity(4096, left);
+        let (client, _) = MuxHandle::start(buffered, MuxConfig::default()).unwrap();
+        let (server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
+        let mut outgoing = client.open_stream(1).await.unwrap();
+        let mut accepted = incoming.accept().await.unwrap().unwrap();
+        // No flush, FIN, or subsequent frame may be needed to deliver DATA.
+        outgoing.write_all(b"response tail").await.unwrap();
+        let mut received = [0; 13];
+        accepted.read_exact(&mut received).await.unwrap();
+        assert_eq!(&received, b"response tail");
+        client.close();
+        server.close();
+    })
+    .await
+    .expect("idle Mux writer must flush its buffered carrier");
+}
+
+#[tokio::test]
 async fn more_than_256_live_streams_transfer_and_half_close() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let (left, right) = tokio::io::duplex(1 << 20);

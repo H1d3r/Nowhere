@@ -219,6 +219,11 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
             let item = if let Some(item) = pending_item.take() {
                 Some(item)
             } else {
+                if data_rx.is_empty() {
+                    // Deliver the last DATA batch even if no later frame or
+                    // application flush arrives to drain the TLS buffer.
+                    writer.flush().await?;
+                }
                 tokio::select! {
                     biased;
                     _ = shared.closed_notify.cancelled() => return Ok(()),

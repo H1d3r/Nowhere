@@ -4,8 +4,10 @@
 //! Owned payload handoff for relay paths that terminate in TLS Mux.
 
 use std::any::Any;
+use std::future::{Future, poll_fn};
 use std::io;
 use std::pin::Pin;
+use std::task::Poll;
 
 use bytes::Bytes;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
@@ -50,6 +52,24 @@ impl AsRef<[u8]> for RelayChunk {
         match self {
             Self::Mux(chunk) => chunk.as_ref(),
             Self::Bytes(bytes) => bytes,
+        }
+    }
+}
+
+/// Drain buffered output before an input wait can stall a request or response.
+/// Immediately available input stays batched; EOF is flushed by relay shutdown.
+pub(crate) async fn read_with_flush<T>(
+    read: impl Future<Output = io::Result<T>>,
+    writer: &mut (impl AsyncWrite + Unpin),
+) -> io::Result<T> {
+    tokio::pin!(read);
+    match poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await {
+        Poll::Ready(result) => result,
+        Poll::Pending => {
+            // TLS may accept plaintext while ciphertext is still buffered.
+            // Keep this same read future alive across the flush.
+            writer.flush().await?;
+            read.await
         }
     }
 }

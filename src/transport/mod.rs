@@ -15,7 +15,8 @@ pub(crate) use morph::{
     MorphKeys, MorphTcpStream, configure_morph_mtu, morph_endpoint_config, wrap_morph_udp_socket,
 };
 pub(crate) use owned_io::{
-    AsyncReadAny, AsyncWriteAny, read_owned, read_owned_from, write_owned, write_owned_to,
+    AsyncReadAny, AsyncWriteAny, read_owned, read_owned_from, read_with_flush, write_owned,
+    write_owned_to,
 };
 pub(crate) use quic::{TransportFlowControl, transport_flow_control};
 pub use rate::{RateLimiter, TokenBucket};

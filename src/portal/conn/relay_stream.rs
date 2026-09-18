@@ -13,7 +13,8 @@ use crate::portal::PortalInner;
 use crate::protocol::Carrier;
 use crate::telemetry::AccessSpan;
 use crate::transport::{
-    AsyncReadAny, AsyncWriteAny, read_owned, read_owned_from, write_owned, write_owned_to,
+    AsyncReadAny, AsyncWriteAny, read_owned, read_owned_from, read_with_flush, write_owned,
+    write_owned_to,
 };
 
 /// Relays both directions until one side closes or either direction errors.
@@ -33,7 +34,10 @@ where
 
     let client_to_target = async {
         loop {
-            let Some(chunk) = read_owned(client_read, &portal.buffers).await? else {
+            let Some(chunk) =
+                read_with_flush(read_owned(client_read, &portal.buffers), &mut target_write)
+                    .await?
+            else {
                 target_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
             };
@@ -56,7 +60,12 @@ where
 
     let target_to_client = async {
         loop {
-            let Some(chunk) = read_owned_from(&mut target_read, &portal.buffers).await? else {
+            let Some(chunk) = read_with_flush(
+                read_owned_from(&mut target_read, &portal.buffers),
+                client_write,
+            )
+            .await?
+            else {
                 client_write.shutdown().await?;
                 return Ok::<(), anyhow::Error>(());
             };
@@ -116,3 +125,7 @@ enum EitherDone {
     Client(anyhow::Result<()>),
     Target(anyhow::Result<()>),
 }
+
+#[cfg(test)]
+#[path = "../../tests/portal/conn/relay_stream.rs"]
+mod tests;

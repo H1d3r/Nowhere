@@ -4,7 +4,7 @@
 //! TCP tunnel setup and bidirectional relay.
 
 use super::*;
-use crate::transport::{read_owned, read_owned_from, write_owned, write_owned_to};
+use crate::transport::{read_owned, read_owned_from, read_with_flush, write_owned, write_owned_to};
 
 pub(crate) struct TcpTunnel {
     reader: BoxReader,
@@ -208,7 +208,12 @@ pub(in crate::vector) async fn relay_tcp(
         let downlink = tunnel.downlink;
         let client_to_portal = async {
             loop {
-                let Some(chunk) = read_owned_from(&mut client_read, &vector.buffers).await? else {
+                let Some(chunk) = read_with_flush(
+                    read_owned_from(&mut client_read, &vector.buffers),
+                    &mut tunnel.writer,
+                )
+                .await?
+                else {
                     tunnel.writer.shutdown().await?;
                     return Ok::<(), anyhow::Error>(());
                 };
@@ -233,7 +238,12 @@ pub(in crate::vector) async fn relay_tcp(
         };
         let portal_to_client = async {
             loop {
-                let Some(chunk) = read_owned(&mut tunnel.reader, &vector.buffers).await? else {
+                let Some(chunk) = read_with_flush(
+                    read_owned(&mut tunnel.reader, &vector.buffers),
+                    &mut client_write,
+                )
+                .await?
+                else {
                     client_write.shutdown().await?;
                     return Ok::<(), anyhow::Error>(());
                 };
