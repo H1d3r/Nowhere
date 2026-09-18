@@ -3,7 +3,6 @@
 
 //! Compact, allocation-light display formatting.
 
-use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use chrono::{Local, TimeZone};
@@ -91,42 +90,17 @@ pub fn clock_time(timestamp_ms: u64) -> String {
         .unwrap_or_else(|| "--:--:--".to_owned())
 }
 
-/// Masks a client address while retaining enough subnet context for diagnosis.
-pub fn client_address(value: &str, reveal: bool) -> String {
-    if reveal {
-        return value.to_owned();
+/// Only instance-local pseudonyms may be rendered as client identities.
+pub fn client_address(value: &str) -> String {
+    if value.starts_with('C')
+        && (4..=21).contains(&value.len())
+        && value[1..].bytes().all(|b| b.is_ascii_digit())
+        && value[1..].parse::<u64>().is_ok_and(|id| id > 0)
+    {
+        value.to_owned()
+    } else {
+        "<redacted>".to_owned()
     }
-    if let Ok(socket) = value.parse::<SocketAddr>() {
-        return match socket.ip() {
-            IpAddr::V4(ip) => {
-                let octets = ip.octets();
-                format!("{}.{}.x.x:{}", octets[0], octets[1], socket.port())
-            }
-            IpAddr::V6(ip) => {
-                let segments = ip.segments();
-                format!(
-                    "[{:x}:{:x}:{:x}:…]:{}",
-                    segments[0],
-                    segments[1],
-                    segments[2],
-                    socket.port()
-                )
-            }
-        };
-    }
-    if let Ok(ip) = value.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(ip) => {
-                let octets = ip.octets();
-                format!("{}.{}.x.x", octets[0], octets[1])
-            }
-            IpAddr::V6(ip) => {
-                let segments = ip.segments();
-                format!("{:x}:{:x}:{:x}:…", segments[0], segments[1], segments[2])
-            }
-        };
-    }
-    "<masked>".to_owned()
 }
 
 pub fn truncate(value: &str, max_chars: usize) -> String {

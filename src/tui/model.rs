@@ -173,7 +173,6 @@ pub struct App {
     pub runtime_horizontal_scroll: usize,
     pub filter: String,
     pub filter_editing: bool,
-    pub reveal_clients: bool,
     pub show_help: bool,
     pub should_quit: bool,
     pub global_error: Option<String>,

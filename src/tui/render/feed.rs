@@ -117,7 +117,7 @@ fn access_line(record: &AccessRecord, app: &App) -> Line<'static> {
     let client = record
         .client
         .as_deref()
-        .map(|value| format::client_address(value, app.reveal_clients))
+        .map(format::client_address)
         .unwrap_or_else(|| "—".to_owned());
     let target = record.target.as_deref().unwrap_or("—");
     let mut spans = vec![
@@ -129,16 +129,30 @@ fn access_line(record: &AccessRecord, app: &App) -> Line<'static> {
         ),
         Span::styled(format!("{status:<4}"), accent(app, status_color)),
         Span::raw(format!(
-            " {} {} {}",
+            " {:<4} {} {}",
             client,
             if app.capabilities.unicode { "→" } else { ">" },
             target
         )),
     ];
-    if app.reveal_clients
-        && let Some(tag) = record.session_tag.as_deref()
-    {
-        spans.push(Span::styled(format!(" S:{tag}"), dim(app)));
+    if matches!(
+        record.route.as_str(),
+        "TLS → TLS"
+            | "TLS → QUIC"
+            | "QUIC → TLS"
+            | "QUIC → QUIC"
+            | "MIX → MIX"
+            | "MIX → TLS"
+            | "MIX → QUIC"
+            | "TLS → MIX"
+            | "QUIC → MIX"
+    ) {
+        let route = if app.capabilities.unicode {
+            record.route.clone()
+        } else {
+            record.route.replace('→', ">")
+        };
+        spans.push(Span::styled(format!("  {route}"), dim(app)));
     }
     if let Some(duration) = record.duration_ms {
         spans.push(Span::styled(
@@ -184,10 +198,7 @@ fn runtime_line(record: &RuntimeRecord, app: &App) -> Line<'static> {
             EventLevel::Error => "x",
         }
     };
-    let client = record
-        .client
-        .as_deref()
-        .map(|value| format::client_address(value, app.reveal_clients));
+    let client = record.client.as_deref().map(format::client_address);
     let mut spans = vec![
         Span::styled(format::clock_time(record.timestamp_ms), dim(app)),
         Span::raw(" "),

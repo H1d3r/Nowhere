@@ -16,13 +16,20 @@ fn formats_byte_totals_with_iec_units() {
 }
 
 #[test]
-fn masks_ipv4_and_ipv6_clients() {
-    assert_eq!(client_address("10.20.30.40:1234", false), "10.20.x.x:1234");
-    assert_eq!(
-        client_address("[2001:db8:1234:5678::1]:443", false),
-        "[2001:db8:1234:…]:443"
-    );
-    assert_eq!(client_address("10.20.30.40:1234", true), "10.20.30.40:1234");
+fn renders_only_anonymous_clients() {
+    assert_eq!(client_address("10.20.30.40:1234"), "<redacted>");
+    assert_eq!(client_address("[2001:db8::1]:443"), "<redacted>");
+    assert_eq!(client_address("C001"), "C001");
+    assert_eq!(client_address("C1000"), "C1000");
+    for invalid in [
+        "C000",
+        "C",
+        "Csecret",
+        "C001\x1b[31m",
+        "client_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        assert_eq!(client_address(invalid), "<redacted>");
+    }
 }
 
 #[test]

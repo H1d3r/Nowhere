@@ -241,15 +241,14 @@ fn access_shows_only_source_and_target() {
         },
     });
     let masked = rendered(200, 32, &app);
-    assert!(masked.contains("10.20.x.x:1234"));
+    assert!(masked.contains("<redacted>"));
     assert!(masked.contains("example:443"));
     assert!(!masked.contains("10.20.30.40:1234"));
     assert!(!masked.contains("10.20.30.40:5678"));
     assert!(!masked.contains("relay"));
 
-    app.reveal_clients = true;
     let revealed = rendered(200, 32, &app);
-    assert!(revealed.contains("10.20.30.40:1234"));
+    assert!(!revealed.contains("10.20.30.40:1234"));
     assert!(!revealed.contains("10.20.30.40:5678"));
     assert!(!revealed.contains("relay"));
 }
@@ -362,7 +361,7 @@ fn carrier_and_process_second_columns_share_one_alignment() {
 }
 
 #[test]
-fn runtime_peer_is_masked_until_revealed() {
+fn runtime_peer_cannot_be_revealed() {
     let mut app = app_with_instance();
     app.apply(UiEvent::Runtime {
         id: "test".to_owned(),
@@ -376,11 +375,10 @@ fn runtime_peer_is_masked_until_revealed() {
     });
     app.set_feed(FeedKind::Runtime);
     let masked = rendered(120, 32, &app);
-    assert!(masked.contains("10.20.x.x:1234"));
+    assert!(masked.contains("<redacted>"));
     assert!(!masked.contains("10.20.30.40:1234"));
 
-    app.reveal_clients = true;
-    assert!(rendered(120, 32, &app).contains("10.20.30.40:1234"));
+    assert!(!rendered(120, 32, &app).contains("10.20.30.40:1234"));
 }
 
 #[test]
@@ -427,8 +425,41 @@ fn access_prioritizes_complete_route_over_optional_stats() {
     });
 
     let output = rendered(200, 32, &app);
-    assert!(output.contains("10.20.x.x:1234"));
+    assert!(output.contains("<redacted>"));
     assert!(output.contains("destination.example:443"));
+}
+
+#[test]
+fn access_shows_short_client_target_and_carrier_pair() {
+    let mut app = app_with_instance();
+    show_logs(&mut app);
+    app.apply(UiEvent::Access {
+        id: "test".to_owned(),
+        record: AccessRecord {
+            timestamp_ms: 1,
+            event_id: 8,
+            phase: AccessPhase::Finish,
+            protocol: "TCP".to_owned(),
+            client: Some("C001".to_owned()),
+            target: Some("example.com:443".to_owned()),
+            route: "TLS → QUIC".to_owned(),
+            status: Some(AccessStatus::Error),
+            duration_ms: Some(462),
+            message: Some("connection refused".to_owned()),
+            ..AccessRecord::default()
+        },
+    });
+    let output = rendered(160, 32, &app);
+    assert!(output.contains("C001 → example.com:443"));
+    assert!(output.contains("TLS → QUIC"));
+    assert!(output.contains("connection refused"));
+    assert!(!output.contains("<redacted>"));
+    app.capabilities.unicode = false;
+    let output = rendered(160, 32, &app);
+    assert!(output.contains("C001 > example.com:443"));
+    assert!(output.contains("TLS > QUIC"));
+    app.selected_mut().unwrap().access.back_mut().unwrap().route = "MIX → TLS".to_owned();
+    assert!(rendered(160, 32, &app).contains("MIX > TLS"));
 }
 
 #[test]

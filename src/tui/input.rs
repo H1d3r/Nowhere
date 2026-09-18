@@ -37,7 +37,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Char('/') if app.page == Page::Logs => app.filter_editing = true,
         KeyCode::Char('c') if app.page == Page::Logs => app.clear_current_feed(),
-        KeyCode::Char('p') => app.reveal_clients = !app.reveal_clients,
         KeyCode::Char(' ') if app.page == Page::Logs => {
             app.paused = !app.paused;
             if !app.paused {

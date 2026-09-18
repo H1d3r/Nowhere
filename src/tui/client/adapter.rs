@@ -121,9 +121,15 @@ fn runtime_ui_value(value: RuntimeEvent) -> RuntimeRecord {
 
 pub(super) fn access_start_ui_value(value: AccessStarted) -> AccessRecord {
     let route = value.path.unwrap_or_else(|| {
-        let up = value.initial_uplink.as_deref().unwrap_or("?");
-        let down = value.initial_downlink.as_deref().unwrap_or("?");
-        format!("up:{up} down:{down}")
+        let carrier = |value: Option<&str>| match value {
+            Some("tcp") => "TLS",
+            Some("udp") => "QUIC",
+            None => "MIX",
+            _ => "?",
+        };
+        let up = carrier(value.initial_uplink.as_deref());
+        let down = carrier(value.initial_downlink.as_deref());
+        format!("{up} → {down}")
     });
     AccessRecord {
         timestamp_ms: value.timestamp_ms,

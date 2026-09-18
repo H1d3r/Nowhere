@@ -115,7 +115,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let mut spans = vec![Span::raw(match app.page {
         Page::Overview => " 1 overview  2 logs  ↑↓ select  Tab logs  ? help  q quit ",
         Page::Logs => {
-            " 1 overview  2 logs  ↑↓ select/scroll  Tab focus  ←→ pan  Space pause  / filter  p privacy  q quit "
+            " 1 overview  2 logs  ↑↓ select/scroll  Tab focus  ←→ pan  Space pause  / filter  q quit "
         }
     })];
     if app.page == Page::Logs && app.paused {
@@ -348,7 +348,6 @@ fn render_help(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from("  PgUp / PgDn   scroll ten records"),
         Line::from("  /             filter both logs"),
         Line::from("  c             clear focused local log"),
-        Line::from("  p             reveal/mask client addresses locally"),
         Line::from("  q / Ctrl-C    quit"),
         Line::from(""),
         Line::from(
