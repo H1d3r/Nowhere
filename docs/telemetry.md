@@ -112,8 +112,19 @@ Destination domains/IPs and ports are intentionally visible to authorized
 collectors as validated `host:port` values (IPv6 is bracketed). This permits
 useful routing and connectivity diagnosis, but collectors can learn visited
 destinations. URLs, credentials, request paths and query strings are not valid
-targets and are replaced with `<redacted>`. Raw paths, session identifiers and
-configuration summaries are not serialized. Carrier fields retain `tcp` (TLS)
+targets and are replaced with `<redacted>`. Raw paths and session identifiers
+are not serialized. Hello metadata includes
+validated instance endpoints and an allowlisted effective configuration summary:
+listen/Portal/SOCKS endpoints, transports, TLS mode, multiplexing, Morph, rate
+limits, dial address, SNI and pin presence. Chained Portal options use `next.`
+prefixes. Keys, SOCKS credentials, certificate paths and raw configuration URLs
+are excluded. Authorized collectors can therefore see configured service
+addresses and SNI. In the TUI, `i` opens an aligned configuration view; arrow keys
+and PageUp/PageDown scroll options, Home/End jump, and Esc/i closes it.
+The endpoint and summary fields default to empty when absent; a collector then
+reports metadata as unavailable. Collectors that validate against a closed
+instance schema must include these fields in their schema.
+Carrier fields retain `tcp` (TLS)
 and `udp` (QUIC); a null carrier represents the unresolved Mix policy.
 The TUI renders uplink/downlink pairs like `TLS → QUIC` or `MIX → TLS`;
 Mix is a configured policy, not a claim about the selected carrier.
