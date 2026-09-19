@@ -36,7 +36,9 @@ async fn carrier(pressured: bool) -> (MuxHandle, MuxHandle, crate::mux::Incoming
 #[tokio::test]
 async fn cold_reservations_balance_across_eight_connecting_slots() {
     let mut pool = Vec::new();
-    let pending: Vec<_> = (0..16).map(|_| reserve_mux(&mut pool)).collect();
+    let pending: Vec<_> = (0..16)
+        .map(|_| reserve_mux(&mut pool, None).unwrap())
+        .collect();
     assert_eq!(pool.len(), 8);
     assert!(
         pool.iter()
@@ -54,11 +56,48 @@ async fn idle_carrier_is_reused_before_new_connections() {
     let (handle, peer, _incoming, streams) = carrier(false).await;
     drop(streams);
     let mut pool = vec![slot(handle.clone())];
-    let selected = reserve_mux(&mut pool);
+    let selected = reserve_mux(&mut pool, None).unwrap();
     assert_eq!(pool.len(), 1);
     assert!(selected.0.handle.get().unwrap().same_carrier(&handle));
     handle.close();
     peer.close();
+}
+
+#[tokio::test]
+async fn retained_flow_id_uses_a_different_carrier() {
+    let (carrier, _peer) = tokio::io::duplex(1 << 20);
+    let (handle, _incoming) = MuxHandle::start(carrier, MuxConfig::default()).unwrap();
+    let retained_id = 77;
+    drop(handle.prepare_stream(retained_id).unwrap());
+    assert_eq!(handle.active_streams(), 0);
+    assert!(handle.contains_flow(retained_id));
+
+    let mut pool = vec![slot(handle.clone())];
+    let selected = reserve_mux(&mut pool, Some(retained_id)).unwrap();
+    assert_eq!(pool.len(), 2);
+    assert!(selected.0.handle.get().is_none());
+
+    handle.close();
+}
+
+#[tokio::test]
+async fn retained_metadata_limit_uses_a_different_carrier() {
+    let (carrier, _peer) = tokio::io::duplex(1 << 20);
+    let config = MuxConfig {
+        active_stream_limit: 1,
+        ..MuxConfig::default()
+    };
+    let (handle, _incoming) = MuxHandle::start(carrier, config).unwrap();
+    drop(handle.prepare_stream(1).unwrap());
+    assert_eq!(handle.active_streams(), 0);
+    assert!(!handle.can_open_flow(2));
+
+    let mut pool = vec![slot(handle.clone())];
+    let selected = reserve_mux(&mut pool, Some(2)).unwrap();
+    assert_eq!(pool.len(), 2);
+    assert!(selected.0.handle.get().is_none());
+
+    handle.close();
 }
 
 #[tokio::test]
@@ -74,7 +113,7 @@ async fn full_pool_prefers_lower_pressure_and_still_transfers_new_flows() {
         streams.extend(held);
         incoming.push(receiver);
     }
-    let selected = reserve_mux(&mut pool);
+    let selected = reserve_mux(&mut pool, None).unwrap();
     assert!(Arc::ptr_eq(&selected.0, &pool[7]));
     let handle = selected.0.handle.get().unwrap();
     let mut stream = handle.open_stream(99).await.unwrap();
@@ -96,7 +135,7 @@ async fn full_pool_prefers_lower_pressure_and_still_transfers_new_flows() {
 #[tokio::test]
 async fn cancelling_initializer_releases_reservation_and_allows_retry() {
     let mut pool = Vec::new();
-    let pending = reserve_mux(&mut pool);
+    let pending = reserve_mux(&mut pool, None).unwrap();
     let (started, ready) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(async move {
         let _pending = pending;
@@ -114,7 +153,7 @@ async fn cancelling_initializer_releases_reservation_and_allows_retry() {
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(pool[0].pending.load(Ordering::Relaxed), 0);
-    let retry = reserve_mux(&mut pool);
+    let retry = reserve_mux(&mut pool, None).unwrap();
     assert_eq!(pool.len(), 1);
     let (handle, peer, _incoming, streams) = carrier(false).await;
     retry
@@ -135,7 +174,7 @@ async fn closed_carrier_is_replaced_with_a_reusable_slot() {
     let mut pool = vec![slot(handle.clone())];
     let old = pool[0].clone();
     handle.close();
-    let pending = reserve_mux(&mut pool);
+    let pending = reserve_mux(&mut pool, None).unwrap();
     assert_eq!(pool.len(), 1);
     assert!(!Arc::ptr_eq(&pending.0, &old));
     peer.close();

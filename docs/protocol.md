@@ -292,9 +292,13 @@ OPEN carries no payload and extends
 the opener's 4 MiB initial stream receive window. The runtime emits DATA
 payloads of at most 32 KiB.
 
-FIN and RESET carry no payload. FIN half-closes a logical stream; RESET
-immediately removes it. Other frame kinds are invalid. Every nonzero `flow_id`
-must be at most `0x3fffffff`; the upper two bits of its u32 field must be zero.
+FIN and RESET carry no payload. FIN closes only the sender's direction and does
+not acknowledge that DATA in the reverse direction has ended. A RESET receiver
+may immediately remove the flow because earlier DATA in that same direction is
+ordered before RESET. A RESET sender may retain bounded closed-flow state for
+reverse-direction DATA already in flight. Other frame kinds are invalid. Every
+nonzero `flow_id` must be at most `0x3fffffff`; the upper two bits of its u32
+field must be zero.
 
 WINDOW carries no payload and requires nonzero credit in 1 KiB
 units. A
@@ -302,16 +306,23 @@ WINDOW with `flow_id=0` replenishes connection credit; a nonzero ID replenishes
 that logical stream. Credit that would exceed the configured window closes the
 carrier. A late stream-local WINDOW for an already closed stream is ignored.
 
-DATA for an unknown flow is a carrier error. Late or duplicate FIN/RESET processing
-is idempotent. Closing the physical Mux carrier fails every logical stream on
-that carrier.
+DATA for a flow that was never established, has already received FIN, or has
+completed bidirectional termination without retained closed-flow state is a
+carrier error. After a local FIN or RESET, an implementation may discard DATA
+that was already in flight, but it MUST validate both receive windows and return
+only connection credit; retaining the stream debit bounds the discarded data.
+Late or duplicate FIN/RESET processing is idempotent. Closing the physical Mux
+carrier fails every logical stream on that carrier.
 
 Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
 sends one WINDOW to extend its connection window. OPEN advertises the opener's
 stream extension; the receiver returns its stream extension with WINDOW.
 The selected transport profile sets final windows to 4/8, 8/16, or 16/32 MiB.
-Each carrier admits at most 4,096 active streams as an implementation resource
-ceiling, independent of application flow policy. Each carrier has 512 queued
+Each carrier retains at most 4,096 active and locally closed flow states as an
+implementation resource ceiling, independent of application flow policy. A
+client that fills this budget stops admitting flows to that carrier, drains its
+active streams, and replaces the carrier. Application load and idle decisions
+count only flows still owned by the application. Each carrier has 512 queued
 outbound frame slots and 4,096 queued terminal-delivery slots; each stream may
 have one DATA frame queued or being written.
 Payload must obtain
@@ -341,7 +352,9 @@ credit, receive credit, and outbound frame slots; stream count plus pending
 reservations breaks ties. Connecting slots also accept reservations, so a cold
 burst does not pile onto the first completed handshake. Each slot shares one
 initializer; cancellation allows a waiter to retry it. Failed expansion can
-fall back to an established carrier. There is no stream-density target, latency
+fall back to an established carrier. A carrier retaining the requested flow ID
+is skipped so ID wraparound cannot reopen that ID before protocol state is
+retired. There is no stream-density target, latency
 threshold, background polling, or migration
 of established streams. This favors parallel throughput over minimizing the
 number of carriers for many idle logical streams.

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use super::wire::{
     CLOSE_FIN, FlowId, FrameHeader, FrameKind, HEADER_LEN, decode_header, encode_header,
 };
-use super::{Inbound, MuxChunk, Outbound, Shared};
+use super::{Inbound, MuxChunk, Outbound, ReceiveTarget, Shared};
 
 pub(super) async fn send_data(
     shared: Arc<Shared>,
@@ -117,11 +117,19 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
 
 async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes) -> io::Result<()> {
     let charge = frame_charge(payload.len());
-    let inbound = shared.admit_receive(header.flow_id, charge)?;
-    if inbound.send(Inbound::Data { payload, charge }).is_err() {
-        // The local read half may be abandoned while its writer is still
-        // live. Return credit for discarded bytes without killing other flows.
-        shared.release_receive(header.flow_id, charge);
+    match shared.admit_receive(header.flow_id, charge)? {
+        ReceiveTarget::Deliver(inbound) => {
+            if inbound.send(Inbound::Data { payload, charge }).is_err() {
+                // The local read half may be abandoned while its writer is still
+                // live. Return credit for discarded bytes without killing other flows.
+                shared.release_receive(header.flow_id, charge);
+            }
+        }
+        ReceiveTarget::Discard => {
+            // Keep the per-stream debit so a peer cannot send an unbounded
+            // amount after the application has finished with this flow.
+            shared.release_connection_receive(charge);
+        }
     }
     Ok(())
 }
@@ -133,17 +141,29 @@ async fn receive_close(shared: &Shared, header: FrameHeader) {
         }
         return;
     }
-    let inbound = {
+    let (inbound, removed) = {
         let mut flows = shared.flows.lock().expect("mux flow lock");
-        flows.get_mut(&header.flow_id).and_then(|flow| {
-            if flow.remote_fin {
-                None
+        let mut inbound = None;
+        let mut removed = None;
+        if let Some(flow) = flows.get_mut(&header.flow_id)
+            && !flow.remote_fin
+        {
+            if flow.local_parts == 0 && flow.local_fin_sent {
+                removed = flows.remove(&header.flow_id);
             } else {
                 flow.remote_fin = true;
-                Some(flow.inbound.clone())
+                inbound = Some(flow.inbound.clone());
             }
-        })
+        }
+        shared
+            .active_streams_tx
+            .send_replace(super::active_flow_count(&flows));
+        (inbound, removed)
     };
+    if let Some(flow) = removed {
+        flow.send_credit.close();
+        flow.send_slot.close();
+    }
     if let Some(inbound) = inbound {
         let _ = inbound.send(Inbound::Fin);
     }
@@ -210,6 +230,7 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
 ) {
     let mut control = Vec::with_capacity(HEADER_LEN * 64);
     let mut headers = Vec::with_capacity(HEADER_LEN * 256);
+    let mut finished_flows = Vec::with_capacity(256);
     let mut pending_item = None;
     let operation = async {
         loop {
@@ -246,11 +267,18 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                 }
                 Outbound::Control(header) => {
                     headers.clear();
+                    finished_flows.clear();
+                    if header.kind == FrameKind::Fin {
+                        finished_flows.push(header.flow_id);
+                    }
                     headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
                     while headers.len() < HEADER_LEN * 256 {
                         let Ok(next) = data_rx.try_recv() else { break };
                         match next {
                             Outbound::Control(header) => {
+                                if header.kind == FrameKind::Fin {
+                                    finished_flows.push(header.flow_id);
+                                }
                                 headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
                             }
                             next => {
@@ -261,6 +289,9 @@ pub(super) async fn run_writer<W: AsyncWrite + Unpin>(
                     }
                     writer.write_all(&headers).await?;
                     writer.flush().await?;
+                    for flow_id in finished_flows.drain(..) {
+                        shared.finish_local_fin(flow_id);
+                    }
                 }
                 Outbound::Data {
                     header,

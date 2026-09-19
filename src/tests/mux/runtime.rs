@@ -75,7 +75,7 @@ async fn open_reset_churn_cannot_overflow_pending_incoming_admission() {
 }
 
 #[tokio::test]
-async fn dropped_writers_close_carrier_when_terminal_delivery_is_saturated() {
+async fn locally_closed_flows_remain_within_the_metadata_limit() {
     let config = MuxConfig {
         active_stream_limit: 2,
         ..MuxConfig::default()
@@ -83,15 +83,14 @@ async fn dropped_writers_close_carrier_when_terminal_delivery_is_saturated() {
     let (_peer, carrier) = tokio::io::duplex(1);
     let (handle, _incoming) = MuxHandle::start(carrier, config).unwrap();
 
-    // No await gives the terminal dispatcher no opportunity to drain between
-    // drops. Flow state is released each time, so only the terminal queue can
-    // bound this churn.
-    for flow_id in 1..=3 {
+    for flow_id in 1..=2 {
         drop(handle.prepare_stream(flow_id).unwrap());
     }
 
-    assert!(handle.is_closed());
+    assert!(handle.prepare_stream(3).is_err());
+    assert!(!handle.is_closed());
     assert_eq!(handle.active_streams(), 0);
+    assert_eq!(handle.shared.flows.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -298,6 +297,75 @@ async fn data_after_fin_closes_carrier() {
 }
 
 #[tokio::test]
+async fn data_after_local_fin_is_discarded_until_peer_fin() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (carrier, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(carrier, config).unwrap();
+    let stream = handle.open_stream(7).await.unwrap();
+    drop(stream);
+
+    let mut outbound = [0; 2 * super::wire::HEADER_LEN];
+    tokio::time::timeout(Duration::from_secs(1), peer.read_exact(&mut outbound))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(handle.active_streams(), 0);
+    assert!(handle.contains_flow(7));
+
+    let mut data = encode_header(FrameHeader::data(7, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    data.push(0x7a);
+    peer.write_all(&data).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while handle
+            .shared
+            .pending_connection_credit
+            .load(Ordering::Acquire)
+            == 0
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!handle.is_closed());
+    assert_eq!(
+        handle
+            .shared
+            .flows
+            .lock()
+            .unwrap()
+            .get(&7)
+            .unwrap()
+            .receive_credit,
+        credit_units(BASE_STREAM_WINDOW_BYTES) - 1
+    );
+
+    peer.write_all(&encode_header(FrameHeader::close(7, CLOSE_FIN).unwrap()).unwrap())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while handle.contains_flow(7) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+
+    peer.write_all(&encode_header(FrameHeader::open(9, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let next = incoming.accept().await.unwrap().unwrap();
+    assert_eq!(next.flow_id(), 9);
+    assert!(!handle.is_closed());
+}
+
+#[tokio::test]
 async fn idle_deadline_resets_when_a_stream_becomes_active() {
     let (left, right) = tokio::io::duplex(1 << 20);
     let (client, _) = MuxHandle::start(left, MuxConfig::default()).unwrap();
@@ -496,11 +564,12 @@ async fn stream_credit_does_not_shrink_with_active_stream_count() {
     drop(streams);
     {
         let flows = client.shared.flows.lock().unwrap();
-        assert_eq!(flows.len(), 1);
+        assert_eq!(flows.len(), 128);
+        assert_eq!(active_flow_count(&flows), 1);
         assert_eq!(
             flows
                 .values()
-                .next()
+                .find(|flow| flow.local_parts != 0)
                 .unwrap()
                 .send_credit
                 .available_permits(),

@@ -324,7 +324,8 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_RELOAD_INTERVAL` | `1h` | Supplied-certificate reload interval |
 
 TLS Mux shares the transport profile's 4/8, 8/16, or 16/32 MiB stream/connection
-receive windows with QUIC. A Mux carrier admits at most 4,096 active streams and
+receive windows with QUIC. A Mux carrier retains at most 4,096 active and
+locally closed flow states and
 has 512 queued frame slots; queued payload remains charged against the connection
 window. Each flow has at most one DATA frame queued or being written, so a bulk
 writer cannot fill the shared queue. Receive queues are bounded by byte credit

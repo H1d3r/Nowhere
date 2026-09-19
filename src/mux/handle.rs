@@ -96,7 +96,24 @@ impl MuxHandle {
     }
 
     pub(crate) fn active_streams(&self) -> usize {
-        self.shared.flows.lock().expect("mux flow lock").len()
+        super::active_flow_count(&self.shared.flows.lock().expect("mux flow lock"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn contains_flow(&self, flow_id: super::FlowId) -> bool {
+        self.shared
+            .flows
+            .lock()
+            .expect("mux flow lock")
+            .contains_key(&flow_id)
+    }
+
+    pub(crate) fn can_open_flow(&self, flow_id: super::FlowId) -> bool {
+        if self.is_closed() {
+            return false;
+        }
+        let flows = self.shared.flows.lock().expect("mux flow lock");
+        flows.len() < self.shared.config.active_stream_limit && !flows.contains_key(&flow_id)
     }
 
     pub(crate) fn pressure(&self) -> usize {

@@ -69,7 +69,7 @@ impl TlsManager {
                 .map(Box::new)
                 .map(OpenedTls::Dedicated);
         }
-        let pending = reserve_mux(&mut *self.mux.lock().await);
+        let pending = reserve_mux(&mut *self.mux.lock().await, Some(flow_id))?;
         // Reservations include connecting slots, avoiding a cold-start stampede
         // onto the first handshake to finish. OnceCell shares one initializer;
         // cancellation lets another waiter retry without leaking a pool slot.
@@ -85,7 +85,7 @@ impl TlsManager {
                 let Some(handle) = pool
                     .iter()
                     .filter_map(|carrier| carrier.handle.get())
-                    .filter(|handle| !handle.is_closed())
+                    .filter(|handle| handle.can_open_flow(flow_id))
                     .min_by_key(|handle| (handle.pressure(), handle.active_streams()))
                     .cloned()
                 else {
@@ -192,10 +192,18 @@ impl TlsManager {
     }
 }
 
-fn reserve_mux(pool: &mut Vec<Arc<TlsMux>>) -> PendingMux {
+fn reserve_mux(pool: &mut Vec<Arc<TlsMux>>, flow_id: Option<u32>) -> std::io::Result<PendingMux> {
     pool.retain(|carrier| !carrier.handle.get().is_some_and(MuxHandle::is_closed));
     let selected = pool
         .iter()
+        .filter(|carrier| {
+            flow_id.is_none_or(|flow_id| {
+                carrier
+                    .handle
+                    .get()
+                    .is_none_or(|handle| handle.can_open_flow(flow_id))
+            })
+        })
         .map(|carrier| {
             let handle = carrier.handle.get();
             let active = carrier.pending.load(Ordering::Relaxed)
@@ -208,14 +216,41 @@ fn reserve_mux(pool: &mut Vec<Arc<TlsMux>>) -> PendingMux {
         Some((carrier, active, _)) if active == 0 || pool.len() >= TLS_MUX_MAX_CARRIERS => {
             carrier.clone()
         }
+        _ if pool.len() < TLS_MUX_MAX_CARRIERS => {
+            let carrier = Arc::new(TlsMux::default());
+            pool.push(carrier.clone());
+            carrier
+        }
         _ => {
+            // A released application flow can remain as protocol state while
+            // its peer finishes. Replace an idle conflicting carrier rather
+            // than reusing the same flow ID on it.
+            let index = pool.iter().position(|carrier| {
+                carrier.pending.load(Ordering::Relaxed) == 0
+                    && carrier
+                        .handle
+                        .get()
+                        .is_some_and(|handle| handle.active_streams() == 0)
+            });
+            let Some(index) = index else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "no eligible TLS Mux carrier available",
+                ));
+            };
+            let retired = pool.remove(index);
+            retired
+                .handle
+                .get()
+                .expect("idle carrier initialized")
+                .close();
             let carrier = Arc::new(TlsMux::default());
             pool.push(carrier.clone());
             carrier
         }
     };
     carrier.pending.fetch_add(1, Ordering::Relaxed);
-    PendingMux(carrier)
+    Ok(PendingMux(carrier))
 }
 
 #[cfg(test)]

@@ -154,6 +154,7 @@ struct FlowState {
     pending_receive_credit: usize,
     window_queued: bool,
     local_parts: u8,
+    local_fin_sent: bool,
     remote_fin: bool,
 }
 
@@ -161,6 +162,11 @@ enum Inbound {
     Data { payload: Bytes, charge: usize },
     Fin,
     Reset,
+}
+
+enum ReceiveTarget {
+    Deliver(mpsc::UnboundedSender<Inbound>),
+    Discard,
 }
 
 enum Outbound {
@@ -267,10 +273,11 @@ impl Shared {
                 pending_receive_credit: initial_credit,
                 window_queued: advertise_window && initial_credit != 0,
                 local_parts: 2,
+                local_fin_sent: false,
                 remote_fin: false,
             },
         );
-        let active_streams = flows.len();
+        let active_streams = active_flow_count(&flows);
         self.active_streams_tx.send_replace(active_streams);
         drop(flows);
         if advertise_window && initial_credit != 0 {
@@ -330,17 +337,13 @@ impl Shared {
             flow.send_credit.close();
             flow.send_slot.close();
         }
-        let active_streams = flows.len();
+        let active_streams = active_flow_count(&flows);
         self.active_streams_tx.send_replace(active_streams);
         drop(flows);
         removed
     }
 
-    fn admit_receive(
-        &self,
-        flow_id: FlowId,
-        charge: usize,
-    ) -> io::Result<mpsc::UnboundedSender<Inbound>> {
+    fn admit_receive(&self, flow_id: FlowId, charge: usize) -> io::Result<ReceiveTarget> {
         let mut connection = self
             .connection_receive_credit
             .lock()
@@ -363,7 +366,33 @@ impl Shared {
         }
         flow.receive_credit -= charge;
         *connection -= charge;
-        Ok(flow.inbound.clone())
+        if flow.local_parts == 0 {
+            Ok(ReceiveTarget::Discard)
+        } else {
+            Ok(ReceiveTarget::Deliver(flow.inbound.clone()))
+        }
+    }
+
+    fn release_connection_receive(&self, charge: usize) {
+        if self.closed.load(Ordering::Acquire) {
+            return;
+        }
+        let mut connection = self
+            .connection_receive_credit
+            .lock()
+            .expect("mux credit lock");
+        *connection = connection
+            .saturating_add(charge)
+            .min(credit_units(self.config.connection_window_bytes));
+        drop(connection);
+        let previous = self
+            .pending_connection_credit
+            .fetch_add(charge, Ordering::AcqRel);
+        let threshold = credit_units(self.config.connection_window_bytes / WINDOW_UPDATE_DIVISOR)
+            .min(u16::MAX as usize);
+        if previous.saturating_add(charge) >= threshold {
+            self.control_notify.notify_one();
+        }
     }
 
     fn release_receive(&self, flow_id: FlowId, charge: usize) {
@@ -378,7 +407,13 @@ impl Shared {
             *connection = connection
                 .saturating_add(charge)
                 .min(credit_units(self.config.connection_window_bytes));
-            if let Some(flow) = self.flows.lock().expect("mux flow lock").get_mut(&flow_id) {
+            if let Some(flow) = self
+                .flows
+                .lock()
+                .expect("mux flow lock")
+                .get_mut(&flow_id)
+                .filter(|flow| flow.local_parts != 0)
+            {
                 flow.receive_credit = flow
                     .receive_credit
                     .saturating_add(charge)
@@ -419,18 +454,36 @@ impl Shared {
         let Some(flow) = flows.get_mut(&flow_id) else {
             return;
         };
-        let flush_credit = flow.pending_receive_credit != 0;
         flow.local_parts = flow.local_parts.saturating_sub(1);
+        let flush_credit = flow.pending_receive_credit != 0;
         if flow.local_parts == 0 {
+            flow.pending_receive_credit = 0;
+            flow.window_queued = false;
+        }
+        if flow.local_parts == 0 && flow.remote_fin && flow.local_fin_sent {
             flows.remove(&flow_id);
         }
-        let active_streams = flows.len();
+        let active_streams = active_flow_count(&flows);
         self.active_streams_tx.send_replace(active_streams);
         drop(flows);
         if flush_credit {
             self.control_notify.notify_one();
         }
     }
+
+    fn finish_local_fin(&self, flow_id: FlowId) {
+        let mut flows = self.flows.lock().expect("mux flow lock");
+        if let Some(flow) = flows.get_mut(&flow_id) {
+            flow.local_fin_sent = true;
+            if flow.local_parts == 0 && flow.remote_fin {
+                flows.remove(&flow_id);
+            }
+        }
+    }
+}
+
+fn active_flow_count(flows: &HashMap<FlowId, FlowState>) -> usize {
+    flows.values().filter(|flow| flow.local_parts != 0).count()
 }
 
 fn credit_units(bytes: usize) -> usize {

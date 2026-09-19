@@ -87,11 +87,14 @@ application consumption. Closing the carrier releases queued payload.
 
 The fixed maximum frame payload is 65,535 bytes and the runtime emits at most
 32 KiB per DATA frame. Malformed kinds, codes, IDs, lengths, window overflow,
-and DATA for unknown streams close the carrier. Late terminal and credit frames
-for a terminal stream are idempotent.
+and DATA for genuinely unknown streams close the carrier. DATA already in flight
+after a local close remains subject to both receive windows, is discarded, and
+returns only connection credit. Late terminal and credit frames for a terminal
+stream are idempotent.
 
 The transport memory profile bounds Mux stream/connection windows at 4/8,
-8/16, or 16/32 MiB. Each Mux carrier admits at most 4,096 active streams. With client `mux=1`,
+8/16, or 16/32 MiB. Each Mux carrier retains at most 4,096 active and closed
+flow states. With client `mux=1`,
 Vector or Portal `next` shares at most eight TLS carriers across both directions,
 reuses idle carriers before creating more, distributes flows by occupancy at capacity,
 and closes a fully idle carrier after 30 seconds. Stream and pending lifecycle
