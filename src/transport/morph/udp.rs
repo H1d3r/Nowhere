@@ -12,33 +12,47 @@ use chacha20::cipher::{KeyIvInit, StreamCipher};
 use quinn::udp::{RecvMeta, Transmit};
 use quinn::{AsyncUdpSocket, UdpPoller};
 
-use super::{MorphKey, NONCE_LEN, exhausted};
+use super::{MorphKeyBytes, MorphKeys, NONCE_LEN, exhausted};
 
 const QUINN_DEFAULT_MTU_UPPER_BOUND: u16 = 1452;
-const MAX_INVALID_RECEIVE_BATCHES: usize = 32;
 pub(super) const UDP_NONCE_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
+
+#[derive(Clone, Copy)]
+pub(crate) enum UdpRole {
+    Client,
+    Server,
+}
 
 pub(crate) fn wrap_morph_udp_socket(
     inner: Arc<dyn AsyncUdpSocket>,
-    key: Option<MorphKey>,
+    keys: Option<MorphKeys>,
+    role: UdpRole,
 ) -> io::Result<Arc<dyn AsyncUdpSocket>> {
-    match key {
-        Some(key) => Ok(Arc::new(MorphUdpSocket {
-            inner,
-            key,
-            buffers: Mutex::new(UdpBuffers::new()?),
-        })),
+    match keys {
+        Some(keys) => {
+            let (c2s, s2c) = keys.udp_keys();
+            let (tx_key, rx_key) = match role {
+                UdpRole::Client => (c2s, s2c),
+                UdpRole::Server => (s2c, c2s),
+            };
+            Ok(Arc::new(MorphUdpSocket {
+                inner,
+                tx_key,
+                rx_key,
+                send: Mutex::new(UdpSendState::new()?),
+                receive: Mutex::new(UdpReceiveState::new()),
+            }))
+        }
         None => Ok(inner),
     }
 }
 
-pub(super) struct UdpBuffers {
+pub(super) struct UdpSendState {
     send: Vec<u8>,
-    receive: [Vec<u8>; quinn::udp::BATCH_SIZE],
     pub(super) nonce_generator: UdpNonceGenerator,
 }
 
-impl UdpBuffers {
+impl UdpSendState {
     fn new() -> io::Result<Self> {
         Ok(Self::from_seed(random_seed()?))
     }
@@ -46,8 +60,19 @@ impl UdpBuffers {
     pub(super) fn from_seed(seed: [u8; 32]) -> Self {
         Self {
             send: Vec::new(),
-            receive: std::array::from_fn(|_| Vec::new()),
             nonce_generator: UdpNonceGenerator::from_seed(seed),
+        }
+    }
+}
+
+pub(super) struct UdpReceiveState {
+    receive: [Vec<u8>; quinn::udp::BATCH_SIZE],
+}
+
+impl UdpReceiveState {
+    pub(super) fn new() -> Self {
+        Self {
+            receive: std::array::from_fn(|_| Vec::new()),
         }
     }
 }
@@ -115,8 +140,10 @@ pub(crate) fn configure_morph_mtu(transport: &mut quinn::TransportConfig, enable
 
 pub(super) struct MorphUdpSocket {
     pub(super) inner: Arc<dyn AsyncUdpSocket>,
-    pub(super) key: MorphKey,
-    pub(super) buffers: Mutex<UdpBuffers>,
+    pub(super) tx_key: MorphKeyBytes,
+    pub(super) rx_key: MorphKeyBytes,
+    pub(super) send: Mutex<UdpSendState>,
+    pub(super) receive: Mutex<UdpReceiveState>,
 }
 
 impl fmt::Debug for MorphUdpSocket {
@@ -151,12 +178,11 @@ impl AsyncUdpSocket for MorphUdpSocket {
                     .ok_or_else(|| io::Error::other("Morph UDP datagram length overflow"))?,
             )
             .ok_or_else(|| io::Error::other("Morph UDP datagram length overflow"))?;
-        let mut buffers = self.buffers.lock().unwrap_or_else(|lock| lock.into_inner());
-        let UdpBuffers {
+        let mut state = self.send.lock().unwrap_or_else(|lock| lock.into_inner());
+        let UdpSendState {
             send,
             nonce_generator,
-            ..
-        } = &mut *buffers;
+        } = &mut *state;
         if send.len() < wire_len {
             send.resize(wire_len, 0);
         }
@@ -166,7 +192,7 @@ impl AsyncUdpSocket for MorphUdpSocket {
             let (nonce, payload) = send[wire_offset..wire_end].split_at_mut(NONCE_LEN);
             let nonce: &mut [u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
             nonce_generator.generate(nonce)?;
-            let mut cipher = ChaCha20::new((&self.key).into(), (&*nonce).into());
+            let mut cipher = ChaCha20::new((&self.tx_key).into(), (&*nonce).into());
             cipher
                 .try_apply_keystream_b2b(plain, payload)
                 .map_err(|_| exhausted())?;
@@ -201,7 +227,7 @@ impl AsyncUdpSocket for MorphUdpSocket {
             return Poll::Ready(Ok(0));
         }
         let max_segments = self.inner.max_receive_segments().max(1);
-        let mut buffers = self.buffers.lock().unwrap_or_else(|lock| lock.into_inner());
+        let mut state = self.receive.lock().unwrap_or_else(|lock| lock.into_inner());
         let Some(nonce_overhead) = NONCE_LEN.checked_mul(max_segments) else {
             return Poll::Ready(Err(io::Error::other(
                 "Morph UDP receive buffer length overflow",
@@ -215,77 +241,75 @@ impl AsyncUdpSocket for MorphUdpSocket {
                 )));
             };
             wire_lengths[index] = wire_len;
-            if buffers.receive[index].len() < wire_len {
-                buffers.receive[index].resize(wire_len, 0);
+            if state.receive[index].len() < wire_len {
+                state.receive[index].resize(wire_len, 0);
             }
         }
-        for _ in 0..MAX_INVALID_RECEIVE_BATCHES {
-            let receive = buffers.receive.each_mut();
-            let mut index = 0;
-            let mut wire_bufs = receive.map(|value| {
-                let wire_len = wire_lengths[index];
-                index += 1;
-                IoSliceMut::new(&mut value[..wire_len])
-            });
-            let received = match self.inner.poll_recv(
-                cx,
-                &mut wire_bufs[..receive_count],
-                &mut meta[..receive_count],
-            ) {
-                Poll::Ready(Ok(received)) => received.min(receive_count),
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Pending => return Poll::Pending,
+        let receive = state.receive.each_mut();
+        let mut index = 0;
+        let mut wire_bufs = receive.map(|value| {
+            let wire_len = wire_lengths[index];
+            index += 1;
+            IoSliceMut::new(&mut value[..wire_len])
+        });
+        let received = match self.inner.poll_recv(
+            cx,
+            &mut wire_bufs[..receive_count],
+            &mut meta[..receive_count],
+        ) {
+            Poll::Ready(Ok(received)) => received.min(receive_count),
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Pending => return Poll::Pending,
+        };
+        let mut output = 0;
+        for index in 0..received {
+            let wire_meta = meta[index];
+            let wire_stride = wire_meta.stride;
+            let storage = &state.receive[index];
+            if wire_meta.len == 0
+                || wire_meta.len > wire_lengths[index]
+                || wire_stride <= NONCE_LEN
+                || wire_stride > wire_meta.len
+            {
+                continue;
+            }
+            let segment_count = wire_meta.len.div_ceil(wire_stride);
+            let Some(nonce_bytes) = segment_count.checked_mul(NONCE_LEN) else {
+                continue;
             };
-            let mut output = 0;
-            for index in 0..received {
-                let wire_meta = meta[index];
-                let wire_stride = wire_meta.stride;
-                let storage = &buffers.receive[index];
-                if wire_meta.len == 0
-                    || wire_meta.len > wire_lengths[index]
-                    || wire_stride <= NONCE_LEN
-                    || wire_stride > wire_meta.len
-                {
-                    continue;
-                }
-                let segment_count = wire_meta.len.div_ceil(wire_stride);
-                let Some(nonce_bytes) = segment_count.checked_mul(NONCE_LEN) else {
-                    continue;
-                };
-                let Some(expected_len) = wire_meta.len.checked_sub(nonce_bytes) else {
-                    continue;
-                };
-                let final_wire_len = wire_meta.len % wire_stride;
-                if expected_len == 0
-                    || expected_len > bufs[output].len()
-                    || (final_wire_len != 0 && final_wire_len <= NONCE_LEN)
-                {
-                    continue;
-                }
-                let target = &mut bufs[output];
-                let decoded_stride = wire_stride - NONCE_LEN;
-                let mut decoded_len = 0;
-                for wire in storage[..wire_meta.len].chunks(wire_stride) {
-                    let (nonce, encrypted) = wire.split_at(NONCE_LEN);
-                    let nonce: &[u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
-                    let mut cipher = ChaCha20::new((&self.key).into(), nonce.into());
-                    let end = decoded_len + encrypted.len();
-                    cipher
-                        .try_apply_keystream_b2b(encrypted, &mut target[decoded_len..end])
-                        .map_err(|_| exhausted())?;
-                    decoded_len = end;
-                }
-                debug_assert_eq!(decoded_len, expected_len);
-                meta[output] = RecvMeta {
-                    len: decoded_len,
-                    stride: decoded_stride,
-                    ..wire_meta
-                };
-                output += 1;
+            let Some(expected_len) = wire_meta.len.checked_sub(nonce_bytes) else {
+                continue;
+            };
+            let final_wire_len = wire_meta.len % wire_stride;
+            if expected_len == 0
+                || expected_len > bufs[output].len()
+                || (final_wire_len != 0 && final_wire_len <= NONCE_LEN)
+            {
+                continue;
             }
-            if output != 0 {
-                return Poll::Ready(Ok(output));
+            let target = &mut bufs[output];
+            let decoded_stride = wire_stride - NONCE_LEN;
+            let mut decoded_len = 0;
+            for wire in storage[..wire_meta.len].chunks(wire_stride) {
+                let (nonce, encrypted) = wire.split_at(NONCE_LEN);
+                let nonce: &[u8; NONCE_LEN] = nonce.try_into().expect("fixed nonce prefix");
+                let mut cipher = ChaCha20::new((&self.rx_key).into(), nonce.into());
+                let end = decoded_len + encrypted.len();
+                cipher
+                    .try_apply_keystream_b2b(encrypted, &mut target[decoded_len..end])
+                    .map_err(|_| exhausted())?;
+                decoded_len = end;
             }
+            debug_assert_eq!(decoded_len, expected_len);
+            meta[output] = RecvMeta {
+                len: decoded_len,
+                stride: decoded_stride,
+                ..wire_meta
+            };
+            output += 1;
+        }
+        if output != 0 {
+            return Poll::Ready(Ok(output));
         }
         cx.waker().wake_by_ref();
         Poll::Pending

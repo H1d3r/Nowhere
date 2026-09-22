@@ -134,7 +134,8 @@ impl QuicManager {
         let morph_enabled = self.config.morph_keys.is_some();
         let socket = crate::transport::wrap_morph_udp_socket(
             socket,
-            self.config.morph_keys.as_ref().map(|keys| keys.udp_key()),
+            self.config.morph_keys.clone(),
+            crate::transport::UdpRole::Client,
         )?;
         let mut endpoint = Endpoint::new_with_abstract_socket(
             crate::transport::morph_endpoint_config(morph_enabled)?,

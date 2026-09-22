@@ -24,7 +24,11 @@ fn derives_fixed_hkdf_sha256_keys() {
         hex("20bc17a22d08469e60efd4c6bdda76f190c33946599a0797bab2d52007b97e27")
     );
     assert_eq!(
-        keys.udp,
-        hex("484b5f06a66e566099da4886e3bb2ec342aedee0ebcd7ea426d68ece4f3f8ea2")
+        keys.udp_c2s,
+        hex("6837a1f0de5a70baf35de9ba7a77174a665d577bde4000386ddf0e5206b56773")
+    );
+    assert_eq!(
+        keys.udp_s2c,
+        hex("798c97f634139bb467919fbbcd705e0eeffe9294164981dc34a72e274d449b79")
     );
 }

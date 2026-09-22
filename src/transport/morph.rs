@@ -13,21 +13,24 @@ mod tcp;
 mod udp;
 
 pub(crate) use tcp::MorphTcpStream;
-pub(crate) use udp::{configure_morph_mtu, morph_endpoint_config, wrap_morph_udp_socket};
+pub(crate) use udp::{UdpRole, configure_morph_mtu, morph_endpoint_config, wrap_morph_udp_socket};
 
 const NONCE_LEN: usize = 12;
+const TCP_PRELUDE_LEN: usize = 64;
 const MORPH_ROOT_SALT: &[u8] = b"nowhere/morph";
 const TCP_C2S_INFO: &[u8] = b"tcp c2s";
 const TCP_S2C_INFO: &[u8] = b"tcp s2c";
-const UDP_INFO: &[u8] = b"udp";
+const UDP_C2S_INFO: &[u8] = b"udp c2s";
+const UDP_S2C_INFO: &[u8] = b"udp s2c";
 
-type MorphKey = [u8; 32];
+type MorphKeyBytes = [u8; 32];
 
 #[derive(Clone)]
 pub(crate) struct MorphKeys {
-    tcp_c2s: MorphKey,
-    tcp_s2c: MorphKey,
-    udp: MorphKey,
+    tcp_c2s: MorphKeyBytes,
+    tcp_s2c: MorphKeyBytes,
+    udp_c2s: MorphKeyBytes,
+    udp_s2c: MorphKeyBytes,
 }
 
 impl fmt::Debug for MorphKeys {
@@ -48,23 +51,24 @@ impl MorphKeys {
         Self {
             tcp_c2s: hkdf_expand_one(root, TCP_C2S_INFO),
             tcp_s2c: hkdf_expand_one(root, TCP_S2C_INFO),
-            udp: hkdf_expand_one(root, UDP_INFO),
+            udp_c2s: hkdf_expand_one(root, UDP_C2S_INFO),
+            udp_s2c: hkdf_expand_one(root, UDP_S2C_INFO),
         }
     }
 
-    pub(crate) fn udp_key(&self) -> MorphKey {
-        self.udp
+    pub(crate) fn udp_keys(&self) -> (MorphKeyBytes, MorphKeyBytes) {
+        (self.udp_c2s, self.udp_s2c)
     }
 }
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> MorphKey {
+fn hmac_sha256(key: &[u8], data: &[u8]) -> MorphKeyBytes {
     let mut mac =
         <Hmac<Sha256> as HmacKeyInit>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     mac.finalize().into_bytes().into()
 }
 
-fn hkdf_expand_one(root: MorphKey, info: &[u8]) -> MorphKey {
+fn hkdf_expand_one(root: MorphKeyBytes, info: &[u8]) -> MorphKeyBytes {
     let mut mac =
         <Hmac<Sha256> as HmacKeyInit>::new_from_slice(&root).expect("HMAC accepts a 32-byte key");
     mac.update(info);
@@ -73,13 +77,13 @@ fn hkdf_expand_one(root: MorphKey, info: &[u8]) -> MorphKey {
 }
 
 fn exhausted() -> io::Error {
-    io::Error::other("Morph TCP keystream exhausted")
+    io::Error::other("Morph ChaCha20 keystream exhausted")
 }
 
 #[cfg(test)]
 use tcp::apply_at;
 #[cfg(test)]
-use udp::{MorphUdpSocket, UdpBuffers};
+use udp::{MorphUdpSocket, UdpReceiveState, UdpSendState};
 
 #[cfg(test)]
 #[path = "../tests/transport/morph.rs"]

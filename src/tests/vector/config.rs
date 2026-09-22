@@ -299,10 +299,10 @@ fn upstream_morph_derives_from_the_nested_shared_key() {
         "auto",
     )
     .unwrap();
-    let actual = config.morph_keys.unwrap().udp_key();
+    let actual = config.morph_keys.unwrap().udp_keys();
 
-    assert_eq!(actual, MorphKeys::derive(b"upstream-key").udp_key());
-    assert_ne!(actual, MorphKeys::derive(b"outer-key").udp_key());
+    assert_eq!(actual, MorphKeys::derive(b"upstream-key").udp_keys());
+    assert_ne!(actual, MorphKeys::derive(b"outer-key").udp_keys());
 }
 
 #[test]

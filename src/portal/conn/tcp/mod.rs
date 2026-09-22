@@ -98,7 +98,7 @@ pub(super) async fn handle_tcp_incoming_with_timeouts(
         _ = shutdown.cancelled() => return,
         _ = portal.drain.cancelled() => return,
         result = timeout(portal.runtime.handshake_timeout, async move {
-            let stream = MorphTcpStream::server(stream, morph_keys);
+            let stream = MorphTcpStream::accept(stream, morph_keys).await?;
             let start = LazyConfigAcceptor::new(rustls::server::Acceptor::default(), stream).await?;
             let offers_nw2 = start
                 .client_hello()

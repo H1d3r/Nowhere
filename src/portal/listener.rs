@@ -148,7 +148,7 @@ pub(super) fn listen_endpoint(
         .wrap_udp_socket(socket)
         .context("portal::listen_endpoint: failed to initialize UDP runtime socket")?;
     let morph_enabled = morph_keys.is_some();
-    let socket = wrap_morph_udp_socket(socket, morph_keys.map(|keys| keys.udp_key()))?;
+    let socket = wrap_morph_udp_socket(socket, morph_keys, crate::transport::UdpRole::Server)?;
     Endpoint::new_with_abstract_socket(
         morph_endpoint_config(morph_enabled)?,
         Some(server_config),

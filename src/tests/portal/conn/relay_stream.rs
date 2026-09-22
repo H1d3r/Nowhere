@@ -30,8 +30,12 @@ async fn tls_response_tail(morph: bool, upstream: bool) {
         // A bounded carrier forces TLS to retain ciphertext under backpressure.
         let (client_io, server_io) = tokio::io::duplex(4096);
         let keys = morph.then(|| MorphKeys::derive(b"secret"));
-        let client_io = MorphTcpStream::client(client_io, keys.clone()).unwrap();
-        let server_io = MorphTcpStream::server(server_io, keys);
+        let (client_io, server_io) = tokio::join!(
+            MorphTcpStream::connect(client_io, keys.clone()),
+            MorphTcpStream::accept(server_io, keys),
+        );
+        let client_io = client_io.unwrap();
+        let server_io = server_io.unwrap();
         let connector = tokio_rustls::TlsConnector::from(Arc::new(client));
         let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
         let (client, server) = tokio::join!(

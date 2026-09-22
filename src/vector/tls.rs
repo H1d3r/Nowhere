@@ -119,12 +119,11 @@ impl ClientTls {
         stream
             .set_nodelay(true)
             .context("vector::tls::connect_tcp: failed to set TCP_NODELAY")?;
-        let stream = MorphTcpStream::client(stream, self.morph_keys.clone())?;
         let connector = TlsConnector::from(self.rustls.clone());
-        let tls = timeout(
-            handshake_timeout(),
-            connector.connect(self.server_name.clone(), stream),
-        )
+        let tls = timeout(handshake_timeout(), async {
+            let stream = MorphTcpStream::connect(stream, self.morph_keys.clone()).await?;
+            connector.connect(self.server_name.clone(), stream).await
+        })
         .await
         .map_err(|_| anyhow!("vector::tls::connect_tcp: TLS handshake timeout"))?
         .context("vector::tls::connect_tcp: TLS handshake failed")?;

@@ -4,39 +4,63 @@
 use std::fmt;
 use std::io;
 use std::pin::Pin;
-use std::task::{Context, Poll, Waker};
+use std::task::{Context, Poll};
 
 use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use super::{MorphKey, MorphKeys, NONCE_LEN, exhausted};
+#[cfg(test)]
+use super::MorphKeyBytes;
+use super::{MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN, exhausted};
 
 const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
+const TCP_PRELUDE_ENV: &str = "NOW_MORPH_TCP_PRELUDE";
 
 #[derive(Clone, Copy)]
-enum TcpRole {
-    Client,
-    Server,
+enum TcpPreludePolicy {
+    Low7,
+    Full8,
+}
+
+impl TcpPreludePolicy {
+    fn from_env() -> io::Result<Self> {
+        match std::env::var(TCP_PRELUDE_ENV) {
+            Ok(value) if value == "low7" => Ok(Self::Low7),
+            Ok(value) if value == "full8" => Ok(Self::Full8),
+            Err(std::env::VarError::NotPresent) => Ok(Self::Low7),
+            Ok(_) | Err(std::env::VarError::NotUnicode(_)) => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{TCP_PRELUDE_ENV} must be low7 or full8"),
+            )),
+        }
+    }
+
+    fn generate(self) -> io::Result<[u8; TCP_PRELUDE_LEN]> {
+        let mut prelude = [0u8; TCP_PRELUDE_LEN];
+        getrandom::fill(&mut prelude).map_err(io::Error::other)?;
+        match self {
+            Self::Low7 => {
+                for byte in &mut prelude {
+                    *byte &= 0x7f;
+                }
+            }
+            Self::Full8 => {}
+        }
+        Ok(prelude)
+    }
 }
 
 pub(super) struct TcpMorph {
-    pub(super) read_key: MorphKey,
-    pub(super) write_key: MorphKey,
-    pub(super) read_cipher: Option<ChaCha20>,
-    pub(super) write_cipher: Option<ChaCha20>,
+    pub(super) read_cipher: ChaCha20,
+    pub(super) write_cipher: ChaCha20,
     read_offset: u64,
     write_offset: u64,
-    pub(super) prefix: [u8; NONCE_LEN],
-    read_prefix_pos: usize,
-    write_prefix_pos: usize,
-    write_waiter: Option<Waker>,
     pub(super) write_buffer: Vec<u8>,
 }
 
 pub(crate) struct MorphTcpStream<S> {
     inner: S,
-    keys: Option<MorphKeys>,
     pub(super) morph: Option<TcpMorph>,
 }
 
@@ -48,69 +72,80 @@ where
         formatter
             .debug_struct("MorphTcpStream")
             .field("inner", &self.inner)
-            .field("enabled", &self.keys.is_some())
+            .field("enabled", &self.morph.is_some())
             .finish()
     }
 }
 
-impl<S> MorphTcpStream<S> {
-    pub(crate) fn client(inner: S, keys: Option<MorphKeys>) -> io::Result<Self> {
-        let mut stream = Self {
-            inner,
-            keys,
-            morph: None,
+impl<S: AsyncRead + AsyncWrite + Unpin> MorphTcpStream<S> {
+    pub(crate) async fn connect(inner: S, keys: Option<MorphKeys>) -> io::Result<Self> {
+        let Some(keys) = keys else {
+            return Ok(Self { inner, morph: None });
         };
-        if stream.keys.is_some() {
-            let mut nonce = [0u8; NONCE_LEN];
-            getrandom::fill(&mut nonce).map_err(io::Error::other)?;
-            stream.morph = Some(stream.new_state(nonce, TcpRole::Client));
-        }
-        Ok(stream)
+        let prelude = TcpPreludePolicy::from_env()?.generate()?;
+        let mut nonce = [0u8; NONCE_LEN];
+        getrandom::fill(&mut nonce).map_err(io::Error::other)?;
+        Self::connect_with_bootstrap(inner, keys, prelude, nonce).await
     }
 
-    pub(crate) fn server(inner: S, keys: Option<MorphKeys>) -> Self {
-        let mut stream = Self {
-            inner,
-            keys,
-            morph: None,
-        };
-        if stream.keys.is_some() {
-            stream.morph = Some(stream.new_state([0; NONCE_LEN], TcpRole::Server));
-        }
-        stream
+    async fn connect_with_bootstrap(
+        mut inner: S,
+        keys: MorphKeys,
+        prelude: [u8; TCP_PRELUDE_LEN],
+        nonce: [u8; NONCE_LEN],
+    ) -> io::Result<Self> {
+        inner.write_all(&prelude).await?;
+        inner.write_all(&nonce).await?;
+        Ok(Self::initialized(inner, &keys, nonce, true))
     }
 
-    fn new_state(&self, nonce: [u8; NONCE_LEN], role: TcpRole) -> TcpMorph {
-        let keys = self.keys.as_ref().expect("Morph state requires keys");
-        let (read_key, write_key) = match role {
-            TcpRole::Client => (&keys.tcp_s2c, &keys.tcp_c2s),
-            TcpRole::Server => (&keys.tcp_c2s, &keys.tcp_s2c),
+    pub(crate) async fn accept(mut inner: S, keys: Option<MorphKeys>) -> io::Result<Self> {
+        let Some(keys) = keys else {
+            return Ok(Self { inner, morph: None });
         };
-        TcpMorph {
-            read_key: *read_key,
-            write_key: *write_key,
-            read_cipher: match role {
-                TcpRole::Client => Some(ChaCha20::new(read_key.into(), (&nonce).into())),
-                TcpRole::Server => None,
-            },
-            write_cipher: match role {
-                TcpRole::Client => Some(ChaCha20::new(write_key.into(), (&nonce).into())),
-                TcpRole::Server => None,
-            },
-            read_offset: 0,
-            write_offset: 0,
-            prefix: nonce,
-            read_prefix_pos: match role {
-                TcpRole::Client => NONCE_LEN,
-                TcpRole::Server => 0,
-            },
-            write_prefix_pos: match role {
-                TcpRole::Client => 0,
-                TcpRole::Server => NONCE_LEN,
-            },
-            write_waiter: None,
-            write_buffer: Vec::new(),
+        let mut prelude = [0u8; TCP_PRELUDE_LEN];
+        inner.read_exact(&mut prelude).await?;
+        let mut nonce = [0u8; NONCE_LEN];
+        inner.read_exact(&mut nonce).await?;
+        Ok(Self::initialized(inner, &keys, nonce, false))
+    }
+
+    fn initialized(inner: S, keys: &MorphKeys, nonce: [u8; NONCE_LEN], client: bool) -> Self {
+        let (read_key, write_key) = if client {
+            (&keys.tcp_s2c, &keys.tcp_c2s)
+        } else {
+            (&keys.tcp_c2s, &keys.tcp_s2c)
+        };
+        Self {
+            inner,
+            morph: Some(TcpMorph {
+                read_cipher: ChaCha20::new(read_key.into(), (&nonce).into()),
+                write_cipher: ChaCha20::new(write_key.into(), (&nonce).into()),
+                read_offset: 0,
+                write_offset: 0,
+                write_buffer: Vec::new(),
+            }),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn initialized_for_test(
+        inner: S,
+        keys: &MorphKeys,
+        nonce: [u8; NONCE_LEN],
+        client: bool,
+    ) -> Self {
+        Self::initialized(inner, keys, nonce, client)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn connect_for_test(
+        inner: S,
+        keys: MorphKeys,
+        prelude: [u8; TCP_PRELUDE_LEN],
+        nonce: [u8; NONCE_LEN],
+    ) -> io::Result<Self> {
+        Self::connect_with_bootstrap(inner, keys, prelude, nonce).await
     }
 
     pub(crate) fn get_ref(&self) -> &S {
@@ -120,7 +155,7 @@ impl<S> MorphTcpStream<S> {
 
 #[cfg(test)]
 pub(super) fn apply_at(
-    key: &MorphKey,
+    key: &MorphKeyBytes,
     nonce: &[u8; NONCE_LEN],
     offset: u64,
     bytes: &mut [u8],
@@ -139,43 +174,8 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
         if buf.remaining() == 0 {
             return Poll::Ready(Ok(()));
         }
-        if self.keys.is_none() {
+        if self.morph.is_none() {
             return Pin::new(&mut self.inner).poll_read(cx, buf);
-        }
-        if self.morph.as_ref().unwrap().read_prefix_pos < NONCE_LEN {
-            while self.morph.as_ref().unwrap().read_prefix_pos < NONCE_LEN {
-                let filled = self.morph.as_ref().unwrap().read_prefix_pos;
-                let mut scratch = [0u8; NONCE_LEN];
-                let mut nonce_buf = ReadBuf::new(&mut scratch[..NONCE_LEN - filled]);
-                match Pin::new(&mut self.inner).poll_read(cx, &mut nonce_buf) {
-                    Poll::Pending => return Poll::Pending,
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    Poll::Ready(Ok(())) if nonce_buf.filled().is_empty() => {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "truncated Morph TCP nonce",
-                        )));
-                    }
-                    Poll::Ready(Ok(())) => {
-                        let count = nonce_buf.filled().len();
-                        let state = self.morph.as_mut().unwrap();
-                        state.prefix[filled..filled + count].copy_from_slice(nonce_buf.filled());
-                        state.read_prefix_pos += count;
-                    }
-                }
-            }
-            if let Some(waiter) = self.morph.as_mut().unwrap().write_waiter.take() {
-                waiter.wake();
-            }
-            let state = self.morph.as_mut().unwrap();
-            state.read_cipher = Some(ChaCha20::new(
-                (&state.read_key).into(),
-                (&state.prefix).into(),
-            ));
-            state.write_cipher = Some(ChaCha20::new(
-                (&state.write_key).into(),
-                (&state.prefix).into(),
-            ));
         }
         let remaining = TCP_STREAM_LIMIT.saturating_sub(self.morph.as_ref().unwrap().read_offset);
         if remaining == 0 && buf.remaining() != 0 {
@@ -191,8 +191,6 @@ impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
                 let state = self.morph.as_mut().unwrap();
                 state
                     .read_cipher
-                    .as_mut()
-                    .expect("Morph read cipher initialized")
                     .try_apply_keystream(&mut inner_buf.filled_mut()[..count])
                     .map_err(|_| exhausted())?;
                 state.read_offset += count as u64;
@@ -224,38 +222,10 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
         if input.is_empty() {
             return Poll::Ready(Ok(0));
         }
-        if self.keys.is_none() {
+        if self.morph.is_none() {
             return Pin::new(&mut self.inner).poll_write(cx, input);
         }
         let this = self.as_mut().get_mut();
-        if this
-            .morph
-            .as_ref()
-            .expect("Morph state initialized")
-            .read_prefix_pos
-            < NONCE_LEN
-        {
-            this.morph.as_mut().unwrap().write_waiter = Some(cx.waker().clone());
-            return Poll::Pending;
-        }
-        let prefix_pos = this
-            .morph
-            .as_ref()
-            .expect("Morph state initialized")
-            .write_prefix_pos;
-        if prefix_pos < NONCE_LEN {
-            let prefix = this.morph.as_ref().unwrap().prefix;
-            match Pin::new(&mut this.inner).poll_write(cx, &prefix[prefix_pos..]) {
-                Poll::Ready(Ok(0)) => return Poll::Ready(Err(io::ErrorKind::WriteZero.into())),
-                Poll::Ready(Ok(n)) => this.morph.as_mut().unwrap().write_prefix_pos += n,
-                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                Poll::Pending => return Poll::Pending,
-            }
-            if this.morph.as_ref().unwrap().write_prefix_pos < NONCE_LEN {
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
-            }
-        }
         let remaining = TCP_STREAM_LIMIT.saturating_sub(this.morph.as_ref().unwrap().write_offset);
         if remaining == 0 {
             return Poll::Ready(Err(exhausted()));
@@ -273,16 +243,12 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
         }
         state
             .write_cipher
-            .as_mut()
-            .expect("Morph write cipher initialized")
             .try_apply_keystream_b2b(&input[..count], &mut state.write_buffer[..count])
             .map_err(|_| exhausted())?;
         match Pin::new(&mut this.inner).poll_write(cx, &state.write_buffer[..count]) {
             Poll::Ready(Ok(0)) => {
                 state
                     .write_cipher
-                    .as_mut()
-                    .unwrap()
                     .try_seek(state.write_offset)
                     .map_err(|_| exhausted())?;
                 Poll::Ready(Err(io::ErrorKind::WriteZero.into()))
@@ -292,8 +258,6 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
                 if n != count {
                     state
                         .write_cipher
-                        .as_mut()
-                        .expect("Morph write cipher initialized")
                         .try_seek(state.write_offset)
                         .map_err(|_| exhausted())?;
                 }
@@ -302,8 +266,6 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
             Poll::Ready(Err(error)) => {
                 state
                     .write_cipher
-                    .as_mut()
-                    .unwrap()
                     .try_seek(state.write_offset)
                     .map_err(|_| exhausted())?;
                 Poll::Ready(Err(error))
@@ -311,8 +273,6 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
             Poll::Pending => {
                 state
                     .write_cipher
-                    .as_mut()
-                    .unwrap()
                     .try_seek(state.write_offset)
                     .map_err(|_| exhausted())?;
                 Poll::Pending

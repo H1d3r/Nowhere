@@ -16,11 +16,11 @@ use super::super::*;
 
 #[test]
 fn udp_nonce_generator_fills_batches_from_one_stream() {
-    let mut buffers = UdpBuffers::from_seed([3; 32]);
+    let mut state = UdpSendState::from_seed([3; 32]);
     let mut first = [0; NONCE_LEN];
     let mut second = [0; NONCE_LEN];
-    buffers.nonce_generator.generate(&mut first).unwrap();
-    buffers.nonce_generator.generate(&mut second).unwrap();
+    state.nonce_generator.generate(&mut first).unwrap();
+    state.nonce_generator.generate(&mut second).unwrap();
 
     assert_ne!(first, [0; NONCE_LEN]);
     assert_ne!(second, first);
@@ -128,12 +128,14 @@ impl AsyncUdpSocket for FakeUdpSocket {
 
 #[tokio::test]
 async fn udp_preserves_gso_datagram_boundaries() {
-    let key = MorphKeys::derive(b"shared").udp_key();
+    let key = MorphKeys::derive(b"shared").udp_c2s;
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
-        key,
-        buffers: Mutex::new(UdpBuffers::from_seed([1; 32])),
+        tx_key: key,
+        rx_key: key,
+        send: Mutex::new(UdpSendState::from_seed([1; 32])),
+        receive: Mutex::new(UdpReceiveState::new()),
     };
     for plain in [
         b"abcdef".as_slice(),
@@ -181,12 +183,14 @@ async fn udp_preserves_gso_datagram_boundaries() {
 
 #[tokio::test]
 async fn udp_discards_invalid_wire_datagrams_before_returning_valid_data() {
-    let key = MorphKeys::derive(b"shared").udp_key();
+    let key = MorphKeys::derive(b"shared").udp_c2s;
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
-        key,
-        buffers: Mutex::new(UdpBuffers::from_seed([2; 32])),
+        tx_key: key,
+        rx_key: key,
+        send: Mutex::new(UdpSendState::from_seed([2; 32])),
+        receive: Mutex::new(UdpReceiveState::new()),
     };
     let packet_meta = |len| RecvMeta {
         addr: "127.0.0.1:2".parse().unwrap(),
@@ -250,12 +254,14 @@ async fn udp_discards_invalid_wire_datagrams_before_returning_valid_data() {
 
 #[tokio::test]
 async fn udp_reuses_buffers_without_relaxing_current_receive_bounds() {
-    let key = MorphKeys::derive(b"shared").udp_key();
+    let key = MorphKeys::derive(b"shared").udp_c2s;
     let raw = Arc::new(FakeUdpSocket::default());
     let socket = MorphUdpSocket {
         inner: raw.clone(),
-        key,
-        buffers: Mutex::new(UdpBuffers::from_seed([5; 32])),
+        tx_key: key,
+        rx_key: key,
+        send: Mutex::new(UdpSendState::from_seed([5; 32])),
+        receive: Mutex::new(UdpReceiveState::new()),
     };
     let destination = "127.0.0.1:2".parse().unwrap();
     let packet_meta = |len| RecvMeta {
