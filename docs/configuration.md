@@ -254,7 +254,8 @@ configure the same value. Compact `HOST:PORT` endpoints apply it to TCP and
 UDP on the shared port; explicit paths apply it only to the carrier entries
 present in the path. Values other than `0` and `1`, including an empty value,
 are configuration errors. Duplicate `morph` keys follow the general rule that
-the first recognized value wins.
+the first recognized value wins. Every Morph-enabled endpoint on a hop must use
+the same wire contract; Morph has no version negotiation or fallback.
 
 For `tls=2`, `crt` and `key` are native filesystem paths. Quote the complete
 URL when a Windows path, space, `&`, or another shell-significant character is
@@ -305,6 +306,7 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 
 | Variable | Default | Purpose |
 |---|---:|---|
+| `NOW_MORPH_TCP_PRELUDE` | `low7` | Client TCP Morph prelude policy: `low7` (7-bit Random) or `full8` (8-bit Random) |
 | `NOW_TRANSPORT_MEMORY_PROFILE` | `throughput` | QUIC and TLS Mux profile: `memory`, `balanced`, or `throughput` |
 | `NOW_QUIC_UDP_QUEUE_BYTES` | `4 MiB` | QUIC datagram and reassembly byte budget |
 | `NOW_FLOW_PAIR_TIMEOUT` | `15s` | Portal split-flow pairing deadline |

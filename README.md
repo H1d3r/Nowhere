@@ -112,8 +112,8 @@ buffers are reused. See
 shared key:
 
 ```text
-TCP  client -> server   [ nonce 12B ][ ChaCha20-XOR(TLS stream) ]
-     server -> client                [ ChaCha20-XOR(TLS stream) ]
+TCP  client -> server   [ prelude 64B ][ nonce 12B ][ ChaCha20-XOR(TLS stream) ]
+     server -> client                               [ ChaCha20-XOR(TLS stream) ]
 
 UDP  each datagram      [ nonce 12B ][ ChaCha20-XOR(QUIC datagram) ]
 ```

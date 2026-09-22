@@ -24,11 +24,12 @@ mode used by generated local certificates.
 
 ## Morph boundary
 
-With `morph=1`, HKDF-SHA256 derives separate TCP client-to-server,
-TCP server-to-client, and UDP keys from the endpoint shared key. ChaCha20 XOR
-then masks the TLS stream or each QUIC datagram below the secure transport.
-The nonce is public: TCP carries one 12-byte client nonce per connection and
-UDP carries one 12-byte nonce per datagram.
+With `morph=1`, HKDF-SHA256 derives separate client-to-server and
+server-to-client keys for both TCP and UDP from the endpoint shared key.
+ChaCha20 XOR then masks the TLS stream or each QUIC datagram below the secure
+transport. The nonce is public: TCP carries one 12-byte client nonce per
+connection and UDP carries one 12-byte nonce per datagram. A TCP connection
+begins with a 64-byte opaque prelude; its contents are selected by the client.
 
 An observer without the shared key cannot directly recover the bare TLS/QUIC
 wire image or feed captured bytes directly to a generic TLS/QUIC parser. Morph
@@ -37,6 +38,11 @@ or timing, imitate HTTPS, or provide session security. TLS/QUIC and AuthFrame
 remain mandatory. Random nonces can collide, UDP maintains no replay state,
 and TCP does not remember previously used client nonces. Shared keys therefore
 need adequate entropy; HKDF does not make a guessable key expensive to search.
+The default `low7` policy fills the prelude with random bytes whose high bits
+are clear; `full8` uses unrestricted random bytes. The TCP prelude is only
+first-flight byte shaping. It provides no
+authentication, integrity, replay defense, camouflage guarantee, or censorship
+resistance.
 
 Morph has no negotiation or downgrade path. A missing setting or wrong key
 appears as a TLS/QUIC handshake failure or timeout rather than a distinct

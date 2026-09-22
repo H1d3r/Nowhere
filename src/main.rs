@@ -139,6 +139,7 @@ SOCKS5 inbound:
   SOCKS5 UDP fragmentation is not supported.
 
 Environment:
+  NOW_MORPH_TCP_PRELUDE       TCP Morph prelude: low7 (7-bit) or full8 (8-bit Random).
   NOW_TRANSPORT_MEMORY_PROFILE   memory, balanced, or throughput. Default: throughput.
   NOW_QUIC_UDP_QUEUE_BYTES  Maximum queued/reassembling UDP bytes per QUIC connection.
   NOW_FLOW_PAIR_TIMEOUT     Timeout for completing a split logical flow.

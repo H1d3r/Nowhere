@@ -54,12 +54,12 @@ so split OPEN and ATTACH lanes can pair across carrier ports and IP families.
 Address family is never negotiated on the wire; reachability and family
 filtering complete before TLS or QUIC authentication.
 
-### Morph socket layer
+### Morph transform
 
 When the command endpoint has `morph=1`, a keyed transform sits below TLS/TCP
 or QUIC/UDP. It changes the socket wire image and is removed before bytes reach
-rustls or Quinn. There is no magic, version, negotiation, fallback, padding,
-framing protocol, TLS parser, or QUIC parser.
+rustls or Quinn. There is no magic, version, negotiation, fallback, framing
+protocol, TLS parser, or QUIC parser.
 
 The decoded shared-key bytes are the HKDF input:
 
@@ -71,29 +71,41 @@ morph_root = HKDF-Extract-SHA256(
 
 tcp_c2s_key = HKDF-Expand-SHA256(morph_root, ASCII("tcp c2s"), 32)
 tcp_s2c_key = HKDF-Expand-SHA256(morph_root, ASCII("tcp s2c"), 32)
-udp_key     = HKDF-Expand-SHA256(morph_root, ASCII("udp"), 32)
+udp_c2s_key = HKDF-Expand-SHA256(morph_root, ASCII("udp c2s"), 32)
+udp_s2c_key = HKDF-Expand-SHA256(morph_root, ASCII("udp s2c"), 32)
 ```
 
 Labels contain exactly the shown ASCII bytes and no trailing NUL. The cipher
 is IETF ChaCha20 with a 256-bit key, 96-bit nonce, and internal block counter
 starting at zero.
 
-For TCP, the active connector generates one nonce and sends it before TLS:
+For TCP, the active connector generates a 64-byte prelude and one nonce, then
+sends both before TLS:
 
 ```text
-client -> server: nonce[12] || ChaCha20-XOR(TLS bytes, tcp_c2s_key, nonce)
-server -> client:              ChaCha20-XOR(TLS bytes, tcp_s2c_key, nonce)
+client -> server: prelude[64] || nonce[12] || ChaCha20-XOR(TLS bytes, tcp_c2s_key, nonce)
+server -> client:                            ChaCha20-XOR(TLS bytes, tcp_s2c_key, nonce)
 ```
 
-The server sends no Morph prefix. Each direction has an independent stream
-offset. TLS bytes retain their length and the connection adds exactly 12 bytes.
-A direction stops before counter exhaustion, after at most `2^38 - 64`
-transformed bytes, and never wraps or rekeys.
+The prelude and nonce are sent in two consecutive logical writes, without a
+delay. This does not prescribe TCP packet boundaries. Bootstrap and TLS share
+the handshake deadline; a failed or cancelled bootstrap ends the connection.
+
+The prelude is opaque protocol data. The server consumes it without validating
+or decoding its contents; it carries no keying or authentication data. The
+`low7` (7-bit Random) sender policy generates operating-system random bytes and
+clears each byte's high bit. `full8` (8-bit Random) leaves all eight random bits
+unchanged. The server sends no Morph prefix. Each
+direction has an independent stream offset. TLS bytes retain their length and
+the client-to-server connection bootstrap adds exactly 76 bytes. A direction
+stops before counter exhaustion, after at most `2^38 - 64` transformed bytes,
+and never wraps or rekeys.
 
 For UDP, every socket datagram is independent in either direction:
 
 ```text
-wire datagram = nonce[12] || ChaCha20-XOR(QUIC datagram, udp_key, nonce)
+client -> server = nonce[12] || ChaCha20-XOR(QUIC datagram, udp_c2s_key, nonce)
+server -> client = nonce[12] || ChaCha20-XOR(QUIC datagram, udp_s2c_key, nonce)
 ```
 
 TCP nonces come directly from the operating system CSPRNG. Each UDP socket
