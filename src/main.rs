@@ -17,146 +17,69 @@ const HELP_TEXT: &str = "\
 Usage:
   nowhere
   nowhere tui
-  nowhere <portal-or-vector-url>
+  nowhere <portal-url>
+  nowhere <vector-url>
   nowhere -h | --help
   nowhere -v | --version
 
 Commands:
-  tui              Open the read-only multi-instance TUI.
-  <portal-url>     Run the Portal relay service.
-  <vector-url>     Run the Vector native SOCKS5 client.
-  -h, --help       Print this help message.
-  -v, --version    Print version and target platform.
+  tui             Open the read-only multi-instance TUI.
+  <portal-url>    Run a Portal relay service.
+  <vector-url>    Run a Vector SOCKS5 client.
 
-Portal URL:
-  portal://<shared-key>@<listen-host>:<listen-port>[?<parameters>]
-  portal://<shared-key>@<listen-host>/<carrier>:<port>[/<carrier>:<port>]
+URL forms:
+  portal://<key>@<listen-host>:<port>[?<options>]
+  portal://<key>@<listen-host>/<carrier>:<port>[/<carrier>:<port>][?<options>]
+  vector://<key>@<portal-host>:<port>?socks=<listener>[&<options>]
+  vector://<key>@<portal-host>/<carrier>:<port>[/<carrier>:<port>]?socks=...
 
-Vector URL:
-  vector://<shared-key>@<portal-host>:<portal-port>?socks=<listen-endpoint>[&<parameters>]
-  vector://<shared-key>@<portal-host>/<carrier>:<port>[/<carrier>:<port>]?socks=...
+Endpoint syntax:
+  host:port                   Use TCP and UDP on the same port.
+  tcp, udp                    Use any address family.
+  tcp4, udp4 / tcp6, udp6     Restrict a carrier to IPv4 or IPv6.
+  *                           Portal wildcard; clients require a concrete host.
 
 Examples:
-  nowhere 'portal://secret@:2000'
-  nowhere 'portal://secret@*/tcp4:2006?log=info'
-  nowhere 'portal://secret@*/tcp:2006/udp:2017'
-  nowhere 'portal://secret@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
-  nowhere 'portal://secret@:2000?socks=user:pass@127.0.0.1:1080'
-  nowhere 'portal://relay-key@:2000?next=upstream-key@origin.example:2000'
-  nowhere 'portal://relay-key@:2000?next=upstream-key@origin.example:2000&up=tcp&down=tcp'
-  nowhere 'portal://secret@:2000?rate=100&etar=200'
-  nowhere 'vector://secret@relay.example:2000?sni=relay.example&socks=127.0.0.1:1080'
-  nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&socks=:1080'
+  nowhere 'portal://secret@*:2000'
+  nowhere 'portal://secret@*/tcp:2006/udp:2017?morph=1'
+  nowhere 'vector://secret@relay.example:2000?socks=127.0.0.1:1080'
+  nowhere 'vector://secret@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080'
 
-Required URL parts:
-  shared-key       Non-empty URL username. Percent-encode reserved characters.
-  endpoint-port    Portal listen port or remote Portal port.
-  Password credentials are not supported.
+Common options:
+  morph=0|1           Enable keyed wire masking. Default: 0.
+  rate=<mbps>         Client-to-target limit. 0 disables it.
+  etar=<mbps>         Target-to-client limit. 0 disables it.
+  log=<level>         none, debug, info, warn, error, or event. Default: info.
 
-Listen host:
-  *                Bind IPv4 and IPv6 wildcard sockets as allowed by carrier.
-  empty            Compact form only; equivalent to *.
-  0.0.0.0          Bind IPv4 wildcard only.
-  [::]             Bind IPv6 wildcard only.
-  IP or hostname   Bind all matching resolved listen addresses.
+Portal options:
+  tls=1|2             Generated certificate or supplied PEM files. Default: 1.
+  crt=<path>          PEM certificate chain for tls=2.
+  key=<path>          PEM private key for tls=2.
+  dial=<ip|auto>      Source IP for outbound connections. Default: auto.
+  socks=<proxy>       Outbound SOCKS5 proxy; mutually exclusive with next.
+  next=<portal>       Native upstream Portal: key@host or key@host/<carriers>.
 
-Portal parameters:
-  tls=1|2          TLS mode. 1 for RAM certificate; 2 for PEM files. Default: 1.
-                   tls=0 is not supported.
-  crt=<path>       PEM certificate chain for tls=2.
-  key=<path>       PEM private key for tls=2.
-  rate=<mbps>      Client-to-target traffic limit. 0 disables it.
-  etar=<mbps>      Target-to-client traffic limit. 0 disables it.
-  dial=<ip|auto>   Local source IP for outbound target connections. Default: auto.
-  socks=<proxy>    SOCKS5 outbound proxy: host:port or user:pass@host:port.
-                   Omit or use none to disable.
-  next=<portal>    Native upstream Portal using the same endpoint grammar.
-                   Example: shared-key@host/tcp:2006/udp6:2017. Omit or use
-                   none to disable. Mutually exclusive with socks.
-  up=tcp|udp|mix   Native upstream upload carrier. Mix chooses per flow.
-                   Defaults to the only declared carrier, or TCP.
-  down=tcp|udp|mix Native upstream download carrier. Mix chooses per flow.
-                   Defaults to the only declared carrier, or TCP.
-  mux=0|1          Use TLS Mux when the native route can select TCP. Default: 0.
-  sni=<name|none>  Native upstream certificate DNS name. Default: none.
-  pin=<sha256|none> Native upstream certificate fingerprint. Default: none.
-                   These five options are ignored unless next is enabled.
-  log=<level>      none, debug, info, warn, error, event. Default: info.
+Vector options:
+  socks=<listener>    Required local SOCKS5 listener: [user:pass@]host:port.
 
-Vector parameters:
-  up=tcp|udp|mix   Upload carrier. Defaults to the only declared carrier, or TCP.
-  down=tcp|udp|mix Download carrier. Defaults to the only declared carrier, or TCP.
-  mux=0|1          Use TLS Mux when either direction can select TCP. Default: 0.
-  sni=<name|none>  Verify the certificate for a DNS name. Empty, omitted, or
-                   none disables certificate validation. Default: none.
-  pin=<sha256|none> Pin the server certificate SHA-256 fingerprint. Empty,
-                    omitted, or none disables pinning. Default: none.
-  rate=<mbps>      SOCKS client-to-target limit. 0 disables it.
-  etar=<mbps>      Target-to-SOCKS client limit. 0 disables it.
-  socks=<listener> Required SOCKS5 listener: [user:pass@]host:port.
-                   An empty host, as in :1080, binds IPv4 and IPv6 wildcards.
-  log=<level>      none, debug, info, warn, error, event. Default: info.
+Client route options (Vector and Portal next):
+  up=tcp|udp|mix      Upload carrier. Default: the only carrier, otherwise TCP.
+  down=tcp|udp|mix    Download carrier. Default: the only carrier, otherwise TCP.
+  mux=0|1             Enable TLS multiplexing when TCP is available. Default: 0.
+  sni=<name|none>     Verify the Portal certificate for a DNS name.
+  pin=<sha256|none>   Pin the Portal certificate SHA-256 fingerprint.
 
-Query handling:
-  Unknown parameters are ignored. If a parameter appears more than once, only
-  its first value is used. Missing optional parameters use their defaults.
-  The net parameter is ignored; carrier paths select listeners.
-
-Carrier endpoint grammar:
-  tcp, udp          Do not restrict the address family.
-  tcp4, udp4        Use IPv4 only.
-  tcp6, udp6        Use IPv6 only.
-  host:port         Shorthand for TCP and UDP on the same port.
-  Explicit paths enable only their listed carriers. TCP and UDP share the host
-  but may use independent ports and address families. Carrier order is ignored;
-  effective configuration prints TCP before UDP.
-  Do not combine an authority port with carrier paths. Empty or trailing path
-  segments, duplicate or unknown carriers, family conflicts, and port 0 fail.
-
-Portal binding:
-  An unrestricted * carrier opens separate IPv4 and IPv6 wildcard sockets.
-  IPv6 listeners are V6ONLY. Hostnames resolve once at startup and bind every
-  matching address. Each declared carrier must bind at least one address.
-  Only an unavailable family on unrestricted * may degrade with a warning.
-
-Vector and next dialing:
-  * is invalid. DNS results are filtered independently for each carrier family.
-  A single carrier is the default for both directions; with both, TCP is the
-  default. Explicit up/down must exist, and mix requires both carriers.
-
-Transport capabilities:
-  TLS/TCP          TCP relay and UDP-over-TCP (UoT).
-  QUIC/UDP         TCP relay streams and DATAGRAM UDP flows.
-
-SOCKS5 outbound:
-  CONNECT proxies every TCP relay. UDP ASSOCIATE proxies every DATAGRAM/UoT flow.
-  Target hostnames are resolved by the proxy. Proxy failure never falls back direct.
-  Percent-encode reserved characters in SOCKS usernames and passwords.
-
-SOCKS5 inbound:
-  Vector supports CONNECT and UDP ASSOCIATE. BIND is not supported.
-  Configured username/password authentication cannot downgrade to no-auth.
-  SOCKS5 UDP fragmentation is not supported.
+Morph:
+  Both peers on each hop must use morph=1 and the same shared key. Morph masks
+  the TLS/QUIC wire image; it does not replace transport security. On Portal,
+  it applies to both the listener and the native next hop.
 
 Environment:
-  NOW_MORPH_TCP_PRELUDE       TCP Morph prelude: low7 (7-bit) or full8 (8-bit Random).
+  NOW_MORPH_TCP_PRELUDE          Client TCP Morph prelude: low7 (default) or full8.
   NOW_TRANSPORT_MEMORY_PROFILE   memory, balanced, or throughput. Default: throughput.
-  NOW_QUIC_UDP_QUEUE_BYTES  Maximum queued/reassembling UDP bytes per QUIC connection.
-  NOW_FLOW_PAIR_TIMEOUT     Timeout for completing a split logical flow.
-  NOW_FLOW_SETUP_TIMEOUT    Timeout for waiting for a logical flow to become ready.
-  NOW_MIX_FALLBACK_TIMEOUT  Primary Mix route preparation budget. Default: 1s.
-  NOW_TCP_DATA_BUF_SIZE     TCP relay buffer size.
-  NOW_UDP_DATA_BUF_SIZE     UDP target receive buffer size.
-  NOW_TCP_DIAL_TIMEOUT      TCP target dial timeout.
-  NOW_UDP_DIAL_TIMEOUT      UDP target dial timeout.
-  NOW_TCP_READ_TIMEOUT      TCP half-close grace timeout.
-  NOW_UDP_IDLE_TIMEOUT      QUIC and DATAGRAM/UoT flow idle timeout.
-  NOW_HANDSHAKE_TIMEOUT     Per-phase TLS, authentication, and request deadline.
-  NOW_REPORT_INTERVAL       Local CHECK_POINT report interval.
-  NOW_TELEMETRY_INTERVAL    Local TUI telemetry interval (250ms..60s; default 1s).
-  NOW_SERVICE_COOLDOWN      Transport reconnect retry delay.
-  NOW_SHUTDOWN_TIMEOUT      Graceful shutdown wait.
-  NOW_RELOAD_INTERVAL       Minimum PEM certificate reload interval.
+
+Documentation:
+  https://github.com/NodePassProject/Nowhere/tree/main/docs
 ";
 
 #[tokio::main]
