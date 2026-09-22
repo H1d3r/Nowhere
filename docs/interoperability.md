@@ -35,10 +35,17 @@ complete grammar and validation rules are in [Configuration](configuration.md).
 ## Morph contract
 
 Peers use `morph=1` on both ends of a hop or `morph=0` on both ends. Morph has
-no in-band marker or negotiation. TCP has one client-generated 12-byte nonce
-and direction-specific keys; UDP has one 12-byte nonce per datagram and one
-shared UDP key. The exact HKDF labels, counter origin, byte limits, and wire
-layout are normative in [Protocol](protocol.md).
+no in-band marker or negotiation. TCP begins with one opaque 64-byte client
+prelude and a 12-byte nonce, then uses direction-specific stream keys. The
+receiver consumes the prelude without interpreting it, so the `low7` and
+`full8` sender policies require no server-side selection. UDP carries one
+12-byte nonce per datagram and uses direction-specific datagram keys. The exact
+HKDF labels, counter origin, byte limits, and wire layout are normative in
+[Protocol](protocol.md).
+
+The Morph wire contract is incompatible with Nowhere 2.0.x. Upgrade both peers
+on every Morph-enabled hop together. Connections with `morph=0` retain their
+existing wire contract.
 
 Implementations must preserve TCP stream offsets across partial I/O and treat
 each GSO/GRO segment as a separate UDP datagram. QUIC sees the decoded packet
