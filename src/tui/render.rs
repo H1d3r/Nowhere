@@ -5,42 +5,28 @@
 
 use ratatui::prelude::*;
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Tabs, Wrap,
+    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap,
 };
 
 mod feed;
 mod graphs;
+mod layout;
 mod metrics;
+mod overlays;
 mod palette;
 
 use self::feed::render_specific_feed;
 use self::graphs::render_traffic;
+use self::layout::{
+    LayoutMode, WorkspaceDensity, layout_mode, log_rows, overview_cards_height, workspace_columns,
+};
 use self::metrics::{render_cards, render_overview_page};
+use self::overlays::{render_config, render_help};
 use super::format;
 use super::model::{App, FeedKind, Focus, InstanceView, Lifecycle, Page};
 
 const MIN_WIDTH: u16 = 72;
 const MIN_HEIGHT: u16 = 20;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LayoutMode {
-    Full,
-    Compact,
-    Narrow,
-    TooSmall,
-}
-
-pub const fn layout_mode(area: Rect) -> LayoutMode {
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        LayoutMode::TooSmall
-    } else if area.width >= 120 && area.height >= 32 {
-        LayoutMode::Full
-    } else if area.width >= 80 && area.height >= 28 {
-        LayoutMode::Compact
-    } else {
-        LayoutMode::Narrow
-    }
-}
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
@@ -169,23 +155,6 @@ fn render_narrow(frame: &mut Frame<'_>, area: Rect, app: &App) {
     render_workspace(frame, area, app, WorkspaceDensity::Narrow);
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WorkspaceDensity {
-    Full,
-    Compact,
-    Narrow,
-}
-
-impl WorkspaceDensity {
-    const fn sidebar_width(self) -> u16 {
-        match self {
-            Self::Full => 27,
-            Self::Compact => 25,
-            Self::Narrow => 22,
-        }
-    }
-}
-
 fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &App, density: WorkspaceDensity) {
     let [instances, workspace] = workspace_columns(area, density);
     let [tabs, content] =
@@ -196,14 +165,6 @@ fn render_workspace(frame: &mut Frame<'_>, area: Rect, app: &App, density: Works
         Page::Overview => render_overview(frame, content, app, density),
         Page::Logs => render_log_page(frame, content, app),
     }
-}
-
-fn workspace_columns(area: Rect, density: WorkspaceDensity) -> [Rect; 2] {
-    Layout::horizontal([
-        Constraint::Length(density.sidebar_width()),
-        Constraint::Fill(1),
-    ])
-    .areas(area)
 }
 
 fn render_page_tabs(frame: &mut Frame<'_>, area: Rect, app: &App) {
@@ -231,22 +192,10 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, app: &App, density: Worksp
     render_cards(frame, cards, app);
 }
 
-fn overview_cards_height(height: u16, density: WorkspaceDensity) -> u16 {
-    match density {
-        WorkspaceDensity::Full => ((height * 2) / 5).clamp(11, 18),
-        WorkspaceDensity::Compact => ((height * 2) / 5).clamp(10, 15),
-        WorkspaceDensity::Narrow => height,
-    }
-}
-
 fn render_log_page(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let [access, runtime] = log_rows(area);
     render_specific_feed(frame, access, app, FeedKind::Access);
     render_specific_feed(frame, runtime, app, FeedKind::Runtime);
-}
-
-fn log_rows(area: Rect) -> [Rect; 2] {
-    Layout::vertical([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)]).areas(area)
 }
 
 const fn page_index(page: Page) -> usize {
@@ -335,105 +284,6 @@ fn render_too_small(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .style(accent(app, Color::Yellow)),
         area,
     );
-}
-
-fn render_help(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let width = area.width.saturating_sub(4).min(76);
-    let height = area.height.saturating_sub(2).min(22);
-    let popup = centered(area, width, height);
-    frame.render_widget(Clear, popup);
-    let text = vec![
-        Line::from("Navigation").style(accent(app, Color::Cyan).add_modifier(Modifier::BOLD)),
-        Line::from("  ↑↓ / jk       select instance or scroll events"),
-        Line::from("  ←→ / hl       move instance / pan focused log"),
-        Line::from("  Tab / BackTab focus Instances / Access / Runtime"),
-        Line::from("  1 / 2         Overview / Logs"),
-        Line::from(""),
-        Line::from("Views").style(accent(app, Color::Cyan).add_modifier(Modifier::BOLD)),
-        Line::from("  Space         pause or resume live tail"),
-        Line::from("  PgUp / PgDn   scroll ten records"),
-        Line::from("  /             filter both logs"),
-        Line::from("  c             clear focused local log"),
-        Line::from("  i             complete instance configuration"),
-        Line::from("  q / Ctrl-C    quit"),
-        Line::from(""),
-        Line::from(
-            "The TUI is read-only. Charts and feeds begin when this TUI connects and are not persisted.",
-        )
-        .style(dim(app)),
-    ];
-    frame.render_widget(
-        Paragraph::new(text).wrap(Wrap { trim: true }).block(
-            panel(" HELP · Esc/? to close ", true, app).border_style(accent(app, Color::Cyan)),
-        ),
-        popup,
-    );
-}
-
-fn render_config(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let Some(instance) = app.selected() else {
-        return;
-    };
-    let popup = centered(
-        area,
-        area.width.saturating_sub(4).min(100),
-        area.height.saturating_sub(4),
-    );
-    frame.render_widget(Clear, popup);
-    let option_count = instance.meta.config_summary.split_whitespace().count() + 1;
-    let block = panel(" CONFIG · ↑↓ scroll · Esc/i close ", true, app).title_bottom(
-        Line::from(format!(
-            " option {}/{} · PgUp/PgDn · Home/End ",
-            app.config_scroll.min(option_count - 1) + 1,
-            option_count
-        ))
-        .style(dim(app)),
-    );
-    let inner = block.inner(popup);
-    frame.render_widget(block, popup);
-    let mut options = vec![("endpoint", instance.meta.endpoint.as_str())];
-    options.extend(
-        instance
-            .meta
-            .config_summary
-            .split_whitespace()
-            .filter_map(|option| option.split_once('=')),
-    );
-    let key_width = options
-        .iter()
-        .map(|(key, _)| key.len())
-        .max()
-        .unwrap_or(8)
-        .min(16);
-    let value_width = usize::from(inner.width)
-        .saturating_sub(key_width + 3)
-        .max(1);
-    let mut lines = vec![];
-    for (key, value) in options
-        .iter()
-        .skip(app.config_scroll.min(options.len().saturating_sub(1)))
-    {
-        let chars: Vec<_> = value.chars().collect();
-        for (index, chunk) in chars.chunks(value_width).enumerate() {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!(" {:key_width$}  ", if index == 0 { key } else { &"" }),
-                    dim(app),
-                ),
-                Span::raw(chunk.iter().collect::<String>()),
-            ]));
-        }
-    }
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
-    Rect::new(
-        area.x + area.width.saturating_sub(width) / 2,
-        area.y + area.height.saturating_sub(height) / 2,
-        width.min(area.width),
-        height.min(area.height),
-    )
 }
 
 fn panel<'a>(title: &'a str, focused: bool, app: &App) -> Block<'a> {
