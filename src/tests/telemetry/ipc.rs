@@ -9,7 +9,9 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
 use super::frame::{FrameReader, TelemetryReader, write_frame, write_payload_with_timeout};
-use super::registry::{RegistryEntry, registry_directory, registry_path};
+#[cfg(unix)]
+use super::registry::registry_directory;
+use super::registry::{RegistryEntry, registry_path};
 use super::*;
 use crate::telemetry::local;
 use crate::telemetry::wire::InstanceDescriptor;
