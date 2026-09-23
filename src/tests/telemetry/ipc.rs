@@ -3,8 +3,14 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
+use super::frame::{FrameReader, TelemetryReader, write_frame, write_payload_with_timeout};
+use super::registry::{RegistryEntry, registry_directory, registry_path};
 use super::*;
+use crate::telemetry::local;
 use crate::telemetry::wire::InstanceDescriptor;
+use crate::telemetry::{
+    ClientMessage, MAX_FRAME_SIZE, ServerMessage, Subscription, TELEMETRY_PROTOCOL, TelemetryHub,
+};
 use crate::telemetry::{InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetrySnapshot};
 
 #[test]
