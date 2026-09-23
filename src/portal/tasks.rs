@@ -14,7 +14,7 @@ use tokio::task::AbortHandle;
 const READY_GATE_CLOSED: usize = 1usize << (usize::BITS - 1);
 const READY_GATE_COUNT: usize = READY_GATE_CLOSED - 1;
 
-/// Lock-free linearization gate for committing v1 READY results.
+/// Lock-free linearization gate for committing READY results.
 #[derive(Default)]
 pub(super) struct ReadyGate {
     state: AtomicUsize,

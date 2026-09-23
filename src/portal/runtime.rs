@@ -4,10 +4,9 @@
 //! Portal runtime orchestration, listener supervision, and bounded flow drain.
 
 use anyhow::{Context, Result};
-use quinn::{Endpoint, VarInt};
+use quinn::Endpoint;
 use tokio::net::TcpListener;
 use tokio::task::JoinSet;
-use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 
 use crate::common::{LifeReason, LifeState, ShutdownSignals};
@@ -16,26 +15,27 @@ use crate::telemetry::TelemetryServer;
 use super::listener::{accept_endpoint_loop, accept_tcp_loop, listen_endpoint, listen_tcp};
 use super::{Portal, event};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ShutdownOutcome {
-    Drained,
-    Timeout,
-    Forced,
-}
-
-impl ShutdownOutcome {
-    fn life_reason(self) -> LifeReason {
-        match self {
-            Self::Drained => LifeReason::Drained,
-            Self::Timeout => LifeReason::Timeout,
-            Self::Forced => LifeReason::Forced,
-        }
-    }
-}
+mod binding;
+mod shutdown;
+#[cfg(test)]
+use binding::{bind_carrier, io_error_is_family_unavailable};
 
 struct ShutdownTrigger {
     reason: LifeReason,
     failure: Option<anyhow::Error>,
+}
+
+struct RunningPortal {
+    portal: Portal,
+    signals: ShutdownSignals,
+    endpoints: Vec<Endpoint>,
+    quic_listeners: JoinSet<()>,
+    tcp_listener_tasks: JoinSet<()>,
+    auxiliary_tasks: JoinSet<()>,
+    telemetry_tasks: JoinSet<()>,
+    telemetry_shutdown: CancellationToken,
+    stop_accepting: CancellationToken,
+    force_shutdown: CancellationToken,
 }
 
 impl Portal {
@@ -154,133 +154,20 @@ impl Portal {
             },
         };
 
-        let deadline = Instant::now() + self.inner.runtime.shutdown_timeout;
-
-        // Establish the admission barrier before cancelling listeners. A flow
-        // that activated before this point is tracked; every later setup gets
-        // the v1 FLOW_LIMIT result through its authoritative downlink.
-        self.inner.pairing.close_admission();
-        self.inner.ready_gate.close();
-        self.inner.drain.cancel();
-        self.inner.relay_tasks.close();
-        for endpoint in &endpoints {
-            endpoint.set_server_config(None);
+        RunningPortal {
+            portal: self,
+            signals,
+            endpoints,
+            quic_listeners,
+            tcp_listener_tasks,
+            auxiliary_tasks,
+            telemetry_tasks,
+            telemetry_shutdown,
+            stop_accepting,
+            force_shutdown,
         }
-        stop_accepting.cancel();
-        self.inner
-            .lifecycle
-            .transition(&self.inner.logger, LifeState::Draining, trigger.reason);
-        self.inner
-            .telemetry
-            .set_lifecycle(LifeState::Draining.to_string(), trigger.reason.to_string());
-
-        let drain = async {
-            self.inner.pairing.begin_drain().await;
-            self.inner.relay_tasks.wait().await;
-        };
-        let mut outcome = tokio::select! {
-            biased;
-            signal = signals.recv() => {
-                match signal {
-                    Ok(_) => ShutdownOutcome::Forced,
-                    Err(error) => {
-                        self.inner.logger.error(format_args!(
-                            "portal::run: shutdown signal stream failed during drain: {error}"
-                        ));
-                        ShutdownOutcome::Forced
-                    }
-                }
-            }
-            result = timeout_at(deadline, drain) => match result {
-                Ok(()) => ShutdownOutcome::Drained,
-                Err(_) => ShutdownOutcome::Timeout,
-            }
-        };
-
-        // No new setup is possible now. End physical carriers and auxiliary
-        // work; READY relays have either completed or are being forced below.
-        force_shutdown.cancel();
-        self.inner.outbound.close(deadline).await;
-        for endpoint in &endpoints {
-            endpoint.close(VarInt::from_u32(0), b"");
-        }
-        self.inner.connection_tasks.close();
-        if outcome != ShutdownOutcome::Drained {
-            self.inner.relay_tasks.abort_all();
-            self.inner.connection_tasks.abort_all();
-            quic_listeners.abort_all();
-            tcp_listener_tasks.abort_all();
-            auxiliary_tasks.abort_all();
-        }
-
-        let mut endpoint_tasks = JoinSet::new();
-        for endpoint in &endpoints {
-            let endpoint = endpoint.clone();
-            endpoint_tasks.spawn(async move {
-                endpoint.wait_idle().await;
-            });
-        }
-
-        let cleanup = async {
-            self.inner.pairing.cancel_all().await;
-            while endpoint_tasks.join_next().await.is_some() {}
-            while quic_listeners.join_next().await.is_some() {}
-            while tcp_listener_tasks.join_next().await.is_some() {}
-            while auxiliary_tasks.join_next().await.is_some() {}
-            self.inner.connection_tasks.wait().await;
-            self.inner.relay_tasks.wait().await;
-        };
-        let cleanup_deadline = if outcome == ShutdownOutcome::Forced {
-            Instant::now()
-        } else {
-            deadline
-        };
-        if timeout_at(cleanup_deadline, cleanup).await.is_err() {
-            if outcome == ShutdownOutcome::Drained {
-                outcome = ShutdownOutcome::Timeout;
-            }
-            endpoint_tasks.abort_all();
-            quic_listeners.abort_all();
-            tcp_listener_tasks.abort_all();
-            auxiliary_tasks.abort_all();
-            self.inner.connection_tasks.abort_all();
-            self.inner.relay_tasks.abort_all();
-            while endpoint_tasks.join_next().await.is_some() {}
-            while quic_listeners.join_next().await.is_some() {}
-            while tcp_listener_tasks.join_next().await.is_some() {}
-            while auxiliary_tasks.join_next().await.is_some() {}
-            self.inner.connection_tasks.wait().await;
-            self.inner.relay_tasks.wait().await;
-            self.inner.pairing.cancel_all().await;
-        }
-
-        if let Some(rate) = &self.inner.rate_limiter {
-            rate.reset();
-        }
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Stopped,
-            outcome.life_reason(),
-        );
-        self.inner.telemetry.set_lifecycle(
-            LifeState::Stopped.to_string(),
-            outcome.life_reason().to_string(),
-        );
-        self.inner
-            .telemetry
-            .capture_and_publish(&self.inner.stats, self.inner.outbound.ping_ms());
-        tokio::task::yield_now().await;
-        telemetry_shutdown.cancel();
-        while telemetry_tasks.join_next().await.is_some() {}
-        self.inner
-            .logger
-            .info(format_args!("portal::run: portal shutdown complete"));
-        self.inner.logger.flush();
-
-        match trigger.failure {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+        .shutdown(trigger)
+        .await
     }
 
     fn start_failed(&self, error: anyhow::Error) -> Result<()> {
@@ -303,106 +190,6 @@ impl Portal {
             self.effective_url()
         ));
     }
-
-    /// Returns the effective startup URL that is logged for operators.
-    pub(super) fn effective_url(&self) -> String {
-        let base = format!(
-            "portal://{}?tls={}&rate={}&etar={}&dial={}&morph={}&socks={}&next={}",
-            self.inner.endpoint_addr,
-            self.inner.tls_mode,
-            self.inner.rate_limit,
-            self.inner.etar_limit,
-            self.inner.outbound.dialer_ip(),
-            u8::from(self.inner.morph_keys.is_some()),
-            self.inner.outbound.socks_endpoint(),
-            self.inner.outbound.next_endpoint(),
-        );
-        self.inner
-            .outbound
-            .next_transport()
-            .map_or(base.clone(), |transport| {
-                let upstream = transport
-                    .split_whitespace()
-                    .filter(|option| !option.starts_with("morph="))
-                    .collect::<Vec<_>>()
-                    .join("&");
-                format!("{base}&{upstream}")
-            })
-    }
-
-    /// Opens QUIC endpoints for network modes that accept UDP service.
-    pub(super) fn listen_endpoints(&self) -> Result<Vec<Endpoint>> {
-        if !self.inner.network_mode.listens_udp() {
-            return Ok(Vec::new());
-        }
-        bind_carrier(
-            &self.inner.udp_bind_addrs,
-            self.inner.allow_udp_family_degrade,
-            |addr| listen_endpoint(
-                self.inner.quic_server_config.clone(),
-                addr,
-                self.inner.morph_keys.clone(),
-            ),
-            |addr, error| self.inner.logger.warn(format_args!(
-                "portal::listen_endpoints: UDP address family unavailable for {addr}; continuing: {error:#}"
-            )),
-        ).context("portal::listen_endpoints: failed to open UDP listeners")
-    }
-
-    /// Opens TLS/TCP listeners for network modes that accept TCP service.
-    pub(super) fn listen_tcp_listeners(&self) -> Result<Vec<TcpListener>> {
-        if !self.inner.network_mode.listens_tcp() {
-            return Ok(Vec::new());
-        }
-        bind_carrier(
-            &self.inner.tcp_bind_addrs,
-            self.inner.allow_tcp_family_degrade,
-            listen_tcp,
-            |addr, error| self.inner.logger.warn(format_args!(
-                "portal::listen_tcp_listeners: TCP address family unavailable for {addr}; continuing: {error:#}"
-            )),
-        ).context("portal::listen_tcp_listeners: failed to open TCP listeners")
-    }
-}
-
-/// Owns every successful bind until the whole carrier has passed validation.
-fn bind_carrier<T>(
-    addresses: &[std::net::SocketAddr],
-    allow_degrade: bool,
-    mut bind: impl FnMut(std::net::SocketAddr) -> Result<T>,
-    mut warn: impl FnMut(std::net::SocketAddr, &anyhow::Error),
-) -> Result<Vec<T>> {
-    let mut listeners = Vec::new();
-    for &address in addresses {
-        match bind(address) {
-            Ok(listener) => listeners.push(listener),
-            Err(error) if allow_degrade && family_is_unavailable(&error) => warn(address, &error),
-            Err(error) => return Err(error),
-        }
-    }
-    if listeners.is_empty() {
-        anyhow::bail!("no declared address could be bound");
-    }
-    Ok(listeners)
-}
-
-fn family_is_unavailable(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(io_error_is_family_unavailable)
-    })
-}
-
-fn io_error_is_family_unavailable(error: &std::io::Error) -> bool {
-    #[cfg(unix)]
-    const FAMILY_UNAVAILABLE: i32 = libc::EAFNOSUPPORT;
-    #[cfg(windows)]
-    const FAMILY_UNAVAILABLE: i32 = 10047; // WSAEAFNOSUPPORT
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
-    ) || error.raw_os_error() == Some(FAMILY_UNAVAILABLE)
 }
 
 fn listener_exit_error(

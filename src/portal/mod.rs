@@ -58,7 +58,7 @@ struct PortalInner {
     logger: Logger,
     lifecycle: Arc<Lifecycle>,
     telemetry: Arc<TelemetryHub>,
-    /// Cancels only work that has not committed a v1 READY result yet.
+    /// Cancels only work that has not committed a READY result yet.
     drain: CancellationToken,
     runtime: PortalRuntimeConfig,
     stats: Arc<Stats>,
