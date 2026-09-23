@@ -13,25 +13,11 @@ use anyhow::Result;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::telemetry::{
-    AccessFinished, AccessOutcome, AccessStarted, DiscoveredInstance, Hello,
-    InstanceRole as WireRole, RuntimeEvent, RuntimeLevel, ServerMessage, Subscription,
-    TelemetryClient, TelemetrySnapshot as WireSnapshot, TrafficProtocol, discover_instances,
-};
+use crate::telemetry::{DiscoveredInstance, Subscription, TelemetryClient, discover_instances};
 
-use super::model::{
-    AccessPhase, AccessRecord, AccessStatus, EventLevel, InstanceId, InstanceMeta, InstanceRole,
-    Lifecycle, RuntimeRecord, TelemetrySnapshot, UiEvent,
-};
+use super::model::{InstanceId, UiEvent};
 
-#[cfg(test)]
-use crate::telemetry::RuntimeKind;
-
-mod adapter;
-
-#[cfg(test)]
-use self::adapter::{access_finish_ui_value, access_start_ui_value, is_benign_access_end};
-use self::adapter::{hello_ui_event, server_ui_events};
+use super::client_adapter::{hello_ui_event, server_ui_events};
 
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(1);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);

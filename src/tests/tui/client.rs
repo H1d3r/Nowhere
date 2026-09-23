@@ -1,4 +1,13 @@
 use super::*;
+use crate::telemetry::{
+    AccessFinished, AccessStarted, Hello, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage,
+    TrafficProtocol,
+};
+use crate::tui::client_adapter::{
+    access_finish_ui_value, access_start_ui_value, is_benign_access_end,
+};
+use crate::tui::model::{AccessPhase, AccessStatus, InstanceRole, Lifecycle};
+
 use crate::telemetry::wire::{InstanceDescriptor, LifecycleSnapshot};
 use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, TELEMETRY_PROTOCOL};
 

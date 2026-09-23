@@ -35,7 +35,7 @@ use super::super::flow::{
 };
 use super::super::udp_flow::{UdpTunnel, open_udp};
 
-#[path = "server/udp.rs"]
+#[path = "udp.rs"]
 mod udp;
 
 #[cfg(test)]

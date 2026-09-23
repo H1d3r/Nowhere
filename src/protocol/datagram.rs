@@ -337,7 +337,7 @@ fn validate_udp_payload(payload: &[u8], operation: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_fragment_metadata(
+pub(super) fn validate_fragment_metadata(
     fragment_index: u8,
     fragment_count: u8,
     total_len: u16,
@@ -355,9 +355,7 @@ fn validate_fragment_metadata(
     Ok(())
 }
 
-mod reassembly;
-
-pub use self::reassembly::{
+pub use super::reassembly::{
     DatagramReassembler, ReassemblyConfig, ReassemblyDropReason, ReassemblyOutcome,
 };
 

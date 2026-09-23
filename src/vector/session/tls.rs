@@ -254,5 +254,5 @@ fn reserve_mux(pool: &mut Vec<Arc<TlsMux>>, flow_id: Option<u32>) -> std::io::Re
 }
 
 #[cfg(test)]
-#[path = "../../tests/vector/session/tls.rs"]
+#[path = "../../tests/vector/session_tls.rs"]
 mod tests;

@@ -3,7 +3,16 @@
 
 //! Telemetry wire messages normalized into TUI model events.
 
-use super::*;
+use std::collections::HashMap;
+
+use super::model::{
+    AccessPhase, AccessRecord, AccessStatus, EventLevel, InstanceMeta, InstanceRole, Lifecycle,
+    RuntimeRecord, TelemetrySnapshot, UiEvent,
+};
+use crate::telemetry::{
+    AccessFinished, AccessOutcome, AccessStarted, Hello, InstanceRole as WireRole, RuntimeEvent,
+    RuntimeLevel, ServerMessage, TelemetrySnapshot as WireSnapshot, TrafficProtocol,
+};
 
 pub(super) fn hello_ui_event(hello: &Hello) -> UiEvent {
     let descriptor = &hello.instance;

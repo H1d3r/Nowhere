@@ -8,7 +8,8 @@ use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
 
-use super::{FlowId, OwnedUdpFragment, validate_fragment_metadata};
+use super::FlowId;
+use super::datagram::{OwnedUdpFragment, validate_fragment_metadata};
 
 /// Resource limits for application-layer UDP fragment reassembly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

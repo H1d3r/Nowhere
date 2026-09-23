@@ -5,6 +5,7 @@
 
 mod app;
 mod client;
+mod client_adapter;
 mod format;
 mod input;
 pub mod model;

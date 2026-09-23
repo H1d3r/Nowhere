@@ -6,6 +6,7 @@
 mod auth;
 mod datagram;
 mod flow;
+mod reassembly;
 mod request;
 mod result;
 mod uot;
