@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Protected Unix-domain sockets and per-user telemetry registry access.
+
 use anyhow::{Result, bail};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};

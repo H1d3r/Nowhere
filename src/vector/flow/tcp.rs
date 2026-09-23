@@ -223,9 +223,6 @@ pub(in crate::vector) async fn relay_tcp(
                 }
                 write_owned(&mut tunnel.writer, chunk).await?;
                 if uplink == Carrier::Quic && downlink == Carrier::TlsTcp {
-                    // A continuously writable QUIC stream can otherwise keep
-                    // this relay hot long enough to delay the opposite Mux
-                    // reader and its WINDOW returns.
                     tokio::task::yield_now().await;
                 }
                 access.add_upload(read as u64);

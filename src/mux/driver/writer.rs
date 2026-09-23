@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux frame transmission, terminal messages, and receive-window updates.
+
 use std::io::{self, IoSlice};
 use std::sync::Arc;
 
@@ -55,8 +57,6 @@ pub(in crate::mux) async fn run_writer<W: AsyncWrite + Unpin>(
                 Some(item)
             } else {
                 if data_rx.is_empty() {
-                    // Deliver the last DATA batch even if no later frame or
-                    // application flush arrives to drain the TLS buffer.
                     writer.flush().await?;
                 }
                 tokio::select! {

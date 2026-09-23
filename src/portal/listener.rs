@@ -22,9 +22,6 @@ use crate::transport::{
 use super::{PortalInner, conn};
 
 const QUIC_PRE_AUTH_RECEIVE_WINDOW: u32 = 64 * 1024;
-// Quinn allocates this receive queue per connection before application
-// authentication. Keep it intentionally small; authenticated DATAGRAM traffic
-// is drained continuously into the separately budgeted flow queues.
 const QUIC_DATAGRAM_RECEIVE_BUFFER_SIZE: usize = 256 * 1024;
 const QUIC_DATAGRAM_SEND_BUFFER_SIZE: usize = 4 * 1024 * 1024;
 const QUIC_SOCKET_BUFFER_SIZE: usize = 4 * 1024 * 1024;
@@ -44,8 +41,6 @@ pub(super) async fn accept_endpoint_loop(
                     break;
                 };
                 if !incoming.remote_address_validated() {
-                    // Require address validation before spending authentication
-                    // work or admission slots on the connection.
                     if let Err(err) = incoming.retry() {
                         portal.telemetry.emit_runtime(RuntimeEvent::new(
                             RuntimeLevel::Warn,
@@ -134,7 +129,6 @@ pub(super) async fn accept_tcp_loop(
     }
 }
 
-/// Opens a Quinn endpoint on an already configured server config.
 pub(super) fn listen_endpoint(
     server_config: ServerConfig,
     addr: SocketAddr,
@@ -172,7 +166,6 @@ fn bind_quic_socket(addr: SocketAddr) -> std::io::Result<std::net::UdpSocket> {
     Ok(socket.into())
 }
 
-/// Opens a nonblocking TCP listener for TLS-over-TCP service.
 pub(super) fn listen_tcp(addr: SocketAddr) -> Result<TcpListener> {
     let socket = if addr.is_ipv6() {
         let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
@@ -190,7 +183,6 @@ pub(super) fn listen_tcp(addr: SocketAddr) -> Result<TcpListener> {
         .with_context(|| format!("portal::listen_tcp: failed to listen for TLS/TCP on {addr}"))
 }
 
-/// Applies transport limits that should be set before the config is shared.
 pub(super) fn configure_transport(
     server_config: &mut quinn::ServerConfig,
     udp_idle_timeout: Duration,

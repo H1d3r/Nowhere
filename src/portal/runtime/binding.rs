@@ -1,10 +1,11 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Portal startup URLs and network-family-aware listener binding.
+
 use super::*;
 
 impl Portal {
-    /// Returns the effective startup URL that is logged for operators.
     pub(in crate::portal) fn effective_url(&self) -> String {
         let base = format!(
             "portal://{}?tls={}&rate={}&etar={}&dial={}&morph={}&socks={}&next={}",
@@ -30,7 +31,6 @@ impl Portal {
             })
     }
 
-    /// Opens QUIC endpoints for network modes that accept UDP service.
     pub(in crate::portal) fn listen_endpoints(&self) -> Result<Vec<Endpoint>> {
         if !self.inner.network_mode.listens_udp() {
             return Ok(Vec::new());
@@ -49,7 +49,6 @@ impl Portal {
         ).context("portal::listen_endpoints: failed to open UDP listeners")
     }
 
-    /// Opens TLS/TCP listeners for network modes that accept TCP service.
     pub(in crate::portal) fn listen_tcp_listeners(&self) -> Result<Vec<TcpListener>> {
         if !self.inner.network_mode.listens_tcp() {
             return Ok(Vec::new());
@@ -65,8 +64,6 @@ impl Portal {
     }
 }
 
-/// Owns every successful bind until the whole carrier has passed validation.
-/// Owns every successful bind until the whole carrier has passed validation.
 pub(super) fn bind_carrier<T>(
     addresses: &[std::net::SocketAddr],
     allow_degrade: bool,
@@ -99,7 +96,7 @@ pub(super) fn io_error_is_family_unavailable(error: &std::io::Error) -> bool {
     #[cfg(unix)]
     const FAMILY_UNAVAILABLE: i32 = libc::EAFNOSUPPORT;
     #[cfg(windows)]
-    const FAMILY_UNAVAILABLE: i32 = 10047; // WSAEAFNOSUPPORT
+    const FAMILY_UNAVAILABLE: i32 = 10047;
     matches!(
         error.kind(),
         std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported

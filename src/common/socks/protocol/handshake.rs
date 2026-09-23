@@ -1,12 +1,13 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! SOCKS5 method negotiation and username/password authentication.
+
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::{AUTH_NONE, AUTH_PASSWORD, AUTH_UNACCEPTABLE, AUTH_VERSION, SOCKS_VERSION};
 
-/// Negotiates the configured method with an upstream SOCKS5 server.
 pub(crate) async fn negotiate<S>(stream: &mut S, credentials: Option<(&str, &str)>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -46,7 +47,6 @@ where
     Ok(())
 }
 
-/// Negotiates exactly one configured method with an inbound SOCKS5 client.
 pub(crate) async fn authenticate<S>(stream: &mut S, credentials: Option<(&str, &str)>) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,

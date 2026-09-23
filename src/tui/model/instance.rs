@@ -1,11 +1,12 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Per-instance telemetry state, bounded histories, and offline retention.
+
 use super::*;
 
 pub(super) const OFFLINE_RETENTION: Duration = Duration::from_secs(30);
 
-/// One process and all state retained locally for it.
 #[derive(Clone, Debug)]
 pub struct InstanceView {
     pub meta: InstanceMeta,

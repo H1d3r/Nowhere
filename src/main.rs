@@ -124,9 +124,6 @@ async fn start(args: Vec<String>) -> Result<()> {
     if !matches!(scheme.as_str(), "portal" | "vector") {
         bail!("invalid configuration URL: scheme must be portal or vector, found {scheme:?}");
     }
-    // Startup only needs `log` here. Each role parses its own configuration,
-    // including Portal's intentionally ignored upstream options when `next`
-    // is disabled.
     let query =
         query_first(&command_url, &["log"]).with_context(|| "invalid configuration URL query")?;
     let logger = init_logger(query.get("log").map(String::as_str))?;
@@ -173,7 +170,6 @@ fn parse_command_url(raw: &str) -> Result<Url> {
     }
 }
 
-/// Converts the legacy compact wildcard alias into the canonical host form.
 fn normalize_legacy_empty_portal_host(raw: &str) -> Option<String> {
     let prefix = "portal://";
     let rest = raw.strip_prefix(prefix)?;

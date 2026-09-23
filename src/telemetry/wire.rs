@@ -12,9 +12,7 @@ use crate::protocol::Carrier;
 
 use super::process::{now_unix_ms, process_incarnation, process_uid};
 
-/// Fixed local telemetry contract, independent of the application release.
 pub(crate) const TELEMETRY_PROTOCOL: &str = "nowhere.telemetry";
-/// Maximum accepted JSON payload, excluding the four-byte length prefix.
 pub(crate) const MAX_FRAME_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -24,7 +22,6 @@ pub(crate) enum InstanceRole {
     Vector,
 }
 
-/// Non-secret metadata identifying a single process incarnation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct InstanceDescriptor {
     pub(crate) telemetry_protocol: String,
@@ -134,8 +131,6 @@ pub(crate) enum AccessOutcome {
     Rejected,
 }
 
-/// Internal flow-start data. Carrier values are converted to stable strings
-/// before crossing IPC so the data-plane protocol types stay unchanged.
 #[derive(Clone, Debug)]
 pub(crate) struct AccessStart {
     pub(crate) id: u64,
@@ -298,8 +293,6 @@ pub(crate) struct Hello {
     pub(crate) lifecycle_reason: String,
 }
 
-/// Latest process lifecycle state, delivered to both summary and detail
-/// subscribers independently from the optional runtime-event stream.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct LifecycleSnapshot {
     pub(crate) state: String,

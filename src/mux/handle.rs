@@ -126,7 +126,6 @@ impl MuxHandle {
             .expect("mux credit lock");
         let receive_peak = super::credit_units(self.shared.config.connection_window_bytes);
         let queue = self.shared.config.outbound_frames;
-        // Fixed-point occupancy; no per-frame timestamps or flow scans.
         let occupancy =
             |free: usize, total: usize| total.saturating_sub(free) * 1024 / total.max(1);
         occupancy(available, peak)

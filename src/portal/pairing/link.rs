@@ -150,7 +150,6 @@ impl PairingRegistry {
         }
     }
 
-    /// Registers the latest authenticated QUIC carrier for a transport bundle.
     pub(in crate::portal) async fn register_quic_link<S: Into<SessionKey>>(
         self: &Arc<Self>,
         session_id: S,
@@ -173,10 +172,6 @@ impl PairingRegistry {
         };
         if let Some(previous) = previous {
             previous.replacement.cancel();
-            // Finish purging the previous generation before streams from the
-            // replacement carrier are admitted.  This makes pending-half
-            // replacement deterministic instead of depending on a spawned
-            // cleanup task winning a race with the first new stream.
             self.replace_quic_generation(session_id, previous.generation)
                 .await;
         }

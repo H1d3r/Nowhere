@@ -9,7 +9,6 @@ mod rate_bucket;
 pub use self::rate_bucket::TokenBucket;
 use self::rate_bucket::token_bucket_now;
 
-/// Optional read/write rate limiter shared by relay paths.
 #[derive(Debug)]
 pub struct RateLimiter {
     read: Option<TokenBucket>,
@@ -17,7 +16,6 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
-    /// Creates a limiter; returns `None` when both directions are unlimited.
     pub fn new(read_bytes_per_second: i64, write_bytes_per_second: i64) -> Option<Self> {
         if read_bytes_per_second <= 0 && write_bytes_per_second <= 0 {
             return None;
@@ -29,7 +27,6 @@ impl RateLimiter {
         })
     }
 
-    /// Waits until the inbound direction can accept `bytes`.
     pub async fn wait_read(&self, bytes: i64) {
         if bytes <= 0 {
             return;
@@ -39,7 +36,6 @@ impl RateLimiter {
         }
     }
 
-    /// Waits until the outbound direction can accept `bytes`.
     pub async fn wait_write(&self, bytes: i64) {
         if bytes <= 0 {
             return;
@@ -49,7 +45,6 @@ impl RateLimiter {
         }
     }
 
-    /// Resets active bucket budgets to their configured capacity.
     pub fn reset(&self) {
         let now = token_bucket_now();
         if let Some(read) = &self.read {

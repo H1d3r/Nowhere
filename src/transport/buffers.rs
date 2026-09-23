@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex};
 const TCP_CACHE_LIMIT: usize = 64;
 const UDP_CACHE_LIMIT: usize = 32;
 
-/// Buffer size configuration used to allocate fresh relay scratch buffers.
 #[derive(Debug, Clone)]
 pub struct Buffers {
     tcp: Arc<BufferPool>,
@@ -23,7 +22,6 @@ struct BufferPool {
     cached: Mutex<Vec<Vec<u8>>>,
 }
 
-/// A relay buffer returned to its bounded pool on drop.
 #[derive(Debug)]
 pub struct BufferLease {
     buffer: Option<Vec<u8>>,
@@ -31,7 +29,6 @@ pub struct BufferLease {
 }
 
 impl Buffers {
-    /// Creates a buffer-size pair for TCP and UDP relay paths.
     pub fn new(tcp_size: usize, udp_size: usize) -> Self {
         Self {
             tcp: Arc::new(BufferPool::new(tcp_size, TCP_CACHE_LIMIT)),
@@ -39,12 +36,10 @@ impl Buffers {
         }
     }
 
-    /// Borrows a TCP relay buffer from the bounded reuse pool.
     pub fn get_tcp_buffer(&self) -> BufferLease {
         BufferPool::acquire(&self.tcp)
     }
 
-    /// Borrows a UDP relay buffer from the bounded reuse pool.
     pub fn get_udp_buffer(&self) -> BufferLease {
         BufferPool::acquire(&self.udp)
     }

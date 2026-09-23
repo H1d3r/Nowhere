@@ -33,7 +33,6 @@ pub(crate) const ADDRESS_IPV4: u8 = 1;
 const ADDRESS_DOMAIN: u8 = 3;
 const ADDRESS_IPV6: u8 = 4;
 
-/// SOCKS5 address representation shared by client and server operations.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum SocksAddress {
     Ip(SocketAddr),

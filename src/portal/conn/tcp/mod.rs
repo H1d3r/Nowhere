@@ -31,10 +31,6 @@ use crate::transport::MorphTcpStream;
 use self::flow::process_flow;
 use super::auth::{authentication_deadline, wait_for_auth_deadline};
 
-// Dedicated TLS lanes may authenticate before the FlowHeader is available.
-// Keep a finite bootstrap window long enough for 1.7 Vector's 30-second warm
-// lane behavior. This is a protocol deadline, not a configurable connection
-// pool: Portal does not create, replenish, or retain idle lanes itself.
 pub(in crate::portal) const AUTHENTICATED_LANE_BOOTSTRAP_TIMEOUT: Duration =
     Duration::from_secs(40);
 

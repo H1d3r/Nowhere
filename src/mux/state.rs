@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Shared Mux flow state, queues, and credit accounting.
+
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -81,8 +83,6 @@ impl Shared {
         if self.closed.load(Ordering::Acquire) {
             return Err(closed());
         }
-        // DATA is bounded separately by byte credit. OPEN must have its own
-        // admission ceiling because it allocates flow metadata without DATA.
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut flows = self.flows.lock().expect("mux flow lock");
         if self.closed.load(Ordering::Acquire) {

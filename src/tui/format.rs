@@ -90,7 +90,6 @@ pub fn clock_time(timestamp_ms: u64) -> String {
         .unwrap_or_else(|| "--:--:--".to_owned())
 }
 
-/// Only instance-local pseudonyms may be rendered as client identities.
 pub fn client_address(value: &str) -> String {
     if value.starts_with('C')
         && (4..=21).contains(&value.len())
@@ -118,7 +117,6 @@ pub fn truncate(value: &str, max_chars: usize) -> String {
     result
 }
 
-/// Prefer complete addresses; abbreviate only the host so ports remain useful.
 pub fn instance_endpoint(value: &str, width: usize) -> String {
     if value.chars().count() <= width {
         return value.to_owned();

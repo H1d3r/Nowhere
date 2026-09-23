@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Downsampling and compact btop-style time-series graphs.
+//! Time-series chart rendering and peak-preserving sample reduction.
 
 use std::collections::VecDeque;
 

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Cancellation-safe UDP-over-stream packet decoding.
+
 use super::*;
 
 #[derive(Default)]
@@ -12,8 +14,6 @@ pub(super) struct UotReadState {
 }
 
 impl UotReadState {
-    /// Reads incrementally so cancelling an in-progress downlink read to send
-    /// an uplink packet cannot lose UoT framing bytes.
     pub(super) async fn read_packet(
         &mut self,
         reader: &mut BoxReader,

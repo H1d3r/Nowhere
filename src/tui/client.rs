@@ -1,10 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Local telemetry-to-view-model adapter.
-//!
-//! Discovery and wire handling live here so the rest of the TUI depends only
-//! on the normalized model in `model.rs`.
+//! Telemetry discovery, connection management, and delivery of TUI events.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -23,10 +20,8 @@ const DISCOVERY_INTERVAL: Duration = Duration::from_secs(1);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_EVENT_CAPACITY: usize = 2_048;
 
-/// Control messages from the UI to the telemetry connection manager.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum UiCommand {
-    /// Subscribe to detail for this instance and summary for all others.
     Select(Option<InstanceId>),
     Shutdown,
 }
@@ -36,7 +31,6 @@ pub struct ClientHandle {
     pub commands: mpsc::UnboundedSender<UiCommand>,
 }
 
-/// Starts registry discovery and one read-only local IPC connection per instance.
 pub fn start() -> Result<ClientHandle> {
     let (event_tx, events) = mpsc::channel(CLIENT_EVENT_CAPACITY);
     let (commands, command_rx) = mpsc::unbounded_channel();

@@ -39,7 +39,6 @@ struct RunningPortal {
 }
 
 impl Portal {
-    /// Starts listeners, supervises them, and drains READY relays on shutdown.
     pub async fn run(self) -> Result<()> {
         self.inner.lifecycle.transition(
             &self.inner.logger,

@@ -1,10 +1,10 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Shared Portal client state, connection setup, and lifecycle control.
+
 use super::*;
 
-/// Authenticated, transport-only Portal client shared by Vector and chained
-/// Portal egress. It owns no listener and performs no SOCKS conversion.
 pub(crate) struct PortalClient {
     pub(super) config: PortalClientConfig,
     pub(super) telemetry: Arc<TelemetryHub>,

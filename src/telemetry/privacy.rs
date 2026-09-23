@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Instance-local, category-separated pseudonyms. Keys never leave memory.
+
 use anyhow::Result;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
@@ -14,7 +15,6 @@ use crate::protocol::Target;
 
 const ALIAS_CAPACITY: usize = 4_096;
 
-/// Operator metadata contains validated endpoints and effective options, never URLs.
 pub(crate) fn endpoint(value: &str) -> String {
     let address = if value.starts_with(':') {
         format!("0.0.0.0{value}")
@@ -128,7 +128,6 @@ impl Privacy {
         })
     }
     pub(super) fn alias(&self, category: &str, value: &str) -> String {
-        // Client source ports are ephemeral: identify the IP, not each flow.
         let identity = if category == "client" {
             value
                 .parse::<SocketAddr>()
@@ -174,7 +173,6 @@ impl Drop for Privacy {
     }
 }
 
-/// Only a validated host:port can leave the process, never a URL or credentials.
 pub(super) fn target(value: &str) -> String {
     value
         .parse::<Target>()
@@ -182,7 +180,6 @@ pub(super) fn target(value: &str) -> String {
         .unwrap_or_else(|_| "<redacted>".to_owned())
 }
 
-/// Closed diagnostic vocabulary: raw errors can contain keys, paths or payloads.
 pub(super) fn error_reason(value: &str) -> &'static str {
     let lower = value
         .chars()

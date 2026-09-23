@@ -1,64 +1,50 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Minimal QUIC DATAGRAM codec and bounded fragment reassembly.
+//! QUIC DATAGRAM frame encoding, decoding, and fragment validation.
 
 use anyhow::{Result, bail};
 use bytes::Bytes;
 
 use super::FlowId;
 
-/// Unfragmented DATA frame type in the high two bits.
 pub const UDP_FRAME_DATA: u8 = 0;
-/// Fragmented DATA frame type in the high two bits.
 pub const UDP_FRAME_FRAGMENT: u8 = 1;
-/// Flow CLOSE frame type in the high two bits.
 pub const UDP_FRAME_CLOSE: u8 = 2;
-/// Common unfragmented/CLOSE header length.
 pub const UDP_HEADER_LEN: usize = 4;
-/// Fragment header length.
 pub const UDP_FRAGMENT_HEADER_LEN: usize = 12;
-/// Largest UDP payload representable by the protocol.
 pub const UDP_PACKET_MAX: usize = u16::MAX as usize;
 
 const FRAME_TYPE_SHIFT: u32 = 30;
 const FRAME_TYPE_MASK: u32 = 0b11 << FRAME_TYPE_SHIFT;
 
-/// Fragment metadata parameterized by borrowed or owned payload storage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UdpFragment<P> {
-    /// Packet identifier scoped to the active reassembly window of one flow.
     pub packet_id: u32,
-    /// Zero-based fragment index.
     pub fragment_index: u8,
-    /// Total fragment count, always in 2..=255.
     pub fragment_count: u8,
-    /// Original UDP packet length.
     pub total_len: u16,
-    /// Fragment payload.
     pub payload: P,
 }
 
-/// Borrowed fragment view returned by the allocation-free decoder.
 pub type BorrowedUdpFragment<'a> = UdpFragment<&'a [u8]>;
-/// Owned fragment backed by a zero-copy slice of a QUIC DATAGRAM.
 pub type OwnedUdpFragment = UdpFragment<Bytes>;
 
-/// One decoded QUIC DATAGRAM frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UdpFrame<'a> {
-    /// One complete UDP packet, including a legal zero-length packet.
-    Data { flow_id: FlowId, payload: &'a [u8] },
-    /// One fragment of a larger UDP packet.
+    Data {
+        flow_id: FlowId,
+        payload: &'a [u8],
+    },
     Fragment {
         flow_id: FlowId,
         fragment: BorrowedUdpFragment<'a>,
     },
-    /// Immediate flow resource release.
-    Close { flow_id: FlowId },
+    Close {
+        flow_id: FlowId,
+    },
 }
 
-/// Owned decoded frame retaining the original QUIC DATAGRAM allocation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnedUdpFrame {
     Data {
@@ -74,17 +60,14 @@ pub enum OwnedUdpFrame {
     },
 }
 
-/// Encodes an unfragmented DATA header on the stack.
 pub fn encode_udp_data_header(flow_id: FlowId) -> Result<[u8; UDP_HEADER_LEN]> {
     encode_base_header(UDP_FRAME_DATA, flow_id)
 }
 
-/// Encodes a CLOSE frame on the stack.
 pub fn encode_udp_close(flow_id: FlowId) -> Result<[u8; UDP_HEADER_LEN]> {
     encode_base_header(UDP_FRAME_CLOSE, flow_id)
 }
 
-/// Encodes a validated fragment header on the stack.
 pub fn encode_udp_fragment_header(
     flow_id: FlowId,
     packet_id: u32,
@@ -109,7 +92,6 @@ pub fn encode_udp_fragment_header(
     Ok(output)
 }
 
-/// Encodes one unfragmented DATA frame.
 pub fn encode_udp_data(flow_id: FlowId, payload: &[u8]) -> Result<Vec<u8>> {
     validate_udp_payload(payload, "encode_udp_data")?;
     let header = encode_udp_data_header(flow_id)?;
@@ -119,7 +101,6 @@ pub fn encode_udp_data(flow_id: FlowId, payload: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Encodes either one minimal DATA frame or the required FRAGMENT frames.
 pub fn encode_udp_data_fragments(
     flow_id: FlowId,
     packet_id: u32,
@@ -140,8 +121,6 @@ pub fn encode_udp_data_fragments(
     Ok(encode_udp_fragments(flow_id, packet_id, payload, max_datagram_size)?.collect())
 }
 
-/// Validates a fragmented packet once and then materializes one DATAGRAM at a
-/// time. Dropping the iterator stops all remaining allocation and copying.
 pub fn encode_udp_fragments(
     flow_id: FlowId,
     packet_id: u32,
@@ -176,7 +155,6 @@ pub fn encode_udp_fragments(
     })
 }
 
-/// Lazy sequence produced by [`encode_udp_fragments`].
 pub struct UdpFragments<'a> {
     flow_id: FlowId,
     packet_id: u32,
@@ -220,7 +198,6 @@ impl Iterator for UdpFragments<'_> {
 
 impl ExactSizeIterator for UdpFragments<'_> {}
 
-/// Decodes one complete QUIC DATAGRAM without allocating.
 pub fn decode_udp_frame(input: &[u8]) -> Result<UdpFrame<'_>> {
     if input.len() < UDP_HEADER_LEN {
         bail!("protocol::datagram::decode_udp_frame: short header");
@@ -247,7 +224,6 @@ pub fn decode_udp_frame(input: &[u8]) -> Result<UdpFrame<'_>> {
     }
 }
 
-/// Decodes a Quinn-owned DATAGRAM and slices its payload without copying.
 pub fn decode_udp_frame_owned(input: Bytes) -> Result<OwnedUdpFrame> {
     match decode_udp_frame(&input)? {
         UdpFrame::Data { flow_id, .. } => Ok(OwnedUdpFrame::Data {

@@ -27,7 +27,6 @@ impl SocksCredentials {
     }
 }
 
-/// Validated SOCKS5 endpoint and optional RFC 1929 credentials.
 #[derive(Clone)]
 pub(crate) struct SocksConfig {
     host: String,
@@ -45,7 +44,6 @@ impl fmt::Debug for SocksConfig {
 }
 
 impl SocksConfig {
-    /// Parses the first raw `socks` query value without decoding delimiters first.
     pub(crate) fn from_url(parsed_url: &Url) -> Result<Option<Self>> {
         let Some(raw_value) = first_raw_socks_value(parsed_url) else {
             return Ok(None);
@@ -62,7 +60,6 @@ impl SocksConfig {
         }))
     }
 
-    /// Returns the credential-free endpoint used in operator output.
     pub(crate) fn endpoint(&self) -> String {
         format_host_port(&self.host, self.port)
     }

@@ -7,7 +7,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::model::{App, Focus, Page};
 
-/// Applies one key event.  Returns `true` when a redraw is useful.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     if key.kind == KeyEventKind::Release {
         return false;

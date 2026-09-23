@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Typed UoT and QUIC DATAGRAM relay for split or duplex UDP flows.
+//! UDP flow setup results and packet relay over streams or QUIC DATAGRAMs.
 
 use std::future::pending;
 
@@ -30,7 +30,6 @@ use super::{
 const FLOW_RESULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const FLOW_CLOSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Relays one UDP flow through independently selected upload and download carriers.
 pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired: PairedUdp) {
     let PairedUdp {
         flow_id,
@@ -158,9 +157,6 @@ pub(in crate::portal) async fn relay_paired_udp(portal: Arc<PortalInner>, paired
     }
     match commit_udp_ready(&cancel, &portal.ready_gate, &mut downlink).await {
         Ok(true) => {
-            // READY is now queued on the authoritative downlink. Activate the
-            // DATAGRAM route synchronously before the peer can observe it and
-            // return its first packet.
             if let UdpUp::Quic(receiver) = &uplink {
                 receiver.activate();
             }
@@ -394,9 +390,6 @@ async fn send_quic_control_result(
     Ok(())
 }
 
-/// Commits the single setup result. As with TCP, cancellation is sampled only
-/// before READY starts so a partially written READY is never followed by a
-/// second control result.
 async fn commit_udp_ready(
     cancel: &tokio_util::sync::CancellationToken,
     ready_gate: &crate::portal::tasks::ReadyGate,
@@ -455,10 +448,6 @@ async fn send_udp_close(downlink: &mut UdpDown, flow_id: u32) -> anyhow::Result<
 }
 
 async fn finish_udp_downlink(downlink: &mut UdpDown, flow_id: u32, frame_incomplete: bool) {
-    // A cancelled write_all may have emitted only a prefix of a UoT DATA
-    // frame. Appending CLOSE would corrupt the stream; each UoT flow owns its
-    // connection, so EOF is the only safe termination in that case. QUIC
-    // DATAGRAM frames are atomic and can still receive an advisory CLOSE.
     if frame_incomplete && matches!(&*downlink, UdpDown::TlsTcp { .. }) {
         return;
     }

@@ -11,21 +11,14 @@ use std::sync::{
 
 use chrono::Local;
 
-/// Log severity threshold used by the lightweight terminal logger.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i32)]
 pub enum LogLevel {
-    /// Disable all output.
     None = 0,
-    /// Verbose diagnostic output.
     Debug = 1,
-    /// Normal operational output.
     Info = 2,
-    /// Warnings that do not stop the portal.
     Warn = 3,
-    /// Errors that usually close a connection or listener path.
     Error = 4,
-    /// Machine-readable periodic telemetry.
     Event = 5,
 }
 
@@ -35,7 +28,6 @@ const LEVEL_COLORS: [&str; 6] = [
 ];
 const RESET_COLOR: &str = "\x1b[0m";
 
-/// Cloneable logger with shared threshold state and serialized stdout writes.
 #[derive(Clone, Debug)]
 pub struct Logger {
     level: Arc<AtomicI32>,
@@ -44,7 +36,6 @@ pub struct Logger {
 }
 
 impl Logger {
-    /// Creates a logger with the initial severity threshold and color mode.
     pub fn new(log_level: LogLevel, enable_color: bool) -> Self {
         Self {
             level: Arc::new(AtomicI32::new(log_level as i32)),
@@ -53,42 +44,34 @@ impl Logger {
         }
     }
 
-    /// Updates the shared severity threshold for all logger clones.
     pub fn set_log_level(&self, log_level: LogLevel) {
         self.level.store(log_level as i32, Ordering::Relaxed);
     }
 
-    /// Returns whether debug messages are enabled at the current threshold.
     pub fn debug_enabled(&self) -> bool {
         self.enabled(LogLevel::Debug)
     }
 
-    /// Emits a debug message when the current threshold allows it.
     pub fn debug(&self, args: fmt::Arguments<'_>) {
         self.do_log(LogLevel::Debug, args);
     }
 
-    /// Emits an info message when the current threshold allows it.
     pub fn info(&self, args: fmt::Arguments<'_>) {
         self.do_log(LogLevel::Info, args);
     }
 
-    /// Emits a warning message when the current threshold allows it.
     pub fn warn(&self, args: fmt::Arguments<'_>) {
         self.do_log(LogLevel::Warn, args);
     }
 
-    /// Emits an error message when the current threshold allows it.
     pub fn error(&self, args: fmt::Arguments<'_>) {
         self.do_log(LogLevel::Error, args);
     }
 
-    /// Emits an event telemetry message when the current threshold allows it.
     pub fn event(&self, args: fmt::Arguments<'_>) {
         self.do_log(LogLevel::Event, args);
     }
 
-    /// Keeps the CLI-facing logger API explicit even though stdout is unbuffered here.
     pub fn flush(&self) {}
 
     fn do_log(&self, log_level: LogLevel, args: fmt::Arguments<'_>) {

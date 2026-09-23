@@ -7,7 +7,6 @@ use anyhow::{Context, Result, bail};
 use percent_encoding::percent_decode_str;
 use url::Url;
 
-/// Largest domain name accepted by the binary target codec.
 pub const DOMAIN_LEN_MAX: usize = 253;
 
 pub(super) fn decode_url_username(parsed_url: &Url) -> Result<Vec<u8>> {

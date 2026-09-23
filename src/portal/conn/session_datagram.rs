@@ -16,7 +16,6 @@ use super::flow::reserve_packet_budget;
 use super::{DatagramReadyRequest, PortalSession, QueuedDatagram};
 
 impl PortalSession {
-    /// Consumes pending and live QUIC datagrams for this authenticated session.
     pub(in crate::portal::conn) async fn datagram_loop(
         self: Arc<Self>,
         shutdown: CancellationToken,
@@ -136,9 +135,6 @@ impl PortalSession {
     }
 
     fn handle_udp_fragment(&self, flow_id: u32, fragment: OwnedUdpFragment) {
-        // Every dual-state operation takes flows before reassembly. Keeping
-        // both guards through enqueue prevents close/remove races from
-        // resurrecting a partial or complete packet.
         let flows = self
             .udp_flows
             .lock()

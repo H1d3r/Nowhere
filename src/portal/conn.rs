@@ -53,8 +53,6 @@ pub(super) async fn handle_incoming(
             ));
             return;
         }
-        // Handshake timeouts are expected for abandoned or hostile clients.
-        // Keep them silent to avoid log amplification.
         Err(_) => return,
     };
     let valid_alpn = conn
@@ -71,7 +69,6 @@ pub(super) async fn handle_incoming(
     handle_connection(portal, conn, admission, shutdown).await;
 }
 
-/// Runs authentication and then dispatches accepted streams/datagrams.
 async fn handle_connection(
     portal: Arc<PortalInner>,
     conn: Connection,
@@ -107,8 +104,6 @@ async fn handle_connection(
         drop(admission);
         return;
     }
-    // Once auth succeeds, expand the conservative pre-auth limits to the normal
-    // data-plane limits and release the admission slot.
     let flow_control = match crate::transport::transport_flow_control() {
         Ok(value) => value,
         Err(err) => {

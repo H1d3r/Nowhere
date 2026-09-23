@@ -165,7 +165,6 @@ pub(crate) fn read_process_incarnation(pid: u32) -> Option<u64> {
     {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         let close = stat.rfind(')')?;
-        // The suffix starts at field 3 (`state`); starttime is field 22.
         stat.get(close + 2..)?
             .split_ascii_whitespace()
             .nth(19)?
@@ -178,7 +177,6 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        // Only a confirmed missing process permits registry cleanup.
         result == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
     }
     #[cfg(windows)]

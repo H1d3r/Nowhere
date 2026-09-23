@@ -11,7 +11,6 @@ use tokio::net::{TcpSocket, TcpStream, UdpSocket, lookup_host};
 
 use super::{AddressFamily, CarrierEndpoint, DEFAULT_DIALER_IP};
 
-/// Resolves every matching listen address for one carrier and removes duplicates.
 pub(crate) fn resolve_bind_addrs(host: &str, endpoint: CarrierEndpoint) -> Result<Vec<SocketAddr>> {
     let mut addrs = if host == "*" || host.is_empty() {
         match endpoint.family {
@@ -44,9 +43,6 @@ pub(crate) fn resolve_bind_addrs(host: &str, endpoint: CarrierEndpoint) -> Resul
     Ok(addrs)
 }
 
-/// Resolves the UDP listen addresses for a host/port pair.
-///
-/// An empty host intentionally expands to separate IPv4 and IPv6 wildcard binds.
 pub fn bind_udp_addrs(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     if host.is_empty() {
         return Ok(vec![
@@ -70,7 +66,6 @@ pub fn bind_udp_addrs(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     Ok(vec![addr])
 }
 
-/// Opens a TCP connection, optionally binding the socket to a local IP first.
 pub async fn dial_tcp_from_local_ip(
     dialer_ip: &str,
     target: &str,
@@ -109,7 +104,6 @@ pub(crate) async fn dial_tcp_from_local_ip_family(
         .map_err(|_| anyhow!("common::util::dial_tcp_from_local_ip: dial timeout"))?
 }
 
-/// Opens a connected UDP socket, optionally binding it to a local IP first.
 pub async fn dial_udp_from_local_ip(
     dialer_ip: &str,
     target: &str,
@@ -150,8 +144,6 @@ pub(crate) fn filter_addrs(
     addrs: impl Iterator<Item = SocketAddr>,
     local_ip: Option<IpAddr>,
 ) -> Vec<SocketAddr> {
-    // When a caller pins the local address, keep only matching IP families so
-    // bind() cannot fail later with an IPv4/IPv6 family mismatch.
     addrs
         .filter(|addr| match local_ip {
             Some(ip) => ip.is_ipv4() == addr.is_ipv4(),

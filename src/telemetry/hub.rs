@@ -20,7 +20,6 @@ use super::wire::{
 
 const EVENT_CAPACITY: usize = 1_024;
 
-/// The in-process publisher shared by runtime orchestration and every flow.
 pub(crate) struct TelemetryHub {
     descriptor: InstanceDescriptor,
     privacy: Option<super::privacy::Privacy>,
@@ -148,8 +147,6 @@ impl TelemetryHub {
         self.lifecycle.subscribe()
     }
 
-    /// Atomically captures the existing transport counters plus local process
-    /// resources, then wakes every connected summary/detail subscriber.
     pub(crate) fn capture_and_publish(&self, stats: &Stats, ping_ms: u64) {
         let process = self
             .process_sampler
@@ -205,10 +202,6 @@ impl TelemetryHub {
         self: &Arc<Self>,
         build: impl FnOnce() -> AccessStart,
     ) -> AccessSpan {
-        // A broadcast receiver cannot recover an AccessStart emitted before it
-        // subscribed. Avoid building and cloning path strings when no detail
-        // client can observe this flow; this is especially important for
-        // high-rate short connections.
         if self.detail_clients.load(Ordering::Relaxed) == 0 || self.privacy.is_none() {
             return AccessSpan::disabled(Arc::clone(self));
         }
@@ -284,8 +277,6 @@ impl TelemetryHub {
     }
 }
 
-/// Cancellation-safe per-flow accounting. An unfinished span emits one
-/// `cancelled` completion when dropped.
 pub(crate) struct AccessSpan {
     hub: Arc<TelemetryHub>,
     started: Option<AccessStarted>,

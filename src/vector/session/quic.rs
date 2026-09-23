@@ -1,9 +1,10 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Shared authenticated QUIC session lifecycle and UDP packet dispatch.
+
 use super::*;
 
-/// Lazily created, reconnecting shared QUIC session.
 pub(in crate::vector) struct QuicManager {
     config: PortalClientConfig,
     tls: ClientTls,
@@ -327,9 +328,6 @@ impl QuicSession {
     }
 
     fn receive_fragment(&self, flow_id: FlowId, fragment: OwnedUdpFragment) {
-        // Every operation touching both maps takes routes first. Keeping this
-        // guard through insertion prevents remove_udp from leaving a stale
-        // partial packet after the route has been removed.
         let mut routes = self.routes.lock().unwrap_or_else(|lock| lock.into_inner());
         let Some(route) = routes.get(&flow_id).filter(|route| route.ready) else {
             return;

@@ -82,10 +82,8 @@ impl fmt::Display for LifeReason {
     }
 }
 
-/// Private lifecycle state with transition-only machine-readable telemetry.
 pub(crate) struct Lifecycle {
     mode: LifeMode,
-    // u8::MAX represents the pre-STARTING state so the first transition emits.
     state: AtomicU8,
 }
 
@@ -108,7 +106,6 @@ impl Lifecycle {
     }
 }
 
-/// Reusable signal receiver so a second signal can force an in-progress shutdown.
 pub(crate) struct ShutdownSignals {
     #[cfg(unix)]
     interrupt: tokio::signal::unix::Signal,

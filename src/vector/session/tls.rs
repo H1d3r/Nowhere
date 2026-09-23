@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! TLS carrier establishment and shared Mux connection management.
+
 use super::*;
 use std::sync::atomic::AtomicUsize;
 use tokio::sync::OnceCell;
@@ -70,9 +72,6 @@ impl TlsManager {
                 .map(OpenedTls::Dedicated);
         }
         let pending = reserve_mux(&mut *self.mux.lock().await, Some(flow_id))?;
-        // Reservations include connecting slots, avoiding a cold-start stampede
-        // onto the first handshake to finish. OnceCell shares one initializer;
-        // cancellation lets another waiter retry without leaking a pool slot.
         let handle = pending
             .0
             .handle
@@ -101,7 +100,6 @@ impl TlsManager {
                     .map_err(Into::into);
             }
         };
-        // Registration and reservation release exclude idle retirement.
         let pool = self.mux.lock().await;
         let stream = handle.prepare_stream(flow_id)?;
         drop(pending);
@@ -131,7 +129,6 @@ impl TlsManager {
         stream.flush().await?;
         let (handle, incoming) = MuxHandle::start(stream, MuxConfig::default())?;
         drop(incoming);
-        // No await after start until ownership is handed to the lifetime task.
         let manager = self.clone();
         let lifetime = handle.clone();
         tokio::spawn(async move {
@@ -222,9 +219,6 @@ fn reserve_mux(pool: &mut Vec<Arc<TlsMux>>, flow_id: Option<u32>) -> std::io::Re
             carrier
         }
         _ => {
-            // A released application flow can remain as protocol state while
-            // its peer finishes. Replace an idle conflicting carrier rather
-            // than reusing the same flow ID on it.
             let index = pool.iter().position(|carrier| {
                 carrier.pending.load(Ordering::Relaxed) == 0
                     && carrier

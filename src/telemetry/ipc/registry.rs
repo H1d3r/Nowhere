@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Per-user telemetry registry entries and live-instance discovery.
+
 use std::io;
 use std::path::PathBuf;
 
@@ -10,7 +12,6 @@ use crate::telemetry::TELEMETRY_PROTOCOL;
 use crate::telemetry::local;
 use crate::telemetry::process::{process_is_alive, process_uid, read_process_incarnation};
 
-/// A registry identity validated against the live process incarnation where supported.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
 pub(crate) struct DiscoveredInstance {
     pub(crate) registry_name: String,

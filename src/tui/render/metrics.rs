@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Traffic charts, metric cards, and sparklines.
+//! Dashboard metric cards, labeled sparklines, and traffic summaries.
 
 use ratatui::prelude::*;
 use ratatui::widgets::Paragraph;

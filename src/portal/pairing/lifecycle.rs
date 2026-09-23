@@ -61,8 +61,6 @@ impl PairingRegistry {
         self.drain_pending().await;
     }
 
-    /// Closes logical-flow admission and rejects every setup that has not
-    /// activated yet. Active relays retain their claims and are left alone.
     pub(in crate::portal) async fn begin_drain(self: &Arc<Self>) {
         self.close_admission();
 
@@ -80,8 +78,6 @@ impl PairingRegistry {
         }
     }
 
-    /// Synchronous admission barrier used at the start of the one absolute
-    /// shutdown deadline.
     pub(in crate::portal) fn close_admission(&self) {
         let _claims = self.claims.lock().expect("flow claim registry poisoned");
         self.accepting.store(false, Ordering::Release);

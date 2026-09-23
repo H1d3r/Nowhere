@@ -12,34 +12,26 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::util::{DOMAIN_LEN_MAX, validate_domain_bytes, validate_port};
 
-/// SOCKS5 IPv4 address type.
 pub const TARGET_ATYP_IPV4: u8 = 0x01;
-/// SOCKS5 domain-name address type.
 pub const TARGET_ATYP_DOMAIN: u8 = 0x03;
-/// SOCKS5 IPv6 address type.
 pub const TARGET_ATYP_IPV6: u8 = 0x04;
 
 pub const TARGET_IPV4_LEN: usize = 1 + 4 + 2;
 pub const TARGET_IPV6_LEN: usize = 1 + 16 + 2;
 pub const TARGET_MAX_ENCODED_LEN: usize = 1 + 1 + DOMAIN_LEN_MAX + 2;
 
-/// Binary destination address carried after an opening flow header.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Target {
-    /// Literal IPv4 or IPv6 endpoint.
     Ip(SocketAddr),
-    /// Unresolved ASCII/IDNA wire hostname and port.
     Domain { host: String, port: u16 },
 }
 
 impl Target {
-    /// Creates a validated IP target.
     pub fn ip(address: SocketAddr) -> Result<Self> {
         validate_port(address.port(), "protocol::request::Target::ip")?;
         Ok(Self::Ip(address))
     }
 
-    /// Creates a validated unresolved domain target.
     pub fn domain(host: impl Into<String>, port: u16) -> Result<Self> {
         let host = host.into();
         validate_domain_bytes(host.as_bytes(), "protocol::request::Target::domain")?;
@@ -47,7 +39,6 @@ impl Target {
         Ok(Self::Domain { host, port })
     }
 
-    /// Destination port.
     pub const fn port(&self) -> u16 {
         match self {
             Self::Ip(address) => address.port(),
@@ -55,7 +46,6 @@ impl Target {
         }
     }
 
-    /// Literal socket address when the target does not require DNS resolution.
     pub const fn socket_addr(&self) -> Option<SocketAddr> {
         match self {
             Self::Ip(address) => Some(*address),
@@ -63,7 +53,6 @@ impl Target {
         }
     }
 
-    /// Unresolved hostname, or `None` for a literal IP target.
     pub fn domain_name(&self) -> Option<&str> {
         match self {
             Self::Ip(_) => None,
@@ -71,7 +60,6 @@ impl Target {
         }
     }
 
-    /// Literal IP address, or `None` for an unresolved domain target.
     pub const fn ip_addr(&self) -> Option<IpAddr> {
         match self {
             Self::Ip(address) => Some(address.ip()),
@@ -79,7 +67,6 @@ impl Target {
         }
     }
 
-    /// Encoded binary length after validation.
     pub fn encoded_len(&self) -> Result<usize> {
         match self {
             Self::Ip(address) => {
@@ -143,7 +130,6 @@ impl TryFrom<String> for Target {
     }
 }
 
-/// Writes a target into caller-owned memory and returns the encoded length.
 pub fn encode_target_into(target: &Target, output: &mut [u8]) -> Result<usize> {
     let encoded_len = target.encoded_len()?;
     if output.len() < encoded_len {
@@ -174,7 +160,6 @@ pub fn encode_target_into(target: &Target, output: &mut [u8]) -> Result<usize> {
     Ok(encoded_len)
 }
 
-/// Encodes a validated target into a right-sized buffer.
 pub fn encode_target(target: &Target) -> Result<Vec<u8>> {
     let mut output = vec![0; target.encoded_len()?];
     let written = encode_target_into(target, &mut output)?;
@@ -182,7 +167,6 @@ pub fn encode_target(target: &Target) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Decodes one target prefix and reports how many bytes it consumed.
 pub fn decode_target(input: &[u8]) -> Result<(Target, usize)> {
     let Some(&address_type) = input.first() else {
         bail!("protocol::request::decode_target: missing address type");
@@ -234,7 +218,6 @@ pub fn decode_target(input: &[u8]) -> Result<(Target, usize)> {
     }
 }
 
-/// Reads one target without consuming any following initial payload.
 pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Target> {
     let mut address_type = [0; 1];
     reader
@@ -289,7 +272,6 @@ pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Target
     }
 }
 
-/// Writes one target directly from a stack buffer.
 pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, target: &Target) -> Result<()> {
     let mut encoded = [0; TARGET_MAX_ENCODED_LEN];
     let encoded_len = encode_target_into(target, &mut encoded)?;
@@ -299,7 +281,6 @@ pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, target: &Targe
         .context("protocol::request::write_request: failed to write target")
 }
 
-/// Encodes a target for callers assembling auth, flow, target, and payload.
 pub fn write_request_frame(target: &Target) -> Result<Vec<u8>> {
     encode_target(target)
 }

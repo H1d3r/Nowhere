@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Directional Morph masking for asynchronous TCP streams.
+
 use std::fmt;
 use std::io;
 use std::pin::Pin;

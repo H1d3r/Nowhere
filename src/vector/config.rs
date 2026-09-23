@@ -21,7 +21,6 @@ const VECTOR_QUERY_KEYS: &[&str] = &[
     "up", "down", "mux", "sni", "pin", "rate", "etar", "morph", "socks", "log",
 ];
 
-/// Whether a client originates dedicated or Mux TLS carriers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MuxMode {
     Disabled,
@@ -48,7 +47,6 @@ impl fmt::Display for MuxMode {
     }
 }
 
-/// Physical carrier selected for one logical flow direction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CarrierMode {
     Tcp,
@@ -77,7 +75,6 @@ impl CarrierMode {
     }
 }
 
-/// Transport-only configuration shared by Vector and Portal upstream clients.
 #[derive(Clone, Debug)]
 pub(crate) struct PortalClientConfig {
     pub(crate) remote: ServiceEndpoint,
@@ -220,7 +217,6 @@ impl fmt::Display for CarrierMode {
     }
 }
 
-/// Validated local SOCKS5 listen endpoint.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SocksListenConfig {
     pub(super) host: String,
@@ -253,7 +249,6 @@ impl SocksListenConfig {
     }
 }
 
-/// Fully validated Vector runtime configuration.
 #[derive(Clone, Debug)]
 pub(crate) struct VectorConfig {
     pub(super) remote: ServiceEndpoint,

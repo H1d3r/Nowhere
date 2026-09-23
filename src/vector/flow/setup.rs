@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! TCP flow setup requests, ready responses, and carrier fallback.
+
 use super::*;
 
 pub(in crate::vector) async fn prepare_with_fallback<T, F, Fut>(

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! SOCKS5 address encoding, decoding, and asynchronous reads.
+
 use std::net::{IpAddr, SocketAddr};
 
 use anyhow::{Result, anyhow, bail};

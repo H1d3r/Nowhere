@@ -5,10 +5,8 @@
 
 use super::TelemetrySnapshot;
 
-/// A stable identifier for one running Nowhere process.
 pub type InstanceId = String;
 
-/// The role of a monitored Nowhere process.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub enum InstanceRole {
     Portal,
@@ -35,7 +33,6 @@ impl InstanceRole {
     }
 }
 
-/// Coarse lifecycle state used for status styling.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum Lifecycle {
     Starting,
@@ -74,7 +71,6 @@ impl Lifecycle {
     }
 }
 
-/// Instance metadata normalized from IPC.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InstanceMeta {
     pub id: InstanceId,
@@ -88,7 +84,6 @@ pub struct InstanceMeta {
     pub telemetry_protocol: String,
 }
 
-/// Runtime event severity.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EventLevel {
     Debug,
@@ -98,7 +93,6 @@ pub enum EventLevel {
     Error,
 }
 
-/// A structured, non-periodic process event.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RuntimeRecord {
     pub timestamp_ms: u64,
@@ -108,7 +102,6 @@ pub struct RuntimeRecord {
     pub client: Option<String>,
 }
 
-/// Start or completion of one access.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AccessPhase {
     #[default]
@@ -116,7 +109,6 @@ pub enum AccessPhase {
     Finish,
 }
 
-/// Compact completion state shown by the access feed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccessStatus {
     Success,
@@ -126,7 +118,6 @@ pub enum AccessStatus {
     Rejected,
 }
 
-/// A structured access-path record.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AccessRecord {
     pub timestamp_ms: u64,
@@ -145,7 +136,6 @@ pub struct AccessRecord {
     pub download_bytes: Option<u64>,
 }
 
-/// Messages accepted by the view model.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiEvent {
     Upsert {
@@ -182,7 +172,6 @@ pub enum UiEvent {
     },
 }
 
-/// Which log is focused for scrolling, pausing, and clearing.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum FeedKind {
     #[default]
@@ -190,7 +179,6 @@ pub enum FeedKind {
     Runtime,
 }
 
-/// Keyboard focus for directional navigation.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Focus {
     #[default]
@@ -198,7 +186,6 @@ pub enum Focus {
     Feed,
 }
 
-/// Top-level TUI workspace.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Page {
     #[default]

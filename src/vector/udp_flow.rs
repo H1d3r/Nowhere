@@ -154,8 +154,6 @@ fn quic_datagram_delivered(outcome: UdpDatagramSend) -> bool {
     outcome == UdpDatagramSend::Sent
 }
 
-/// A UoT packet already in the reusable read buffer, or an owned zero-copy
-/// slice received from Quinn.
 pub(crate) enum ReceivedUdpPacket {
     Buffered(usize),
     Owned(Bytes),

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Protected Windows named pipes and per-user telemetry registry access.
+
 use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
 use std::{

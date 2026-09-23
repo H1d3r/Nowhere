@@ -17,28 +17,22 @@ use crate::portal::PortalInner;
 
 const AUTH_EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 
-/// QUIC close code and reason used for authentication failures.
 pub(super) fn authentication_failure_close() -> (VarInt, &'static [u8]) {
     (VarInt::from_u32(1), b"access denied")
 }
 
-/// Authenticated state and the first bidi stream, which may continue directly
-/// with a flow header after the fixed authentication frame.
 pub(super) struct AuthenticatedConnection {
     pub(super) session: Arc<PortalSession>,
     pub(super) first_send: SendStream,
     pub(super) first_recv: RecvStream,
 }
 
-/// Result of the QUIC authentication phase.
 pub(super) enum AuthenticationOutcome {
     Success(AuthenticatedConnection),
     Failure(anyhow::Error),
     Shutdown,
 }
 
-/// Authenticates the first bidirectional stream while discarding every
-/// DATAGRAM received before authentication completes.
 pub(super) async fn authenticate_connection(
     portal: Arc<PortalInner>,
     conn: Connection,
@@ -85,10 +79,6 @@ pub(super) async fn authenticate_connection(
                 auth_pending = false;
                 match result {
                     Ok((session_id, first_send, first_recv)) => {
-                        // Establish a hard phase barrier before any flow can
-                        // be installed: poll until Quinn reports no queued
-                        // DATAGRAM, so no pre-auth backlog can enter a READY
-                        // flow.
                         match drain_pre_auth_datagrams(
                             &conn,
                             deadline,
@@ -120,8 +110,6 @@ pub(super) async fn authenticate_connection(
             }
             datagram = conn.read_datagram(), if datagrams_open => match datagram {
                 Ok(_) => {
-                    // Authentication is the resource boundary. Never retain
-                    // or replay a DATAGRAM observed before it succeeds.
                 }
                 Err(_) => datagrams_open = false,
             },
@@ -168,12 +156,10 @@ async fn drain_pre_auth_datagrams(
     }
 }
 
-/// Returns the fixed absolute authentication deadline.
 pub(super) fn authentication_deadline(handshake_timeout: std::time::Duration) -> Instant {
     Instant::now() + handshake_timeout
 }
 
-/// Waits for the same auth deadline after a failed auth read.
 pub(super) async fn wait_for_auth_deadline(
     deadline: Instant,
     shutdown: &CancellationToken,

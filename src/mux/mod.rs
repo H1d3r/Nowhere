@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Multiplexed logical streams over a shared reliable carrier.
+
 use std::future::Future;
 use std::io;
 use std::pin::Pin;

@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Direct, SOCKS5, or native Portal upstream target establishment.
+//! Portal TCP stream wrappers for direct, SOCKS5, and native upstreams.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};

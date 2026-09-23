@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Morph packet masking for QUIC UDP socket I/O.
+
 use std::fmt;
 use std::io::{self, IoSliceMut};
 use std::pin::Pin;

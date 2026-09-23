@@ -3,16 +3,12 @@
 
 //! Snapshot counters and chart-ready rate samples.
 
-/// The visible chart window. Services do not retain history themselves.
 pub const HISTORY_WINDOW_MS: u64 = 10 * 60 * 1_000;
 
-/// One cumulative telemetry sample.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TelemetrySnapshot {
     pub sequence: u64,
-    /// Wall-clock milliseconds reported by the service.
     pub timestamp_ms: u64,
-    /// Monotonic milliseconds since this service process started.
     pub uptime_ms: u64,
     pub tcp_logical_up: u64,
     pub tcp_logical_down: u64,
@@ -77,7 +73,6 @@ impl TelemetrySnapshot {
     }
 }
 
-/// Derived per-second data retained for charts.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HistoryPoint {
     pub timestamp_ms: u64,

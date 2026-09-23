@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Bounded telemetry frame I/O with cancellation-safe reads.
+
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -83,10 +85,6 @@ where
     Ok(())
 }
 
-/// Incremental decoder whose offsets live outside the returned future.
-///
-/// `next` can therefore be cancelled by `tokio::select!` after any partial
-/// read and safely called again without losing frame alignment.
 pub(super) struct FrameReader<R> {
     inner: R,
     length_bytes: [u8; 4],

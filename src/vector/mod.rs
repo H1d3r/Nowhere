@@ -42,7 +42,6 @@ use crate::transport::{Buffers, RateLimiter, Stats};
 const SOCKS_CLIENT_RESOURCE_LIMIT: usize = 1024;
 const SOCKS_UDP_TARGET_RESOURCE_LIMIT: usize = 1024;
 
-/// Runnable native client serving a local SOCKS5 endpoint.
 pub struct Vector {
     inner: Arc<VectorInner>,
 }
@@ -64,7 +63,6 @@ pub(super) struct VectorInner {
 }
 
 impl Vector {
-    /// Validates a `vector://` URL and prepares client transport state.
     pub fn new(parsed_url: Url, logger: Logger) -> Result<Self> {
         let lifecycle = Arc::new(Lifecycle::new(LifeMode::Vector));
         lifecycle.transition(&logger, LifeState::Starting, LifeReason::Startup);
@@ -140,7 +138,6 @@ impl Vector {
         })
     }
 
-    /// Runs SOCKS listeners, transport maintenance, telemetry, and graceful shutdown.
     pub async fn run(self) -> Result<()> {
         self.inner.lifecycle.transition(
             &self.inner.logger,

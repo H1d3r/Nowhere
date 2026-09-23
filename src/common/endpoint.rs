@@ -124,9 +124,6 @@ impl ServiceEndpoint {
     }
 }
 
-/// Validates the endpoint path before `url::Url` can normalize dot segments.
-///
-/// Other URL structure remains the responsibility of the standard parser.
 pub fn validate_endpoint_url_input(raw: &str, context: &str) -> Result<()> {
     let Some((scheme, remainder)) = raw.split_once("://") else {
         return Ok(());

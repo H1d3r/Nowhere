@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Local-only transport and protected registry operations.
+
 #[cfg(unix)]
 #[path = "local/unix.rs"]
 mod platform;

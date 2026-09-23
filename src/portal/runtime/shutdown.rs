@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Portal admission shutdown, relay draining, and bounded task cleanup.
+
 use super::*;
 use quinn::VarInt;
 use tokio::time::{Instant, timeout_at};
@@ -38,9 +40,6 @@ impl RunningPortal {
         } = self;
         let deadline = Instant::now() + portal.inner.runtime.shutdown_timeout;
 
-        // Establish the admission barrier before cancelling listeners. A flow
-        // that activated before this point is tracked; every later setup gets
-        // the FLOW_LIMIT result through its authoritative downlink.
         portal.inner.pairing.close_admission();
         portal.inner.ready_gate.close();
         portal.inner.drain.cancel();
@@ -82,8 +81,6 @@ impl RunningPortal {
             }
         };
 
-        // No new setup is possible now. End physical carriers and auxiliary
-        // work; READY relays have either completed or are being forced below.
         force_shutdown.cancel();
         portal.inner.outbound.close(deadline).await;
         for endpoint in &endpoints {

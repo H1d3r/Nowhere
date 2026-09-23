@@ -56,8 +56,6 @@ impl AsRef<[u8]> for RelayChunk {
     }
 }
 
-/// Drain buffered output before an input wait can stall a request or response.
-/// Immediately available input stays batched; EOF is flushed by relay shutdown.
 pub(crate) async fn read_with_flush<T>(
     read: impl Future<Output = io::Result<T>>,
     writer: &mut (impl AsyncWrite + Unpin),
@@ -66,8 +64,6 @@ pub(crate) async fn read_with_flush<T>(
     match poll_fn(|cx| Poll::Ready(read.as_mut().poll(cx))).await {
         Poll::Ready(result) => result,
         Poll::Pending => {
-            // TLS may accept plaintext while ciphertext is still buffered.
-            // Keep this same read future alive across the flush.
             writer.flush().await?;
             read.await
         }

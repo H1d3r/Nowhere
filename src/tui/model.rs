@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! TUI-owned view model.
-//!
-//! The IPC protocol deliberately does not leak into the renderer.  The client
-//! adapter normalizes wire messages into [`UiEvent`] values and this module
-//! keeps the short, process-local history needed by charts and feeds.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -25,9 +21,7 @@ pub use types::{
     InstanceRole, Lifecycle, Page, RuntimeRecord, UiEvent,
 };
 
-/// Maximum number of access or runtime records kept by one TUI.
 pub const FEED_CAPACITY: usize = 2_000;
-/// Terminal features selected once at startup.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Capabilities {
     pub unicode: bool,
@@ -43,7 +37,6 @@ impl Default for Capabilities {
     }
 }
 
-/// Complete local state for a TUI process.
 #[derive(Debug, Default)]
 pub struct App {
     pub instances: Vec<InstanceView>,

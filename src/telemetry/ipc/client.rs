@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Local telemetry client connections and subscription requests.
+
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -61,7 +63,6 @@ impl TelemetryClient {
             _ => bail!("telemetry: service did not begin with hello"),
         };
         validate_hello(&hello, discovered)?;
-        // These local identity fields are intentionally absent from wire JSON.
         hello.instance.uid = discovered.uid;
         hello.instance.incarnation = discovered.incarnation;
         write_frame(

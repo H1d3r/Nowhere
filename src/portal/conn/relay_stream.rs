@@ -17,7 +17,6 @@ use crate::transport::{
     write_owned_to,
 };
 
-/// Relays both directions until one side closes or either direction errors.
 pub(in crate::portal) async fn relay_stream<TR, TW>(
     portal: Arc<PortalInner>,
     client_read: &mut std::pin::Pin<Box<dyn AsyncReadAny>>,
@@ -77,8 +76,6 @@ where
             if carriers.is_some_and(|(uplink, downlink)| {
                 uplink == Carrier::TlsTcp && downlink == Carrier::Quic
             }) {
-                // Keep the TLS Mux receive/control tasks responsive when the
-                // QUIC half remains continuously writable.
                 tokio::task::yield_now().await;
             }
             access.add_download(n as u64);
@@ -103,14 +100,11 @@ where
 
     match first {
         EitherDone::Client(Ok(())) => {
-            // After a clean half-close, give the other direction a short drain
-            // window so protocol trailers or final response bytes can pass.
             timeout(portal.runtime.tcp_read_timeout, &mut target_to_client)
                 .await
                 .unwrap_or(Ok(()))?;
         }
         EitherDone::Target(Ok(())) => {
-            // Symmetric drain window for target-initiated close.
             timeout(portal.runtime.tcp_read_timeout, &mut client_to_target)
                 .await
                 .unwrap_or(Ok(()))?;

@@ -64,8 +64,6 @@ pub(super) fn server_ui_events(
         }
         ServerMessage::AccessStart(start) => {
             let record = access_start_ui_value(start);
-            // Finishes are self-contained; bound correlation memory even when
-            // active flows are long-lived or their finishes were not delivered.
             if starts.len() >= 2_048 {
                 starts.clear();
             }

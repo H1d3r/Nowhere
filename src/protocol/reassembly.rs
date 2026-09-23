@@ -11,7 +11,6 @@ use bytes::{Bytes, BytesMut};
 use super::FlowId;
 use super::datagram::{OwnedUdpFragment, validate_fragment_metadata};
 
-/// Resource limits for application-layer UDP fragment reassembly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReassemblyConfig {
     pub max_slots: usize,
@@ -77,7 +76,6 @@ pub(super) struct ReassemblySlot<R> {
     reservation: R,
 }
 
-/// Bounded, timeout-aware fragment reassembler.
 pub struct DatagramReassembler<R = ()> {
     config: ReassemblyConfig,
     pub(super) slots: HashMap<ReassemblyKey, ReassemblySlot<R>>,
@@ -117,7 +115,6 @@ impl<R> DatagramReassembler<R> {
         }
     }
 
-    /// Releases every partial packet and any caller-owned reservations.
     pub fn clear(&mut self) {
         self.slots.clear();
         self.reserved_bytes = 0;
@@ -128,7 +125,6 @@ impl<R> DatagramReassembler<R> {
         let Some(next_expiry) = self.next_expiry else {
             return false;
         };
-        // Slots remain valid through the exact TTL boundary.
         if now <= next_expiry {
             return false;
         }
@@ -150,8 +146,6 @@ impl<R> DatagramReassembler<R> {
         self.slots.len() != before
     }
 
-    /// Retains a zero-copy fragment slice and reserves any caller-owned
-    /// resource exactly once when a new packet slot is created.
     pub fn push_with<F>(
         &mut self,
         flow_id: FlowId,
@@ -256,8 +250,6 @@ impl<R> DatagramReassembler<R> {
         {
             return ReassemblyOutcome::Dropped(ReassemblyDropReason::ByteLimit);
         }
-        // External admission is fallible. Reserve before evicting so a failed
-        // replacement cannot discard an otherwise valid partial packet.
         let Some(reservation) = reserve(fragment.total_len) else {
             return ReassemblyOutcome::Dropped(ReassemblyDropReason::ByteLimit);
         };
@@ -300,7 +292,6 @@ impl<R> DatagramReassembler<R> {
 }
 
 impl DatagramReassembler<()> {
-    /// Retains a fragment when no external resource reservation is required.
     pub fn push(
         &mut self,
         flow_id: FlowId,

@@ -35,7 +35,6 @@ pub(in crate::portal) struct Metadata {
 pub(in crate::portal) struct PendingTcp {
     pub(in crate::portal) epoch: u64,
     pub(in crate::portal) metadata: Metadata,
-    /// Active QUIC generation when this split flow first became pending.
     pub(in crate::portal) quic_snapshot: Option<u64>,
     pub(in crate::portal) target: Option<Target>,
     pub(in crate::portal) uplink: Option<BoxReader>,
@@ -101,7 +100,6 @@ impl QuicUdpReceiver {
         }
     }
 
-    /// Drains the session DATAGRAM queue while this flow still rejects DATA.
     pub(in crate::portal) async fn prepare_ready(&mut self) -> bool {
         let Some(requests) = &self.ready_requests else {
             return true;
@@ -117,8 +115,6 @@ impl QuicUdpReceiver {
         response.await.unwrap_or(false)
     }
 
-    /// Opens the DATA path immediately after READY has been queued on the
-    /// selected downlink. There is deliberately no await between those events.
     pub(in crate::portal) fn activate(&self) {
         self.ready.store(true, Ordering::Release);
     }
@@ -160,7 +156,6 @@ pub(in crate::portal) enum UdpHalf {
 pub(in crate::portal) struct PendingUdp {
     pub(in crate::portal) epoch: u64,
     pub(in crate::portal) metadata: Metadata,
-    /// Active QUIC generation when this split flow first became pending.
     pub(in crate::portal) quic_snapshot: Option<u64>,
     pub(in crate::portal) target: Option<Target>,
     pub(in crate::portal) uplink: Option<UdpUp>,

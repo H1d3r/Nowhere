@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux frame types and compact wire-header encoding.
+
 use std::error::Error;
 use std::fmt;
 

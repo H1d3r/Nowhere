@@ -6,10 +6,8 @@
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Fixed setup-result frame length.
 pub const SETUP_RESULT_LEN: usize = 1;
 
-/// Direct wire representation of a flow setup outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum SetupResult {
@@ -60,7 +58,6 @@ impl TryFrom<u8> for SetupResult {
     }
 }
 
-/// Rejection codes retained as a convenient application-level type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum FlowErrorCode {
@@ -113,7 +110,6 @@ impl From<FlowErrorCode> for SetupResult {
     }
 }
 
-/// Application-level setup outcome used by existing pairing code.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FlowResult {
     Ready,

@@ -6,9 +6,7 @@
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
-/// Logical session identifier shared by a transport bundle.
 pub const SESSION_ID_LEN: usize = 16;
-/// Fixed binary flow header length.
 pub const FLOW_HEADER_LEN: usize = 5;
 
 const ROLE_MASK: u8 = 0b0000_0011;
@@ -16,28 +14,20 @@ const KIND_BIT: u8 = 0b0000_0100;
 const UPLINK_BIT: u8 = 0b0000_1000;
 const DOWNLINK_BIT: u8 = 0b0001_0000;
 const HOPS_SHIFT: u8 = 5;
-/// Largest remaining Portal-to-Portal hop budget representable in the header.
 pub const MAX_PORTAL_HOPS: u8 = 7;
 
 pub type SessionId = [u8; SESSION_ID_LEN];
-/// Flow identifier scoped to one logical session.
 pub type FlowId = u32;
-/// Largest logical-flow identifier representable by every carrier.
 pub const MAX_FLOW_ID: FlowId = 0x3fff_ffff;
 
-/// Relationship of the current physical lane to a logical flow.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum FlowRole {
-    /// One symmetric lane carries both directions.
     Duplex = 0,
-    /// First half of an asymmetric flow; carries the target and uplink.
     Open = 1,
-    /// Second half of an asymmetric flow; carries the downlink.
     Attach = 2,
 }
 
-/// Proxied payload semantics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum FlowKind {
@@ -45,7 +35,6 @@ pub enum FlowKind {
     Udp = 1,
 }
 
-/// Physical carrier selected for one flow direction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum Carrier {
@@ -53,7 +42,6 @@ pub enum Carrier {
     Quic = 1,
 }
 
-/// Fully decoded logical-flow metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FlowHeader {
     pub role: FlowRole,
@@ -61,13 +49,10 @@ pub struct FlowHeader {
     pub kind: FlowKind,
     pub uplink: Carrier,
     pub downlink: Carrier,
-    /// Remaining Portal-to-Portal forwarding budget. Vector-originated flows
-    /// use zero; the first forwarding Portal initializes the budget.
     pub hops: u8,
 }
 
 impl FlowHeader {
-    /// Validates role, ID, and carrier invariants independent of the current lane.
     pub fn validate(self) -> Result<()> {
         if self.hops > MAX_PORTAL_HOPS {
             bail!("protocol::flow::FlowHeader::validate: hop budget exceeds {MAX_PORTAL_HOPS}")
@@ -83,7 +68,6 @@ impl FlowHeader {
         }
     }
 
-    /// Validates that this header arrived on the physical carrier it declares.
     pub fn validate_on(self, current: Carrier) -> Result<()> {
         self.validate()?;
         let expected = match self.role {
@@ -96,20 +80,15 @@ impl FlowHeader {
         Ok(())
     }
 
-    /// Whether this lane is followed by a binary target.
     pub const fn carries_target(self) -> bool {
         matches!(self.role, FlowRole::Duplex | FlowRole::Open)
     }
 }
 
-/// Encodes a header after validating its semantic invariants.
 pub fn encode_flow_header(header: FlowHeader) -> Result<[u8; FLOW_HEADER_LEN]> {
     write_flow_header(header)
 }
 
-/// Encodes a flow header into a fixed stack array.
-///
-/// Validates the same semantic invariants as [`encode_flow_header`].
 pub fn write_flow_header(header: FlowHeader) -> Result<[u8; FLOW_HEADER_LEN]> {
     header.validate()?;
     let flags = header.role as u8
@@ -123,7 +102,6 @@ pub fn write_flow_header(header: FlowHeader) -> Result<[u8; FLOW_HEADER_LEN]> {
     Ok(output)
 }
 
-/// Decodes exactly one fixed flow header.
 pub fn decode_flow_header(bytes: &[u8]) -> Result<FlowHeader> {
     if bytes.len() != FLOW_HEADER_LEN {
         bail!(
@@ -165,7 +143,6 @@ pub fn decode_flow_header(bytes: &[u8]) -> Result<FlowHeader> {
     Ok(header)
 }
 
-/// Reads exactly one flow header, leaving initial payload buffered behind it.
 pub async fn read_flow_header<R: AsyncRead + Unpin>(reader: &mut R) -> Result<FlowHeader> {
     let mut bytes = [0; FLOW_HEADER_LEN];
     reader

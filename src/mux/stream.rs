@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Asynchronous Mux stream I/O and receive-credit release.
+
 use std::io;
 use std::io::IoSlice;
 use std::pin::Pin;
@@ -326,17 +328,8 @@ impl FlowWriter {
 
 impl Drop for FlowWriter {
     fn drop(&mut self) {
-        if !self.closed {
-            // One dispatcher per carrier preserves ordering behind
-            // already queued DATA without spawning a task for every dropped
-            // stream. Dropping a writer is a half-close: split-direction users
-            // intentionally discard the unused half while retaining the other.
-            if self.shared.terminal_tx.try_send(self.flow_id).is_err() {
-                // Drop cannot wait for terminal delivery. A full queue means
-                // the peer is not draining control traffic, so fail the
-                // carrier before terminal metadata can grow without bound.
-                self.shared.close();
-            }
+        if !self.closed && self.shared.terminal_tx.try_send(self.flow_id).is_err() {
+            self.shared.close();
         }
         self.shared.release_part(self.flow_id);
     }

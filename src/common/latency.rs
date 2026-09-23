@@ -18,8 +18,6 @@ struct Sample {
     sequence: u64,
 }
 
-/// Tracks only live upstream carriers. Updates happen at carrier boundaries,
-/// never on the payload hot path; readers use one relaxed atomic load.
 #[derive(Debug)]
 pub(crate) struct LatencyTracker {
     current_ms: AtomicU64,
@@ -61,7 +59,6 @@ impl LatencyTracker {
     }
 }
 
-/// Keeps one RTT sample live for exactly as long as its physical carrier.
 pub(crate) struct LatencyGuard {
     tracker: Weak<LatencyTracker>,
     id: u64,
@@ -101,8 +98,6 @@ impl LatencyGuard {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = stream;
-            // TCP_INFO is not exposed consistently across supported targets.
-            // Keep the carrier visibly live; QUIC continues to report its RTT.
             self.update(Duration::from_millis(1));
         }
     }
@@ -129,13 +124,8 @@ impl Drop for LatencyGuard {
 
 #[cfg(target_os = "linux")]
 fn tcp_rtt<T: AsRawFd>(stream: &T) -> Option<Duration> {
-    // SAFETY: tcp_info contains only integer fields, so its all-zero bit
-    // pattern is valid. Pre-initializing the full structure also makes it safe
-    // to accept the shorter prefixes returned by older Linux kernels.
     let mut info = unsafe { MaybeUninit::<libc::tcp_info>::zeroed().assume_init() };
     let mut length = size_of::<libc::tcp_info>() as libc::socklen_t;
-    // SAFETY: TCP_INFO writes at most `length` bytes to a correctly sized,
-    // aligned tcp_info buffer. The descriptor remains owned by the caller.
     let result = unsafe {
         libc::getsockopt(
             stream.as_raw_fd(),

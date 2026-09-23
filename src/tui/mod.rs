@@ -16,7 +16,6 @@ use anyhow::Result;
 pub use app::run_with_receiver;
 pub use client::UiCommand;
 
-/// Discovers running Nowhere instances and opens the interactive dashboard.
 pub async fn run() -> Result<()> {
     let client = client::start()?;
     app::run_with_receiver(client.events, Some(client.commands)).await

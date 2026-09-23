@@ -28,10 +28,6 @@ impl TransportFlowControl {
     }
 }
 
-/// Reads the process-wide QUIC flow-control profile.
-///
-/// The throughput profile preserves the established high-BDP values; memory
-/// and balanced remain available through the environment override.
 pub(crate) fn transport_flow_control() -> Result<TransportFlowControl> {
     parse_transport_profile(
         std::env::var("NOW_TRANSPORT_MEMORY_PROFILE")

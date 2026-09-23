@@ -2,10 +2,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 //! Structured, process-local telemetry for the read-only TUI.
-//!
-//! This path is deliberately independent from [`crate::common::Logger`].
-//! Portal and Vector continue to emit their existing stdout/stderr records;
-//! the telemetry hub broadcasts structured state over local IPC.
 
 mod checkpoint;
 mod hub;

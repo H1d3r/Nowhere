@@ -21,7 +21,6 @@ use super::{
 
 const FLOW_RESULT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Relays a TCP target through independently selected upload and download halves.
 pub(in crate::portal) async fn relay_paired_tcp(portal: Arc<PortalInner>, paired: PairedTcp) {
     let PairedTcp {
         flow_id,
@@ -215,9 +214,6 @@ fn error_outcome(error: &str) -> AccessOutcome {
     }
 }
 
-/// Commits the single setup result. Cancellation is sampled before the READY
-/// write starts; after that point READY owns the writer and must finish without
-/// a competing REJECT that could corrupt a partially written frame.
 async fn commit_ready(
     cancel: &tokio_util::sync::CancellationToken,
     ready_gate: &crate::portal::tasks::ReadyGate,

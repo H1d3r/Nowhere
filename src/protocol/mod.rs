@@ -1,7 +1,7 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
-//! Fixed Nowhere wire codecs.
+//! Nowhere wire codecs and the shared application protocol identifier.
 
 mod auth;
 mod datagram;
@@ -43,5 +43,4 @@ pub use uot::{
     UOT_HEADER_LEN, UOT_PACKET_MAX, encode_udp_packet, encode_udp_packet_header, read_udp_packet,
     read_udp_packet_into, write_udp_packet,
 };
-/// The sole ALPN accepted by Nowhere 2 carriers.
 pub const ALPN: &[u8] = b"nw2";

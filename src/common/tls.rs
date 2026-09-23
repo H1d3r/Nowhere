@@ -25,14 +25,10 @@ const PORTAL_QUERY_PARAMETERS: &[&str] = &[
     "log", "net", "tls", "crt", "key", "rate", "etar", "dial", "socks",
 ];
 
-/// TLS mode selected by the `tls` URL query parameter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TLSMode {
-    /// Parsed `tls=0`; currently rejected before server configuration is built.
     None,
-    /// Generate an in-memory self-signed certificate.
     SelfSigned,
-    /// Load a certificate and key from `crt` and `key` URL query parameters.
     CATrusted,
 }
 
@@ -46,7 +42,6 @@ impl fmt::Display for TLSMode {
     }
 }
 
-/// Builds rustls and QUIC TLS server configuration for supported protocol versions.
 pub fn new_server_configs(
     parsed_url: &Url,
     logger: Logger,

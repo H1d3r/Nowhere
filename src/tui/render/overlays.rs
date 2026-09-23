@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Help and configuration overlays for the terminal dashboard.
+
 use super::*;
 use ratatui::widgets::Clear;
 

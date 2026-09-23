@@ -30,7 +30,6 @@ const FLOW_REJECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 const UDP_REASSEMBLY_SLOTS: usize = 64;
 const UDP_REASSEMBLY_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Per-authenticated QUIC connection state.
 pub(super) struct PortalSession {
     portal: Arc<PortalInner>,
     conn: Connection,
@@ -70,7 +69,6 @@ impl PortalSession {
         }
     }
 
-    /// Creates session state for one authenticated QUIC connection.
     pub(super) fn new(portal: Arc<PortalInner>, conn: Connection, session_key: SessionKey) -> Self {
         let (udp_ready_tx, udp_ready_rx) = mpsc::channel(64);
         let udp_reassembly_config = ReassemblyConfig {
@@ -101,15 +99,11 @@ impl PortalSession {
         self.quic_generation.load(Ordering::Acquire)
     }
 
-    /// Handles one reliable QUIC flow-control stream.
     pub(super) async fn handle_stream(self: Arc<Self>, send: SendStream, recv: RecvStream) {
         self.handle_buffered_stream(send, BufReader::new(recv))
             .await;
     }
 
-    /// Continues parsing the first bidi stream after its 32-byte auth prefix.
-    /// Ending that stream after authentication alone remains a valid warm
-    /// carrier; any trailing bytes start the first flow immediately.
     pub(super) async fn handle_first_stream(
         self: Arc<Self>,
         mut send: SendStream,
@@ -369,7 +363,6 @@ impl PortalSession {
         self.udp_ready_rx.lock().await.take()
     }
 
-    /// Closes all UDP flows owned by the session exactly once.
     pub(super) fn close(&self) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;

@@ -30,15 +30,10 @@ const PORTAL_QUERY_PARAMETERS: &[&str] = &[
 const PORTAL_UPSTREAM_PARAMETERS: &[&str] = &["up", "down", "mux", "sni", "pin"];
 
 impl Portal {
-    /// Builds a portal using the listen host encoded in the URL.
     pub fn new(parsed_url: Url, logger: Logger) -> Result<Self> {
         Self::new_with_listen_host(parsed_url, None, logger)
     }
 
-    /// Builds a portal while optionally overriding the URL listen host.
-    ///
-    /// Tests use the override to bind ephemeral local endpoints without
-    /// changing the URL-derived visible configuration.
     pub fn new_with_listen_host(
         parsed_url: Url,
         listen_host: Option<&str>,

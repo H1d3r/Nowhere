@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux driver wiring and flow-controlled outbound data submission.
+
 use std::io;
 use std::sync::Arc;
 

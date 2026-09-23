@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Logical-flow claims, admission limits, and QUIC stream credits.
+
 use super::*;
 
 impl PairingRegistry {
@@ -14,9 +16,6 @@ impl PairingRegistry {
         session_admission: Option<Arc<Semaphore>>,
     ) -> Result<(u64, bool), PairingError> {
         let mut claims = self.claims.lock().expect("flow claim registry poisoned");
-        // The claims lock is the drain/admission linearization point. Once
-        // draining flips this flag while holding the same lock, neither an
-        // OPEN nor a late ATTACH can create or complete another flow.
         if !self.accepting.load(Ordering::Acquire) {
             return Err(PairingError::new(
                 FlowErrorCode::FlowLimit,
@@ -110,13 +109,9 @@ impl PairingRegistry {
     }
 
     pub(in crate::portal) fn quic_stream_credit(&self, session_id: SessionKey) -> quinn::VarInt {
-        // Quinn preallocates stream state. Keep a sliding headroom for setup,
-        // instead of advertising a huge fixed count or capping active flows.
         let live = self
             .quic_flow_counter(session_id)
             .map_or(0, |count| count.load(Ordering::Relaxed));
-        // Quinn batches MAX_STREAMS updates at 1/8 of its window. Headroom
-        // must grow too, otherwise a fixed reserve eventually stalls updates.
         quinn::VarInt::from_u32(
             live.saturating_add((live / 4).max(64))
                 .min(SESSION_FLOW_RESOURCE_LIMIT) as u32,
@@ -152,9 +147,6 @@ impl PairingRegistry {
         epoch: u64,
         quic_generations: Vec<u64>,
     ) -> Result<FlowLease, PairingError> {
-        // `links -> claims` is the linearization barrier shared with QUIC
-        // replacement.  A generation cannot become active after it has been
-        // replaced, and replacement cannot miss a claim that just activated.
         let links = self.links.lock().expect("link registry poisoned");
         let active_generation = links
             .get(&key.session_id)
@@ -184,10 +176,6 @@ impl PairingRegistry {
             })?;
             claim.epoch = epoch;
             claim.active = true;
-            // A pending claim can survive a QUIC-carrier replacement while its
-            // TLS/TCP half remains valid.  Once pairing completes, ownership
-            // must describe only the carriers that formed this flow; otherwise
-            // dropping the replaced carrier can cancel the new flow.
             claim.quic_generations = quic_generations;
             claim.cancel.clone()
         };

@@ -23,7 +23,6 @@ use crate::common::{LatencyGuard, LatencyTracker};
 use crate::common::{dial_tcp_from_local_ip, dial_udp_from_local_ip};
 use crate::protocol::Target;
 
-/// Direct-or-SOCKS outbound connector shared by every relay path.
 #[derive(Clone, Debug)]
 pub(crate) struct OutboundDialer {
     dialer_ip: String,
@@ -59,8 +58,6 @@ impl OutboundDialer {
         }
     }
 
-    /// Dials a validated binary protocol target without reparsing host/port
-    /// text at the Portal relay boundary.
     pub(crate) async fn dial_tcp_target(
         &self,
         target: &Target,
@@ -88,7 +85,6 @@ impl OutboundDialer {
             .map_err(|_| anyhow!("common::socks::OutboundDialer::dial_tcp: dial timeout"))?
     }
 
-    /// Opens a UDP path for a validated binary protocol target.
     pub(crate) async fn dial_udp_target(
         &self,
         target: &Target,
@@ -202,7 +198,6 @@ impl OutboundDialer {
     }
 }
 
-/// TCP target stream with an optional live SOCKS-control RTT sample.
 pub(crate) struct OutboundTcpStream {
     stream: TcpStream,
     _latency: Option<LatencyGuard>,

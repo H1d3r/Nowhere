@@ -14,14 +14,12 @@ use tokio::task::AbortHandle;
 const READY_GATE_CLOSED: usize = 1usize << (usize::BITS - 1);
 const READY_GATE_COUNT: usize = READY_GATE_CLOSED - 1;
 
-/// Lock-free linearization gate for committing READY results.
 #[derive(Default)]
 pub(super) struct ReadyGate {
     state: AtomicUsize,
 }
 
 impl ReadyGate {
-    /// Reserves a READY commit that linearizes before shutdown admission closes.
     pub(super) fn try_enter(&self) -> Option<ReadyPermit<'_>> {
         let mut state = self.state.load(Ordering::Acquire);
         loop {
@@ -40,7 +38,6 @@ impl ReadyGate {
         }
     }
 
-    /// Prevents all commits that did not already reserve a permit.
     pub(super) fn close(&self) {
         self.state.fetch_or(READY_GATE_CLOSED, Ordering::AcqRel);
     }
@@ -78,8 +75,6 @@ impl FlowTaskTracker {
         self.spawn_or_return(future).is_none()
     }
 
-    /// Spawns while admission is open, or returns ownership to the caller so
-    /// it can complete protocol cleanup instead of silently dropping a flow.
     pub(super) fn spawn_or_return<F>(self: &Arc<Self>, future: F) -> Option<F>
     where
         F: Future<Output = ()> + Send + 'static,
@@ -92,8 +87,6 @@ impl FlowTaskTracker {
         self.active.fetch_add(1, Ordering::AcqRel);
         let (registered, registration) = oneshot::channel();
         let tracker = self.clone();
-        // Capture the guard in the task future itself. If Tokio aborts the task
-        // before its first poll, dropping that future still balances `active`.
         let completion = CompletionGuard { tracker, id };
         let task = tokio::spawn(async move {
             let _completion = completion;

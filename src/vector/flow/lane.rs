@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Physical carrier acquisition and preparation of TCP flow lanes.
+
 use super::*;
 
 pub(in crate::vector) struct PhysicalLane {

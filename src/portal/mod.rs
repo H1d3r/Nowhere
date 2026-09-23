@@ -35,7 +35,6 @@ struct UdpFlowLimits {
     queue_bytes: usize,
 }
 
-/// Portal server configured from a `portal://` URL.
 #[derive(Clone)]
 pub struct Portal {
     inner: Arc<PortalInner>,
@@ -58,7 +57,6 @@ struct PortalInner {
     logger: Logger,
     lifecycle: Arc<Lifecycle>,
     telemetry: Arc<TelemetryHub>,
-    /// Cancels only work that has not committed a READY result yet.
     drain: CancellationToken,
     runtime: PortalRuntimeConfig,
     stats: Arc<Stats>,

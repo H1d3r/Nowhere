@@ -29,7 +29,6 @@ use super::config::PortalClientConfig;
 
 pub(super) const EXPORTER_LABEL: &[u8] = b"EXPORTER-Nowhere-Auth";
 
-/// Rustls configuration and identity shared by both client carrier types.
 #[derive(Clone)]
 pub(super) struct ClientTls {
     rustls: Arc<rustls::ClientConfig>,

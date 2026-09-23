@@ -32,11 +32,6 @@ enum InputMessage {
     Error(String),
 }
 
-/// Runs the TUI with a supplied event stream.
-///
-/// `commands` is used by the IPC manager to upgrade the selected instance to
-/// the detail subscription while leaving all other connections in summary
-/// mode.  Passing `None` is useful for renderer demos and tests.
 pub async fn run_with_receiver(
     events: mpsc::Receiver<UiEvent>,
     commands: Option<mpsc::UnboundedSender<UiCommand>>,

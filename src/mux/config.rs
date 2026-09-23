@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux resource limits, configuration defaults, and validation.
+
 use std::io;
 use std::time::Duration;
 

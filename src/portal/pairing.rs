@@ -81,7 +81,6 @@ pub(super) struct PairingRegistry {
     pub(super) timeout: Duration,
 }
 
-// Bounded failure-history cache, independent of live/pending flow admission.
 const MAX_REJECTION_TOMBSTONES: usize = 1024;
 
 impl PairingRegistry {
@@ -179,9 +178,6 @@ impl PairingRegistry {
         Ok(())
     }
 
-    /// Terminates a setup attempt and delivers the exact failure to an already
-    /// selected downlink.  If OPEN failed before ATTACH arrived, retain a short
-    /// tombstone so the later selected downlink receives the same result.
     pub(super) async fn reject_flow_setup<S: Into<SessionKey>>(
         self: &Arc<Self>,
         session_id: S,

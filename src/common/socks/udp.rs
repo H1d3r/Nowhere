@@ -13,7 +13,6 @@ use tokio::net::{TcpStream, UdpSocket};
 use super::protocol::parse_udp_header;
 use crate::common::LatencyGuard;
 
-/// UDP socket facade that preserves payload-only send/receive semantics.
 pub(crate) enum OutboundUdpSocket {
     Direct(UdpSocket),
     Socks(SocksUdpAssociation),

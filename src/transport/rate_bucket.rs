@@ -10,7 +10,6 @@ const UNLIMITED_BYTES_PER_SECOND: i64 = 1_i64 << 40;
 
 static TOKEN_BUCKET_START: OnceLock<Instant> = OnceLock::new();
 
-/// Mutex-protected token bucket with deterministic testable time input.
 #[derive(Debug)]
 pub struct TokenBucket {
     inner: Mutex<TokenBucketInner>,
@@ -25,7 +24,6 @@ struct TokenBucketInner {
 }
 
 impl TokenBucket {
-    /// Creates a bucket with the given refill rate and burst capacity.
     pub fn new(rate: i64, capacity: i64) -> Self {
         let rate = normalize_rate(rate);
         let capacity = capacity.max(0);
@@ -39,7 +37,6 @@ impl TokenBucket {
         }
     }
 
-    /// Applies a new rate/capacity after first refilling to `now`.
     pub fn configure(&self, now: Duration, rate: i64, capacity: i64) {
         let mut inner = self.inner.lock().expect("token bucket poisoned");
         inner.refill(now);
@@ -50,14 +47,12 @@ impl TokenBucket {
         }
     }
 
-    /// Returns the current budget after refilling to `now`.
     pub fn budget(&self, now: Duration) -> i64 {
         let mut inner = self.inner.lock().expect("token bucket poisoned");
         inner.refill(now);
         inner.budget
     }
 
-    /// Debits bytes immediately after refilling to `now`.
     pub fn spend(&self, now: Duration, bytes: i64) {
         if bytes <= 0 {
             return;
@@ -67,10 +62,6 @@ impl TokenBucket {
         inner.budget -= bytes;
     }
 
-    /// Reserves bytes and returns the required delay, if any.
-    ///
-    /// When the bucket is short, the internal clock is advanced by the delay so
-    /// concurrent reservations queue behind each other.
     pub fn reserve(&self, now: Duration, bytes: i64) -> Duration {
         if bytes <= 0 {
             return Duration::ZERO;
@@ -89,7 +80,6 @@ impl TokenBucket {
         inner.updated_at.saturating_sub(now)
     }
 
-    /// Computes a delay for availability without spending the budget.
     pub fn delay_until_available(
         &self,
         now: Duration,
@@ -108,7 +98,6 @@ impl TokenBucket {
         delay.max(min_delay)
     }
 
-    /// Restores the bucket to full capacity at `now`.
     pub fn reset(&self, now: Duration) {
         let mut inner = self.inner.lock().expect("token bucket poisoned");
         inner.budget = inner.capacity;

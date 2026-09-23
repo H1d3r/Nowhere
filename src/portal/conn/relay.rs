@@ -74,7 +74,6 @@ fn carrier_name(carrier: Carrier) -> &'static str {
     }
 }
 
-/// RAII guard that keeps active TCP/UDP session counters balanced.
 struct SessionGuard {
     portal: Arc<PortalInner>,
     is_udp: bool,

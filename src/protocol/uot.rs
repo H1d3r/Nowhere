@@ -7,12 +7,9 @@ use anyhow::{Context, Result, bail};
 use bytes::Buf;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Fixed UoT packet header length.
 pub const UOT_HEADER_LEN: usize = 2;
-/// Largest packet representable by the UoT length prefix.
 pub const UOT_PACKET_MAX: usize = u16::MAX as usize;
 
-/// Encodes only the two-byte packet length header.
 pub fn encode_udp_packet_header(payload_len: usize) -> Result<[u8; UOT_HEADER_LEN]> {
     if payload_len > UOT_PACKET_MAX {
         bail!("protocol::uot::encode_udp_packet_header: payload too large: {payload_len}");
@@ -20,7 +17,6 @@ pub fn encode_udp_packet_header(payload_len: usize) -> Result<[u8; UOT_HEADER_LE
     Ok((payload_len as u16).to_be_bytes())
 }
 
-/// Encodes one complete UoT packet.
 pub fn encode_udp_packet(payload: &[u8]) -> Result<Vec<u8>> {
     let header = encode_udp_packet_header(payload.len())?;
     let mut output = Vec::with_capacity(UOT_HEADER_LEN + payload.len());
@@ -29,7 +25,6 @@ pub fn encode_udp_packet(payload: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-/// Writes one UoT packet without concatenating its payload into another buffer.
 pub async fn write_udp_packet<W: AsyncWrite + Unpin>(writer: &mut W, payload: &[u8]) -> Result<()> {
     let header = encode_udp_packet_header(payload.len())?;
     let mut frame = Buf::chain(&header[..], payload);
@@ -39,7 +34,6 @@ pub async fn write_udp_packet<W: AsyncWrite + Unpin>(writer: &mut W, payload: &[
         .context("protocol::uot::write_udp_packet: failed to write packet")
 }
 
-/// Reads one UoT packet, returning `None` only for a clean EOF before a header.
 pub async fn read_udp_packet<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Option<Vec<u8>>> {
     let mut payload = Vec::new();
     let Some(payload_len) = read_udp_packet_into(reader, &mut payload).await? else {
@@ -49,9 +43,6 @@ pub async fn read_udp_packet<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Opt
     Ok(Some(payload))
 }
 
-/// Reads into a reusable per-flow buffer and returns the complete packet length.
-///
-/// `Some(0)` is a legal zero-length UDP packet; only `None` means clean EOF.
 pub async fn read_udp_packet_into<R: AsyncRead + Unpin>(
     reader: &mut R,
     payload: &mut Vec<u8>,

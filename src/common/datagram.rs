@@ -10,14 +10,12 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::protocol::{FlowId, UDP_HEADER_LEN, encode_udp_data_header, encode_udp_fragments};
 
-/// Result of one atomic UDP packet send attempt sequence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UdpDatagramSend {
     Sent,
     DroppedTooLarge,
 }
 
-/// One queued UDP payload holding its share of the connection byte budget.
 pub(crate) struct BudgetedDatagram {
     pub(crate) payload: Bytes,
     _permit: OwnedSemaphorePermit,
@@ -32,7 +30,6 @@ impl BudgetedDatagram {
     }
 }
 
-/// Reserves at least one unit so legal empty UDP packets remain bounded too.
 pub(crate) fn reserve_udp_budget(
     budget: Arc<Semaphore>,
     payload_len: usize,
@@ -41,8 +38,6 @@ pub(crate) fn reserve_udp_budget(
     budget.try_acquire_many_owned(units).ok()
 }
 
-/// Sends one UDP packet, re-planning from fragment zero with a fresh packet ID
-/// if Quinn reports a concurrent DATAGRAM MTU reduction.
 pub(crate) async fn send_quic_udp_packet(
     conn: &quinn::Connection,
     flow_id: FlowId,

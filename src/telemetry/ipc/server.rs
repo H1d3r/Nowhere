@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Local telemetry listener lifecycle and client subscription handling.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +19,6 @@ use crate::telemetry::{
     ClientMessage, Hello, ServerMessage, Subscription, TELEMETRY_PROTOCOL, TelemetryHub,
 };
 
-/// Publishes one process hub to any number of read-only TUI clients.
 pub(crate) struct TelemetryServer {
     listener: Listener,
     pub(super) endpoint: String,

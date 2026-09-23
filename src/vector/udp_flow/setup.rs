@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! UDP tunnel lane preparation and reliable flow setup.
+
 use super::*;
 
 pub(crate) async fn open_udp(

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux frame reception and logical-flow dispatch.
+
 use std::io;
 use std::sync::Arc;
 
@@ -72,8 +74,6 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
         }
         credit.add_permits(extra_credit);
     }
-    // RESET removes active flow state, but cannot remove an already queued
-    // stream. Bound pending delivery separately and never block the reader.
     shared.incoming_tx.try_send(stream).map_err(|_| closed())
 }
 
@@ -82,14 +82,10 @@ async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes)
     match shared.admit_receive(header.flow_id, charge)? {
         ReceiveTarget::Deliver(inbound) => {
             if inbound.send(Inbound::Data { payload, charge }).is_err() {
-                // The local read half may be abandoned while its writer is still
-                // live. Return credit for discarded bytes without killing other flows.
                 shared.release_receive(header.flow_id, charge);
             }
         }
         ReceiveTarget::Discard => {
-            // Keep the per-stream debit so a peer cannot send an unbounded
-            // amount after the application has finished with this flow.
             shared.release_connection_receive(charge);
         }
     }
