@@ -28,7 +28,6 @@ async fn authenticate_test_connection(portal: &Portal, connection: &quinn::Conne
         .await
         .unwrap();
     auth_send.finish().unwrap();
-    // Authentication raises the conservative pre-auth stream limit.
     timeout(Duration::from_secs(2), connection.open_bi())
         .await
         .unwrap()
@@ -177,8 +176,6 @@ async fn first_stream_carries_auth_and_flow_while_pre_auth_datagrams_are_dropped
     let (portal, server_endpoint, client_endpoint, connection, shutdown, server_task) =
         connect_test_quic().await;
 
-    // This packet precedes the authentication boundary and must never be
-    // retained for replay after the flow becomes READY.
     for packet_id in 1..=1_100 {
         send_udp_data(&connection, 78, packet_id, b"early");
     }

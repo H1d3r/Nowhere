@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Asymmetric Portal flow carriers tests.
+
 use std::net::SocketAddr;
 use std::time::Duration;
 
@@ -210,7 +212,6 @@ async fn asymmetric_udp_flows_pair_in_both_directions() {
     let session = [0x6b; 16];
     authenticate_quic(&portal, &quic, session).await;
 
-    // QUIC upload, TLS/TCP download.
     let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
     let echo = tokio::spawn(async move {
@@ -251,7 +252,6 @@ async fn asymmetric_udp_flows_pair_in_both_directions() {
     );
     echo.await.unwrap();
 
-    // TLS/TCP upload, QUIC download.
     let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let target_addr = target.local_addr().unwrap();
     let echo = tokio::spawn(async move {

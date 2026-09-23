@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Tests for multi-address listener binding and startup failure cleanup.
+
 use super::{bind_carrier, io_error_is_family_unavailable};
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, TcpListener};

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Tests for TLS Mux slot allocation, reuse, pressure, and initialization cancellation.
+
 use super::*;
 use tokio::io::AsyncReadExt;
 

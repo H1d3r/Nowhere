@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Tests for response-tail flushing across direct, chained, and Morph TLS relays.
+
 use super::*;
 use crate::common::{LogLevel, Logger};
 use crate::portal::Portal;
@@ -27,7 +32,6 @@ async fn tls_response_tail(morph: bool, upstream: bool) {
             .unwrap()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        // A bounded carrier forces TLS to retain ciphertext under backpressure.
         let (client_io, server_io) = tokio::io::duplex(4096);
         let keys = morph.then(|| MorphKeys::derive(b"secret"));
         let (client_io, server_io) = tokio::join!(
@@ -58,7 +62,6 @@ async fn tls_response_tail(morph: bool, upstream: bool) {
         let payload: Vec<u8> = (0..128 * 1024).map(|i| (i % 251) as u8).collect();
         let producer = async {
             source.write_all(&payload).await.unwrap();
-            // As with HTTP keep-alive, no EOF or next request flushes the tail.
             std::future::pending::<()>().await;
         };
         let (mut client_read, mut client_write, target_read, target_write): (

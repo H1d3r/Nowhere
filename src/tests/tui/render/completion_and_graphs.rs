@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Completed access records and graph rendering tests.
+
 use super::*;
 
 #[test]

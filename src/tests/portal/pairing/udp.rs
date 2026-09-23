@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Tests for UoT flow admission without reserving QUIC stream credits.
+
 use super::*;
 
 #[tokio::test]

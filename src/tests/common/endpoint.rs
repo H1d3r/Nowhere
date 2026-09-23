@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Portal endpoint parsing and compatibility tests.
+
 use super::*;
 
 fn parse(raw: &str, wildcard: bool) -> Result<ServiceEndpoint> {

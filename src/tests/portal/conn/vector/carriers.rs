@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Portal/Vector carrier combinations, Morph, and Mux tests.
+
 use super::*;
 
 #[tokio::test]
@@ -54,7 +56,6 @@ async fn mux_symmetric_carriers_relay_tcp_and_fragmented_udp() {
         });
         let udp_target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let udp_address = udp_target.local_addr().unwrap();
-        // Above QUIC's datagram MTU, below macOS's default UDP socket limit.
         let payload = vec![0x5a; 8 * 1024];
         let echoed = payload.clone();
         let udp_echo = tokio::spawn(async move {
@@ -109,8 +110,6 @@ async fn quic_full_duplex_tcp_exceeds_each_direction_credit_window() {
 }
 
 async fn full_duplex_exceeds_each_direction_credit_window(carrier: &str) {
-    // The throughput profile grants 16 MiB per stream. Cross that boundary in
-    // both directions so progress depends on returning Mux credit.
     const DIRECTION_BYTES: usize = 20 * 1024 * 1024;
 
     {
@@ -225,8 +224,6 @@ async fn mux_hundreds_of_tcp_flows_share_at_most_eight_carriers() {
         let mut flows = Vec::with_capacity(FLOW_COUNT);
         let mut opening = tokio::task::JoinSet::new();
         for _ in 0..FLOW_COUNT {
-            // Exercise concurrent cold admission without overflowing the OS
-            // target listener's SYN backlog when the full suite runs in parallel.
             if opening.len() == 32 {
                 flows.push(opening.join_next().await.unwrap().unwrap());
             }

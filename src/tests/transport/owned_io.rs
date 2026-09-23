@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Owned payload handoff through buffered I/O tests.
+
 use super::*;
 use crate::mux::{MuxConfig, MuxHandle};
 

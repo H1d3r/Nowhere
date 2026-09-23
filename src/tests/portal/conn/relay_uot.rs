@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! UDP relay setup results and packet framing tests.
+
 use super::*;
 use crate::protocol::{FlowErrorCode, read_flow_result};
 use std::pin::Pin;

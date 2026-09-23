@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Tests for IPv6-only listeners coexisting with IPv4 on the same port.
+
 use super::*;
 
 #[tokio::test]

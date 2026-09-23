@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Morph key derivation and interoperability vectors tests.
+
 use super::super::*;
 
 fn hex<const N: usize>(value: &str) -> [u8; N] {

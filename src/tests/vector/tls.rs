@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! TLS verifier selection and certificate validation tests.
+
 use super::*;
 use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::time::Duration;

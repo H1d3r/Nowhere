@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Vector route policies and carrier fallback tests.
+
 use super::*;
 
 #[tokio::test]
@@ -106,7 +108,6 @@ async fn mix_mix_retries_quic_after_tls_fails_before_commit() {
         stream.write_all(b"pong").await.unwrap();
     });
 
-    // seed=3 and initial flow_id=1 produce the TLS-first SplitMix64 bit.
     let mut session_id = [0u8; crate::protocol::SESSION_ID_LEN];
     session_id[0] = 3;
     let client = mix_test_client(portal_port, session_id);
@@ -196,7 +197,6 @@ async fn mix_mix_retries_tls_after_quic_fails_before_commit() {
         stream.write_all(b"pong").await.unwrap();
     });
 
-    // seed=0 and initial flow_id=1 produce the QUIC-first SplitMix64 bit.
     let client = mix_test_client(portal_port, [0; crate::protocol::SESSION_ID_LEN]);
     let mut tunnel = timeout(
         TEST_TIMEOUT,

@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Transport flow-control compatibility with Portal capacity tests.
+
 #[test]
 fn transport_flow_control_matches_authenticated_portal_capacity() {
     let flow_control = crate::transport::transport_flow_control().unwrap();

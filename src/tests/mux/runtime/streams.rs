@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux stream I/O, backpressure, and bidirectional transfer tests.
+
 use super::*;
 
 #[tokio::test]

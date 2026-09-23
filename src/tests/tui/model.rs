@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Dashboard instance state, histories, and filtering tests.
+
 use super::*;
 
 fn meta(id: &str, pid: u32) -> InstanceMeta {

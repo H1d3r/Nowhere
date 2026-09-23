@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! UDP frame codecs and bounded fragment reassembly tests.
+
 use std::time::{Duration, Instant};
 
 use crate::protocol::MAX_FLOW_ID;
@@ -175,9 +177,7 @@ fn lazy_fragment_plan_materializes_only_requested_frames() {
         };
         assert_eq!(fragment.fragment_index, 0);
         assert_eq!(fragment.fragment_count, 3);
-        // Leaving this scope abandons two frames without materializing them.
     }
-    // The compatibility collector and lazy planner must remain wire-identical.
     let collected = encode_udp_fragments(7, 9, &payload, 1200)
         .unwrap()
         .collect::<Vec<_>>();

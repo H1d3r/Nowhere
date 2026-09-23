@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Configuration display, wrapping, and scrolling tests.
+
 use super::*;
 
 #[test]

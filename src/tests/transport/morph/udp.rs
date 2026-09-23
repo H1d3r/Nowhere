@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Morph UDP masking and segmented packet I/O tests.
+
 use std::collections::VecDeque;
 use std::future::poll_fn;
 use std::io::{self, IoSliceMut};
@@ -306,8 +308,6 @@ async fn udp_reuses_buffers_without_relaxing_current_receive_bounds() {
         .unwrap();
     let (small_wire, _) = raw.sent.lock().unwrap().pop().unwrap();
     assert_eq!(small_wire.len(), NONCE_LEN + 1);
-    // Three one-byte GRO payloads would fit the decoded target, but the
-    // claimed wire length exceeds this call's receive slice (4 + 2 * 12).
     raw.receive.lock().unwrap().push_back((
         vec![0; NONCE_LEN],
         RecvMeta {

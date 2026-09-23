@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Telemetry message conversion and TUI client events tests.
+
 use super::*;
 use crate::telemetry::{
     AccessFinished, AccessStarted, Hello, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage,

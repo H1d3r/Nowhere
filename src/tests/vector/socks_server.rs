@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! SOCKS5 ingress requests and UDP association routing tests.
+
 use super::*;
 use std::time::Duration;
 

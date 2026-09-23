@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Dashboard keyboard navigation and controls tests.
+
 use super::*;
 use crate::tui::model::{FeedKind, Focus, InstanceMeta, InstanceRole, Lifecycle, Page, UiEvent};
 

@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Carrier route selection policies tests.
+
 use super::*;
 
 use crate::protocol::Carrier::{Quic as Q, TlsTcp as T};

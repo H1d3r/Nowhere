@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Mux flow admission and resource limits tests.
+
 use super::*;
 
 #[tokio::test]
@@ -12,7 +14,6 @@ async fn idle_carrier_flushes_data_without_a_followup_frame() {
         let (server, mut incoming) = MuxHandle::start(right, MuxConfig::default()).unwrap();
         let mut outgoing = client.open_stream(1).await.unwrap();
         let mut accepted = incoming.accept().await.unwrap().unwrap();
-        // No flush, FIN, or subsequent frame may be needed to deliver DATA.
         outgoing.write_all(b"response tail").await.unwrap();
         let mut received = [0; 13];
         accepted.read_exact(&mut received).await.unwrap();

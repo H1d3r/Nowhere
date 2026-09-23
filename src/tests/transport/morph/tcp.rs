@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Morph TCP masking and partial I/O tests.
+
 use std::collections::VecDeque;
 use std::io;
 use std::pin::Pin;

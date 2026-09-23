@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Upstream round-trip-time tracking tests.
+
 use super::*;
 
 #[test]
@@ -33,7 +35,6 @@ fn valid_sub_millisecond_samples_round_up_away_from_zero() {
 #[cfg(target_os = "linux")]
 #[test]
 fn tcp_info_accepts_a_kernel_prefix_containing_rtt() {
-    // SAFETY: tcp_info contains only integer fields, so zero is valid.
     let mut info = unsafe { MaybeUninit::<libc::tcp_info>::zeroed().assume_init() };
     info.tcpi_rtt = 750;
     let rtt_end = std::mem::offset_of!(libc::tcp_info, tcpi_rtt) + size_of::<u32>();

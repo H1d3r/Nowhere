@@ -1,3 +1,8 @@
+// Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
+// SPDX-License-Identifier: GPL-3.0-only
+
+//! Telemetry registry discovery, frame I/O, and client lifecycle tests.
+
 use std::time::Duration;
 
 use tokio::io::AsyncWriteExt;
@@ -373,7 +378,6 @@ async fn failed_publication_rolls_back_only_owned_resources() {
     assert!(!path.with_extension("pending").exists());
     #[cfg(unix)]
     assert!(!std::path::Path::new(&endpoint).exists());
-    // An existing pending file is not owned by a failed create_new attempt.
     let pending = path.with_extension("pending");
     let seed = path.with_extension("seed");
     local::publish(&seed, b"{}").unwrap();

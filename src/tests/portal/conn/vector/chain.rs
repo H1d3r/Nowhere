@@ -1,6 +1,8 @@
 // Copyright (C) 2026 NodePassProject <https://github.com/NodePassProject>
 // SPDX-License-Identifier: GPL-3.0-only
 
+//! Native Portal chaining across different carriers tests.
+
 use super::*;
 
 #[tokio::test]
