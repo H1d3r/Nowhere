@@ -1,3 +1,5 @@
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
 use super::*;
 
 fn encode_udp_packet(address: &SocksAddress, payload: &[u8]) -> Result<Vec<u8>> {
