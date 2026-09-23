@@ -22,7 +22,7 @@ pub const MAX_PORTAL_HOPS: u8 = 7;
 pub type SessionId = [u8; SESSION_ID_LEN];
 /// Flow identifier scoped to one logical session.
 pub type FlowId = u32;
-/// Largest logical-flow identifier representable by every V2 carrier.
+/// Largest logical-flow identifier representable by every carrier.
 pub const MAX_FLOW_ID: FlowId = 0x3fff_ffff;
 
 /// Relationship of the current physical lane to a logical flow.

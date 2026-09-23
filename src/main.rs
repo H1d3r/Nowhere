@@ -173,7 +173,7 @@ fn parse_command_url(raw: &str) -> Result<Url> {
     }
 }
 
-/// Converts the V1 compact wildcard alias into the canonical V2 host form.
+/// Converts the legacy compact wildcard alias into the canonical host form.
 fn normalize_legacy_empty_portal_host(raw: &str) -> Option<String> {
     let prefix = "portal://";
     let rest = raw.strip_prefix(prefix)?;
