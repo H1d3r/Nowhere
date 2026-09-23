@@ -3,6 +3,7 @@
 
 //! Native Rust client exposed by the `vector://` command URL.
 
+mod client;
 mod config;
 mod event;
 pub(crate) mod flow;
@@ -22,6 +23,7 @@ use tokio::time::{Instant, timeout_at};
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+pub(crate) use self::client::PortalClient;
 pub(crate) use self::config::PortalClientConfig;
 use self::config::VectorConfig;
 use self::flow_id::FlowIdAllocator;
@@ -59,132 +61,6 @@ pub(super) struct VectorInner {
     socks_client_admission: Arc<Semaphore>,
     socks_udp_target_admission: Arc<Semaphore>,
     shutdown: CancellationToken,
-}
-
-/// Authenticated, transport-only Portal client shared by Vector and chained
-/// Portal egress. It owns no listener and performs no SOCKS conversion.
-pub(crate) struct PortalClient {
-    config: PortalClientConfig,
-    telemetry: Arc<TelemetryHub>,
-    stats: Arc<Stats>,
-    account_stats: bool,
-    latency: Arc<LatencyTracker>,
-    flow_ids: Arc<FlowIdAllocator>,
-    tls_manager: Arc<TlsManager>,
-    quic: Arc<QuicManager>,
-    route_seed: u64,
-    shutdown: CancellationToken,
-}
-
-impl PortalClient {
-    pub(crate) fn new(
-        config: PortalClientConfig,
-        credentials: &Credentials,
-        stats: Arc<Stats>,
-        account_stats: bool,
-        telemetry: Arc<TelemetryHub>,
-        shutdown: CancellationToken,
-    ) -> Result<Arc<Self>> {
-        let mut session_id = [0u8; SESSION_ID_LEN];
-        getrandom::fill(&mut session_id).map_err(|error| {
-            anyhow::anyhow!(
-                "vector::PortalClient::new: failed to generate logical session ID: {error}"
-            )
-        })?;
-        Self::with_session_id(
-            config,
-            credentials,
-            stats,
-            account_stats,
-            telemetry,
-            shutdown,
-            session_id,
-        )
-    }
-
-    pub(crate) fn with_session_id(
-        config: PortalClientConfig,
-        credentials: &Credentials,
-        stats: Arc<Stats>,
-        account_stats: bool,
-        telemetry: Arc<TelemetryHub>,
-        shutdown: CancellationToken,
-        session_id: [u8; SESSION_ID_LEN],
-    ) -> Result<Arc<Self>> {
-        let tls = ClientTls::new(&config)
-            .context("vector::PortalClient::new: failed to build client TLS policy")?;
-        let route_seed = route::seed_from_session(session_id);
-        let latency = LatencyTracker::new();
-        let signals = ClientSignals::new(stats.clone(), telemetry.clone(), latency.clone());
-        let tls_manager = TlsManager::new(
-            &config,
-            tls.clone(),
-            credentials,
-            session_id,
-            signals.clone(),
-        );
-        let quic = QuicManager::new(
-            config.clone(),
-            tls,
-            credentials,
-            session_id,
-            signals,
-            shutdown.clone(),
-        );
-        Ok(Arc::new(Self {
-            config,
-            telemetry,
-            stats,
-            account_stats,
-            latency,
-            flow_ids: FlowIdAllocator::new(),
-            tls_manager,
-            quic,
-            route_seed,
-            shutdown,
-        }))
-    }
-
-    pub(crate) fn endpoint(&self) -> String {
-        self.config.endpoint()
-    }
-
-    pub(crate) fn dialer_ip(&self) -> &str {
-        &self.config.dialer_ip
-    }
-
-    pub(crate) fn effective_route(&self) -> String {
-        self.config.effective_route()
-    }
-
-    pub(crate) async fn open_tcp(
-        self: &Arc<Self>,
-        target: &crate::protocol::Target,
-        hops: u8,
-    ) -> std::result::Result<flow::TcpTunnel, flow::OpenFlowError> {
-        flow::open_tcp(self.clone(), target, hops).await
-    }
-
-    pub(crate) async fn open_udp(
-        self: &Arc<Self>,
-        target: &crate::protocol::Target,
-        hops: u8,
-    ) -> std::result::Result<udp_flow::UdpTunnel, flow::OpenFlowError> {
-        udp_flow::open_udp(self.clone(), target, hops).await
-    }
-
-    pub(crate) async fn refresh_latency(&self) {
-        self.quic.refresh_latency().await;
-    }
-
-    pub(crate) fn ping_ms(&self) -> u64 {
-        self.latency.current_ms()
-    }
-
-    pub(crate) async fn close(&self, deadline: Instant) {
-        self.shutdown.cancel();
-        self.quic.close(deadline).await;
-    }
 }
 
 impl Vector {
