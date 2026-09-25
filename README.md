@@ -12,8 +12,10 @@
 </p>
 
 <p align="center">
-  <a href="#how-it-works">Architecture</a> &middot;
   <a href="#quick-start">Quick start</a> &middot;
+  <a href="#clients">Clients</a> &middot;
+  <a href="docs/clients.md#link-format">Link format</a> &middot;
+  <a href="#how-it-works">Architecture</a> &middot;
   <a href="#live-operations">Live operations</a> &middot;
   <a href="docs/README.md">Documentation</a> &middot;
   <a href="docs/protocol.md">Wire protocol</a>
@@ -31,6 +33,71 @@ Each flow selects its uplink and downlink independently.
 | TCP and UDP | SOCKS5 CONNECT and UDP ASSOCIATE are both supported |
 | Native chaining | Portal forwards directly to Portal with no local proxy loop |
 | Built-in telemetry | The same binary discovers and inspects live instances |
+
+## Quick start
+
+Use a stable Rust toolchain on a supported target.
+
+### 1. Build
+
+```bash
+cargo build --release --locked
+```
+
+### 2. Start Portal
+
+Listen on TLS/TCP and QUIC/UDP at port `2000`:
+
+```bash
+./target/release/nowhere 'portal://change-me@127.0.0.1:2000'
+```
+
+### 3. Start Vector
+
+Expose SOCKS5 on `127.0.0.1:1080`:
+
+```bash
+./target/release/nowhere \
+  'vector://change-me@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
+```
+
+More examples are available in [Configuration](docs/configuration.md) and the
+[extended quick start](docs/quick-start.md).
+
+### 4. Inspect
+
+Open the local TUI from another terminal:
+
+```bash
+./target/release/nowhere tui
+```
+
+## Clients
+
+<table>
+<tr>
+<td width="100" align="center">
+<a href="https://github.com/NodePassProject/Anywhere"><img src="https://storage.argsment.com/Anywhere-AppIcon-iOS.png" width="80" height="80" alt="Anywhere"></a>
+</td>
+<td>
+<strong>Anywhere</strong> · iOS, iPadOS &amp; tvOS<br>
+Native Swift client with independent TCP/UDP carriers, TLS multiplexing, and Morph.<br>
+<a href="https://github.com/NodePassProject/Anywhere">Source code</a> &middot;
+<a href="https://apps.apple.com/us/app/id6758235178">App Store</a> &middot;
+<a href="https://github.com/NodePassProject/Anywhere#deep-links">Import guide</a>
+</td>
+</tr>
+</table>
+
+Anywhere connects directly to Portal. Import a share link to get started:
+
+```text
+nowhere://change-me@relay.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
+```
+
+See [Clients and share links](docs/clients.md) for the full format, parameters,
+and import instructions. For a local SOCKS5 endpoint, use **Vector** as shown
+in the [quick start](#quick-start).
 
 ## How it works
 
@@ -133,44 +200,6 @@ nowhere \
 `next` is lazy, mutually exclusive with outbound `socks`, and bounded to seven
 hops.
 
-## Quick start
-
-Use a stable Rust toolchain on a supported target.
-
-### 1. Build
-
-```bash
-cargo build --release --locked
-```
-
-### 2. Start Portal
-
-Listen on TLS/TCP and QUIC/UDP at port `2000`:
-
-```bash
-./target/release/nowhere 'portal://change-me@127.0.0.1:2000'
-```
-
-### 3. Start Vector
-
-Expose SOCKS5 on `127.0.0.1:1080`:
-
-```bash
-./target/release/nowhere \
-  'vector://change-me@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
-```
-
-More examples are available in [Configuration](docs/configuration.md) and the
-[extended quick start](docs/quick-start.md).
-
-### 4. Inspect
-
-Open the local TUI from another terminal:
-
-```bash
-./target/release/nowhere tui
-```
-
 ## Live operations
 
 <p align="center">
@@ -202,8 +231,18 @@ and [Operations](docs/operations.md).
 
 ## Documentation
 
-The [documentation index](docs/README.md) covers configuration, protocol,
-security, operations, platforms, and integrations.
+| Guide | Covers |
+| --- | --- |
+| [Quick start](docs/quick-start.md) | Build, run, and connect |
+| [Clients and share links](docs/clients.md) | Clients, link format, and import instructions |
+| [Configuration](docs/configuration.md) | Service URL, options, chaining, and env variables |
+| [Wire protocol](docs/protocol.md) | Authentication, flows, Mux, and Morph |
+| [Security](docs/security.md) | Certificate verification and trust boundaries |
+| [Operations](docs/operations.md) | Deployment and runtime behavior |
+| [Platforms](docs/platforms.md) | Supported targets and platform differences |
+| [Telemetry](docs/telemetry.md) | Local discovery and monitoring integrations |
+
+See the [documentation index](docs/README.md) for the complete reference.
 
 ## Development
 
