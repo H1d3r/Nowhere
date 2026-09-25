@@ -111,7 +111,7 @@ sockets instead of relying on an operating-system dual-stack default.
 | `mux` | native next-hop TLS: `0` dedicated lanes, `1` Mux when TCP is possible | `0` |
 | `sni` | native next-hop verified DNS name, or `none` | `none` |
 | `pin` | native next-hop certificate SHA-256 pin, or `none` | `none` |
-| `log` | `none`, `debug`, `info`, `warn`, `error`, `event` | `info` |
+| `log` | `none`, `debug`, `info`, `warn`, `error` | `info` |
 
 When `next` is enabled, `up`, `down`, `mux`, `sni`, and `pin` configure that
 upstream hop. Protocol version is negotiated independently with the next
@@ -319,7 +319,6 @@ Durations use humantime syntax such as `250ms`, `15s`, `2m`, or `1h`.
 | `NOW_TCP_READ_TIMEOUT` | `30s` | Opposite-direction TCP half-close grace period |
 | `NOW_UDP_IDLE_TIMEOUT` | `2m` | UDP flow and QUIC idle timeout |
 | `NOW_HANDSHAKE_TIMEOUT` | `5s` | TLS, authentication, and request phase deadline |
-| `NOW_REPORT_INTERVAL` | `5s` | Event checkpoint interval |
 | `NOW_TELEMETRY_INTERVAL` | `1s` | TUI sample period; accepted range is `250ms..60s` |
 | `NOW_SERVICE_COOLDOWN` | `3s` | Client transport reconnect delay |
 | `NOW_SHUTDOWN_TIMEOUT` | `5s` | Graceful shutdown deadline |

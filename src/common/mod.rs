@@ -20,9 +20,8 @@ pub use config::{
     DEFAULT_DIALER_IP, DEFAULT_RATE_LIMIT, DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL,
     MIN_TELEMETRY_INTERVAL, env_duration, env_int, flow_setup_timeout, handshake_timeout,
     init_dialer_ip, mix_fallback_timeout, query_first, rate_limit_bytes_per_second,
-    reload_interval, report_interval, service_cooldown, shutdown_timeout, tcp_data_buf_size,
-    tcp_dial_timeout, tcp_read_timeout, telemetry_interval, udp_data_buf_size, udp_dial_timeout,
-    udp_idle_timeout,
+    reload_interval, service_cooldown, shutdown_timeout, tcp_data_buf_size, tcp_dial_timeout,
+    tcp_read_timeout, telemetry_interval, udp_data_buf_size, udp_dial_timeout, udp_idle_timeout,
 };
 pub(crate) use datagram::{
     BudgetedDatagram, UdpDatagramSend, reserve_udp_budget, send_quic_udp_packet,
@@ -30,7 +29,7 @@ pub(crate) use datagram::{
 pub use endpoint::validate_endpoint_url_input;
 pub(crate) use endpoint::{AddressFamily, CarrierEndpoint, ServiceEndpoint};
 pub(crate) use latency::{LatencyGuard, LatencyTracker};
-pub(crate) use lifecycle::{LifeMode, LifeReason, LifeState, Lifecycle, ShutdownSignals};
+pub(crate) use lifecycle::{LifeReason, LifeState, ShutdownSignals};
 pub use logger::{LogLevel, Logger};
 pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip};
 pub(crate) use network::{

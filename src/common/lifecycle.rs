@@ -3,30 +3,10 @@
 
 //! Shared process lifecycle telemetry and platform shutdown signals.
 
-use std::fmt;
-use std::sync::atomic::{AtomicU8, Ordering};
-
 use anyhow::{Context, Result};
-
-use super::Logger;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum LifeMode {
-    Portal,
-    Vector,
-}
-
-impl fmt::Display for LifeMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Portal => "PORTAL",
-            Self::Vector => "VECTOR",
-        })
-    }
-}
+use std::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
 pub(crate) enum LifeState {
     Starting = 0,
     Ready = 1,
@@ -79,30 +59,6 @@ impl fmt::Display for LifeReason {
             Self::Forced => "FORCED",
             Self::StartFailed => "START_FAILED",
         })
-    }
-}
-
-pub(crate) struct Lifecycle {
-    mode: LifeMode,
-    state: AtomicU8,
-}
-
-impl Lifecycle {
-    pub(crate) fn new(mode: LifeMode) -> Self {
-        Self {
-            mode,
-            state: AtomicU8::new(u8::MAX),
-        }
-    }
-
-    pub(crate) fn transition(&self, logger: &Logger, state: LifeState, reason: LifeReason) {
-        if self.state.swap(state as u8, Ordering::AcqRel) == state as u8 {
-            return;
-        }
-        logger.event(format_args!(
-            "LIFE_STATUS|MODE={}|STATE={state}|REASON={reason}",
-            self.mode
-        ));
     }
 }
 

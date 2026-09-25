@@ -317,20 +317,6 @@ impl VectorConfig {
         self.remote.canonical()
     }
 
-    pub(super) fn checkpoint_mode(&self) -> u8 {
-        match (self.up, self.down) {
-            (CarrierMode::Tcp, CarrierMode::Tcp) => 0,
-            (CarrierMode::Tcp, CarrierMode::Udp) => 1,
-            (CarrierMode::Udp, CarrierMode::Tcp) => 2,
-            (CarrierMode::Udp, CarrierMode::Udp) => 3,
-            (CarrierMode::Mix, CarrierMode::Tcp) => 4,
-            (CarrierMode::Mix, CarrierMode::Udp) => 5,
-            (CarrierMode::Tcp, CarrierMode::Mix) => 6,
-            (CarrierMode::Udp, CarrierMode::Mix) => 7,
-            (CarrierMode::Mix, CarrierMode::Mix) => 8,
-        }
-    }
-
     pub(super) fn effective_url(&self) -> String {
         format!(
             "vector://{}?up={}&down={}&mux={}&sni={}&pin={}&rate={}&etar={}&morph={}&socks={}",

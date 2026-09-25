@@ -72,7 +72,7 @@ fn logger_rejects_unknown_or_empty_levels() {
     assert!(init_logger(Some("verbose")).is_err());
     assert!(init_logger(Some("")).is_err());
     assert!(init_logger(None).is_ok());
-    assert!(init_logger(Some("event")).is_ok());
+    assert!(init_logger(Some("event")).is_err());
 }
 
 #[test]
@@ -164,7 +164,7 @@ async fn invalid_configuration_urls_fail_before_service_startup_with_safe_errors
         ),
         (
             format!("portal://{SECRET}@*:2000?log=verbose"),
-            "log must be none, debug, info, warn, error, or event",
+            "log must be none, debug, info, warn, or error",
         ),
         (
             format!("portal://{SECRET}@*:2000?rate=-1&log=none"),

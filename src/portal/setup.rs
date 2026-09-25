@@ -10,10 +10,9 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{
-    DEFAULT_RATE_LIMIT, LifeMode, LifeReason, LifeState, Lifecycle, Logger, OutboundDialer,
-    ServiceEndpoint, SocksConfig, first_raw_query_value, init_dialer_ip,
-    new_server_configs_with_reload_interval, query_first, rate_limit_bytes_per_second,
-    resolve_bind_addrs,
+    DEFAULT_RATE_LIMIT, Logger, OutboundDialer, ServiceEndpoint, SocksConfig,
+    first_raw_query_value, init_dialer_ip, new_server_configs_with_reload_interval, query_first,
+    rate_limit_bytes_per_second, resolve_bind_addrs,
 };
 use crate::protocol::Credentials;
 use crate::telemetry::{InstanceRole, TelemetryHub};
@@ -39,22 +38,14 @@ impl Portal {
         listen_host: Option<&str>,
         logger: Logger,
     ) -> Result<Self> {
-        let lifecycle = Arc::new(Lifecycle::new(LifeMode::Portal));
-        lifecycle.transition(&logger, LifeState::Starting, LifeReason::Startup);
-        let result = Self::build(parsed_url, listen_host, logger.clone(), lifecycle.clone());
+        let result = Self::build(parsed_url, listen_host, logger.clone());
         if result.is_err() {
-            lifecycle.transition(&logger, LifeState::Stopped, LifeReason::StartFailed);
             logger.flush();
         }
         result
     }
 
-    fn build(
-        parsed_url: Url,
-        listen_host: Option<&str>,
-        logger: Logger,
-        lifecycle: Arc<Lifecycle>,
-    ) -> Result<Self> {
+    fn build(parsed_url: Url, listen_host: Option<&str>, logger: Logger) -> Result<Self> {
         if parsed_url.scheme() != "portal" {
             anyhow::bail!("Portal configuration: URL scheme must be portal");
         }
@@ -206,7 +197,6 @@ impl Portal {
                 rate_limit,
                 etar_limit,
                 logger,
-                lifecycle,
                 telemetry,
                 drain: CancellationToken::new(),
                 runtime,
@@ -235,10 +225,7 @@ fn validate_query(query: &std::collections::HashMap<String, String>) -> Result<(
         }
     }
     if let Some(log) = query.get("log")
-        && !matches!(
-            log.as_str(),
-            "none" | "debug" | "info" | "warn" | "error" | "event"
-        )
+        && !matches!(log.as_str(), "none" | "debug" | "info" | "warn" | "error")
     {
         anyhow::bail!("invalid log level");
     }

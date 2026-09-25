@@ -136,10 +136,6 @@ carrier event records both routes and the first error. Selection has no
 cross-flow health state or carrier race, and READY or payload failures do not
 trigger fallback. The fallback route uses normal transport deadlines.
 
-Vector CHECK_POINT reports the configured policy rather than an individual
-flow decision: `0..8` map to `tcp/tcp`, `tcp/udp`, `udp/tcp`, `udp/udp`,
-`mix/tcp`, `mix/udp`, `tcp/mix`, `udp/mix`, and `mix/mix`.
-
 ## Shutdown
 
 Ctrl+C starts graceful shutdown on Linux, macOS, and Windows. Unix process

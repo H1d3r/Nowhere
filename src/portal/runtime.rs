@@ -31,7 +31,6 @@ struct RunningPortal {
     endpoints: Vec<Endpoint>,
     quic_listeners: JoinSet<()>,
     tcp_listener_tasks: JoinSet<()>,
-    auxiliary_tasks: JoinSet<()>,
     telemetry_tasks: JoinSet<()>,
     telemetry_shutdown: CancellationToken,
     stop_accepting: CancellationToken,
@@ -40,11 +39,6 @@ struct RunningPortal {
 
 impl Portal {
     pub async fn run(self) -> Result<()> {
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Starting,
-            LifeReason::Startup,
-        );
         self.inner.telemetry.set_lifecycle(
             LifeState::Starting.to_string(),
             LifeReason::Startup.to_string(),
@@ -117,20 +111,10 @@ impl Portal {
             });
         }
 
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Ready,
-            LifeReason::Listening,
-        );
         self.inner.telemetry.set_lifecycle(
             LifeState::Ready.to_string(),
             LifeReason::Listening.to_string(),
         );
-        let mut auxiliary_tasks = JoinSet::new();
-        auxiliary_tasks.spawn(event::event_loop(
-            self.inner.clone(),
-            force_shutdown.clone(),
-        ));
         let trigger = tokio::select! {
             signal = signals.recv() => match signal {
                 Ok(reason) => ShutdownTrigger { reason, failure: None },
@@ -159,7 +143,6 @@ impl Portal {
             endpoints,
             quic_listeners,
             tcp_listener_tasks,
-            auxiliary_tasks,
             telemetry_tasks,
             telemetry_shutdown,
             stop_accepting,
@@ -170,11 +153,6 @@ impl Portal {
     }
 
     fn start_failed(&self, error: anyhow::Error) -> Result<()> {
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Stopped,
-            LifeReason::StartFailed,
-        );
         self.inner.telemetry.set_lifecycle(
             LifeState::Stopped.to_string(),
             LifeReason::StartFailed.to_string(),

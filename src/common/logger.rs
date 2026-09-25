@@ -19,13 +19,10 @@ pub enum LogLevel {
     Info = 2,
     Warn = 3,
     Error = 4,
-    Event = 5,
 }
 
-const LEVEL_STRINGS: [&str; 6] = ["NONE", "DEBUG", "INFO", "WARN", "ERROR", "EVENT"];
-const LEVEL_COLORS: [&str; 6] = [
-    "", "\x1b[34m", "\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[36m",
-];
+const LEVEL_STRINGS: [&str; 5] = ["NONE", "DEBUG", "INFO", "WARN", "ERROR"];
+const LEVEL_COLORS: [&str; 5] = ["", "\x1b[34m", "\x1b[32m", "\x1b[33m", "\x1b[31m"];
 const RESET_COLOR: &str = "\x1b[0m";
 
 #[derive(Clone, Debug)]
@@ -66,10 +63,6 @@ impl Logger {
 
     pub fn error(&self, args: fmt::Arguments<'_>) {
         self.do_log(LogLevel::Error, args);
-    }
-
-    pub fn event(&self, args: fmt::Arguments<'_>) {
-        self.do_log(LogLevel::Event, args);
     }
 
     pub fn flush(&self) {}

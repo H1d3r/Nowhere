@@ -13,7 +13,7 @@ fn query_first_ignores_unknown_parameters_and_keeps_first_duplicate() {
     assert_eq!(values["log"], "debug");
     assert_eq!(values["label"], "now/1");
 
-    let duplicate = Url::parse("portal://key@localhost:2000?log=debug&log=event").unwrap();
+    let duplicate = Url::parse("portal://key@localhost:2000?log=debug&log=error").unwrap();
     assert_eq!(query_first(&duplicate, &["log"]).unwrap()["log"], "debug");
     let unknown = Url::parse("portal://key@localhost:2000?typo=value&%FF=value").unwrap();
     assert!(query_first(&unknown, &["log"]).unwrap().is_empty());

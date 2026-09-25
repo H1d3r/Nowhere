@@ -18,7 +18,7 @@ use super::wire::{
     LifecycleSnapshot, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage, TelemetrySnapshot,
 };
 
-const EVENT_CAPACITY: usize = 1_024;
+const DETAIL_EVENT_CAPACITY: usize = 1_024;
 
 pub(crate) struct TelemetryHub {
     descriptor: InstanceDescriptor,
@@ -74,7 +74,7 @@ impl TelemetryHub {
         });
         let (snapshots, _) = watch::channel(TelemetrySnapshot::default());
         let (lifecycle, _) = watch::channel(LifecycleSnapshot::default());
-        let (events, _) = broadcast::channel(EVENT_CAPACITY);
+        let (events, _) = broadcast::channel(DETAIL_EVENT_CAPACITY);
         Arc::new(Self {
             descriptor,
             privacy,

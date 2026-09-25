@@ -3,7 +3,6 @@
 
 //! Structured, process-local telemetry for the read-only TUI.
 
-mod checkpoint;
 mod hub;
 mod ipc;
 mod local;
@@ -11,7 +10,6 @@ mod privacy;
 mod process;
 pub(crate) mod wire;
 
-pub(crate) use checkpoint::Checkpoint;
 pub(crate) use hub::{AccessSpan, TelemetryHub};
 pub(crate) use ipc::{DiscoveredInstance, TelemetryClient, TelemetryServer, discover_instances};
 pub(crate) use privacy::{config_summary as display_config, endpoint as display_endpoint};

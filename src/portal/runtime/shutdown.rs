@@ -32,7 +32,6 @@ impl RunningPortal {
             endpoints,
             mut quic_listeners,
             mut tcp_listener_tasks,
-            mut auxiliary_tasks,
             mut telemetry_tasks,
             telemetry_shutdown,
             stop_accepting,
@@ -48,11 +47,6 @@ impl RunningPortal {
             endpoint.set_server_config(None);
         }
         stop_accepting.cancel();
-        portal.inner.lifecycle.transition(
-            &portal.inner.logger,
-            LifeState::Draining,
-            trigger.reason,
-        );
         portal
             .inner
             .telemetry
@@ -92,7 +86,6 @@ impl RunningPortal {
             portal.inner.connection_tasks.abort_all();
             quic_listeners.abort_all();
             tcp_listener_tasks.abort_all();
-            auxiliary_tasks.abort_all();
         }
 
         let mut endpoint_tasks = JoinSet::new();
@@ -108,7 +101,6 @@ impl RunningPortal {
             while endpoint_tasks.join_next().await.is_some() {}
             while quic_listeners.join_next().await.is_some() {}
             while tcp_listener_tasks.join_next().await.is_some() {}
-            while auxiliary_tasks.join_next().await.is_some() {}
             portal.inner.connection_tasks.wait().await;
             portal.inner.relay_tasks.wait().await;
         };
@@ -124,13 +116,11 @@ impl RunningPortal {
             endpoint_tasks.abort_all();
             quic_listeners.abort_all();
             tcp_listener_tasks.abort_all();
-            auxiliary_tasks.abort_all();
             portal.inner.connection_tasks.abort_all();
             portal.inner.relay_tasks.abort_all();
             while endpoint_tasks.join_next().await.is_some() {}
             while quic_listeners.join_next().await.is_some() {}
             while tcp_listener_tasks.join_next().await.is_some() {}
-            while auxiliary_tasks.join_next().await.is_some() {}
             portal.inner.connection_tasks.wait().await;
             portal.inner.relay_tasks.wait().await;
             portal.inner.pairing.cancel_all().await;
@@ -139,11 +129,6 @@ impl RunningPortal {
         if let Some(rate) = &portal.inner.rate_limiter {
             rate.reset();
         }
-        portal.inner.lifecycle.transition(
-            &portal.inner.logger,
-            LifeState::Stopped,
-            outcome.life_reason(),
-        );
         portal.inner.telemetry.set_lifecycle(
             LifeState::Stopped.to_string(),
             outcome.life_reason().to_string(),

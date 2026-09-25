@@ -129,10 +129,6 @@ pub fn mix_fallback_timeout() -> Duration {
     env_duration("NOW_MIX_FALLBACK_TIMEOUT", Duration::from_secs(1))
 }
 
-pub fn report_interval() -> Duration {
-    env_duration("NOW_REPORT_INTERVAL", Duration::from_secs(5))
-}
-
 pub fn telemetry_interval() -> Result<Duration> {
     let raw = match std::env::var("NOW_TELEMETRY_INTERVAL") {
         Ok(raw) => Some(raw),

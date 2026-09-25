@@ -30,9 +30,8 @@ use self::flow_id::FlowIdAllocator;
 use self::session::{ClientSignals, QuicManager, TlsManager};
 use self::tls::ClientTls;
 use crate::common::{
-    LatencyTracker, LifeMode, LifeReason, LifeState, Lifecycle, Logger, ShutdownSignals,
-    rate_limit_bytes_per_second, shutdown_timeout, tcp_data_buf_size, telemetry_interval,
-    udp_data_buf_size,
+    LatencyTracker, LifeReason, LifeState, Logger, ShutdownSignals, rate_limit_bytes_per_second,
+    shutdown_timeout, tcp_data_buf_size, telemetry_interval, udp_data_buf_size,
 };
 use crate::protocol::{Credentials, SESSION_ID_LEN};
 use crate::telemetry::TelemetryServer;
@@ -49,7 +48,6 @@ pub struct Vector {
 pub(super) struct VectorInner {
     config: VectorConfig,
     logger: Logger,
-    lifecycle: Arc<Lifecycle>,
     telemetry: Arc<TelemetryHub>,
     telemetry_interval: std::time::Duration,
     stats: Arc<Stats>,
@@ -64,17 +62,14 @@ pub(super) struct VectorInner {
 
 impl Vector {
     pub fn new(parsed_url: Url, logger: Logger) -> Result<Self> {
-        let lifecycle = Arc::new(Lifecycle::new(LifeMode::Vector));
-        lifecycle.transition(&logger, LifeState::Starting, LifeReason::Startup);
-        let result = Self::build(parsed_url, logger.clone(), lifecycle.clone());
+        let result = Self::build(parsed_url, logger.clone());
         if result.is_err() {
-            lifecycle.transition(&logger, LifeState::Stopped, LifeReason::StartFailed);
             logger.flush();
         }
         result
     }
 
-    fn build(parsed_url: Url, logger: Logger, lifecycle: Arc<Lifecycle>) -> Result<Self> {
+    fn build(parsed_url: Url, logger: Logger) -> Result<Self> {
         let config = VectorConfig::from_url(&parsed_url)?;
         let telemetry_interval =
             telemetry_interval().context("vector::Vector::new: invalid NOW_TELEMETRY_INTERVAL")?;
@@ -121,7 +116,6 @@ impl Vector {
             inner: Arc::new(VectorInner {
                 config,
                 logger,
-                lifecycle,
                 telemetry,
                 telemetry_interval,
                 stats,
@@ -139,11 +133,6 @@ impl Vector {
     }
 
     pub async fn run(self) -> Result<()> {
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Starting,
-            LifeReason::Startup,
-        );
         self.inner.telemetry.set_lifecycle(
             LifeState::Starting.to_string(),
             LifeReason::Startup.to_string(),
@@ -194,20 +183,10 @@ impl Vector {
             ));
         }
 
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Ready,
-            LifeReason::Listening,
-        );
         self.inner.telemetry.set_lifecycle(
             LifeState::Ready.to_string(),
             LifeReason::Listening.to_string(),
         );
-        let mut auxiliary_tasks = JoinSet::new();
-        auxiliary_tasks.spawn(event::event_loop(
-            self.inner.clone(),
-            self.inner.shutdown.clone(),
-        ));
         let (reason, failure) = tokio::select! {
             signal = signals.recv() => match signal {
                 Ok(reason) => (reason, None),
@@ -224,15 +203,11 @@ impl Vector {
         self.inner.shutdown.cancel();
         let deadline = Instant::now() + shutdown_timeout();
         self.inner
-            .lifecycle
-            .transition(&self.inner.logger, LifeState::Draining, reason);
-        self.inner
             .telemetry
             .set_lifecycle(LifeState::Draining.to_string(), reason.to_string());
 
         let cleanup = async {
             while listener_tasks.join_next().await.is_some() {}
-            while auxiliary_tasks.join_next().await.is_some() {}
             self.inner.client.close(deadline).await;
         };
         let outcome = tokio::select! {
@@ -252,9 +227,7 @@ impl Vector {
         };
         if outcome != LifeReason::CleanupComplete {
             listener_tasks.abort_all();
-            auxiliary_tasks.abort_all();
             while listener_tasks.join_next().await.is_some() {}
-            while auxiliary_tasks.join_next().await.is_some() {}
             let close_deadline = if outcome == LifeReason::Forced {
                 Instant::now()
             } else {
@@ -265,9 +238,6 @@ impl Vector {
         if let Some(rate) = &self.inner.rate_limiter {
             rate.reset();
         }
-        self.inner
-            .lifecycle
-            .transition(&self.inner.logger, LifeState::Stopped, outcome);
         self.inner
             .telemetry
             .set_lifecycle(LifeState::Stopped.to_string(), outcome.to_string());
@@ -288,11 +258,6 @@ impl Vector {
     }
 
     fn start_failed(&self, error: anyhow::Error) -> Result<()> {
-        self.inner.lifecycle.transition(
-            &self.inner.logger,
-            LifeState::Stopped,
-            LifeReason::StartFailed,
-        );
         self.inner.telemetry.set_lifecycle(
             LifeState::Stopped.to_string(),
             LifeReason::StartFailed.to_string(),

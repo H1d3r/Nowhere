@@ -102,13 +102,6 @@ fn carrier_paths_select_network_mode_and_net_is_ignored() {
 }
 
 #[test]
-fn network_mode_checkpoint_values_match_listener_modes() {
-    assert_eq!(NetworkMode::Mix.checkpoint_value(), 0);
-    assert_eq!(NetworkMode::Tcp.checkpoint_value(), 1);
-    assert_eq!(NetworkMode::Udp.checkpoint_value(), 2);
-}
-
-#[test]
 fn net_is_an_ignored_unknown_parameter() {
     let portal = Portal::new(
         Url::parse("portal://secret@127.0.0.1:2000?net=auto").unwrap(),
@@ -498,10 +491,10 @@ async fn listener_bind_failure_moves_lifecycle_to_stopped() {
         test_logger(),
     )
     .unwrap();
-    let lifecycle = portal.inner.lifecycle.clone();
+    let lifecycle = portal.inner.telemetry.lifecycle_receiver();
 
     assert!(portal.run().await.is_err());
-    assert_eq!(lifecycle.state(), Some(crate::common::LifeState::Stopped));
+    assert_eq!(lifecycle.borrow().state, "STOPPED");
 }
 
 #[test]

@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::{Lifecycle, Logger, TLSMode};
+use crate::common::{Logger, TLSMode};
 use crate::protocol::Credentials;
 use crate::telemetry::TelemetryHub;
 use crate::transport::{Buffers, MorphKeys, RateLimiter, Stats};
@@ -55,7 +55,6 @@ struct PortalInner {
     rate_limit: i32,
     etar_limit: i32,
     logger: Logger,
-    lifecycle: Arc<Lifecycle>,
     telemetry: Arc<TelemetryHub>,
     drain: CancellationToken,
     runtime: PortalRuntimeConfig,

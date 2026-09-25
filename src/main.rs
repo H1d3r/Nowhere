@@ -49,7 +49,7 @@ Common options:
   morph=0|1           Enable keyed wire masking. Default: 0.
   rate=<mbps>         Client-to-target limit. 0 disables it.
   etar=<mbps>         Target-to-client limit. 0 disables it.
-  log=<level>         none, debug, info, warn, error, or event. Default: info.
+  log=<level>         none, debug, info, warn, or error. Default: info.
 
 Portal options:
   tls=1|2             Generated certificate or supplied PEM files. Default: 1.
@@ -208,12 +208,8 @@ fn init_logger(level: Option<&str>) -> Result<Logger> {
             logger.set_log_level(LogLevel::Error);
             logger.error(format_args!("main::init_logger: log level set to ERROR"));
         }
-        Some("event") => {
-            logger.set_log_level(LogLevel::Event);
-            logger.event(format_args!("main::init_logger: log level set to EVENT"));
-        }
         Some(value) => {
-            bail!("log must be none, debug, info, warn, error, or event; found {value:?}")
+            bail!("log must be none, debug, info, warn, or error; found {value:?}")
         }
     }
     Ok(logger)

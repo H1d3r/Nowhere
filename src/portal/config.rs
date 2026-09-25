@@ -19,7 +19,6 @@ const DEFAULT_UDP_DIAL_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_TCP_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_UDP_IDLE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_RELOAD_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const DEFAULT_FLOW_PAIR_TIMEOUT: Duration = Duration::from_secs(15);
@@ -34,7 +33,6 @@ pub(super) struct PortalRuntimeConfig {
     pub(super) tcp_read_timeout: Duration,
     pub(super) udp_idle_timeout: Duration,
     pub(super) handshake_timeout: Duration,
-    pub(super) report_interval: Duration,
     pub(super) telemetry_interval: Duration,
     pub(super) shutdown_timeout: Duration,
     pub(super) reload_interval: Duration,
@@ -101,8 +99,6 @@ impl PortalRuntimeConfig {
             "NOW_HANDSHAKE_TIMEOUT",
             DEFAULT_HANDSHAKE_TIMEOUT,
         )?;
-        let report_interval =
-            read_duration(&mut source, "NOW_REPORT_INTERVAL", DEFAULT_REPORT_INTERVAL)?;
         let telemetry_interval = read_duration(
             &mut source,
             "NOW_TELEMETRY_INTERVAL",
@@ -137,7 +133,6 @@ impl PortalRuntimeConfig {
             tcp_read_timeout,
             udp_idle_timeout,
             handshake_timeout,
-            report_interval,
             telemetry_interval,
             shutdown_timeout,
             reload_interval,

@@ -84,31 +84,29 @@ fn policy_must_use_declared_carriers() {
 fn tcp_pair_defaults_to_dedicated_lanes() {
     let config =
         parse("vector://secret@example.com:2000?up=tcp&down=tcp&socks=127.0.0.1:1080").unwrap();
-    assert_eq!(config.checkpoint_mode(), 0);
     assert_eq!(config.mux, MuxMode::Disabled);
 }
 
 #[test]
-fn parses_all_route_policies_and_preserves_checkpoint_modes() {
+fn parses_all_route_policies() {
     let cases = [
-        ("tcp", "tcp", 0),
-        ("tcp", "udp", 1),
-        ("udp", "tcp", 2),
-        ("udp", "udp", 3),
-        ("mix", "tcp", 4),
-        ("mix", "udp", 5),
-        ("tcp", "mix", 6),
-        ("udp", "mix", 7),
-        ("mix", "mix", 8),
+        ("tcp", "tcp"),
+        ("tcp", "udp"),
+        ("udp", "tcp"),
+        ("udp", "udp"),
+        ("mix", "tcp"),
+        ("mix", "udp"),
+        ("tcp", "mix"),
+        ("udp", "mix"),
+        ("mix", "mix"),
     ];
-    for (up, down, mode) in cases {
+    for (up, down) in cases {
         let config = parse(&format!(
             "vector://secret@example.com:2000?up={up}&down={down}&socks=:1080"
         ))
         .unwrap();
         assert_eq!(config.up.to_string(), up);
         assert_eq!(config.down.to_string(), down);
-        assert_eq!(config.checkpoint_mode(), mode);
         assert!(
             config
                 .effective_url()

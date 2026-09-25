@@ -47,10 +47,10 @@ async fn socks_bind_failure_moves_lifecycle_to_stopped() {
         Logger::new(crate::common::LogLevel::None, false),
     )
     .unwrap();
-    let lifecycle = vector.inner.lifecycle.clone();
+    let lifecycle = vector.inner.telemetry.lifecycle_receiver();
 
     assert!(vector.run().await.is_err());
-    assert_eq!(lifecycle.state(), Some(crate::common::LifeState::Stopped));
+    assert_eq!(lifecycle.borrow().state, "STOPPED");
 }
 
 #[test]
