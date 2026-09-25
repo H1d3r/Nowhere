@@ -107,7 +107,9 @@ pub(crate) fn new_server_configs_with_reload_interval(
     server_crypto.alpn_protocols = vec![ALPN.to_vec()];
     let quic_crypto = QuicServerConfig::try_from(server_crypto.clone())
         .map_err(|e| anyhow!("common::tls::new_server_configs: QUIC TLS config failed: {e}"))?;
-    logger.event(format_args!("CERT_SHA256|{cert_sha256}"));
+    logger.info(format_args!(
+        "TLS certificate SHA-256 fingerprint: {cert_sha256}"
+    ));
     Ok((
         mode,
         Arc::new(server_crypto),
