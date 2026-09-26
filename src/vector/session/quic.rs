@@ -47,10 +47,16 @@ impl QuicManager {
     }
 
     pub(in crate::vector) async fn get(&self) -> Result<Arc<QuicSession>> {
+        if self.shutdown.is_cancelled() {
+            bail!("vector::session::QuicManager: shutting down");
+        }
         if let Some(session) = self.live_session().await {
             return Ok(session);
         }
         let _connecting = self.connect_lock.lock().await;
+        if self.shutdown.is_cancelled() {
+            bail!("vector::session::QuicManager: shutting down");
+        }
         if let Some(session) = self.live_session().await {
             return Ok(session);
         }
@@ -62,7 +68,14 @@ impl QuicManager {
                 _ = tokio::time::sleep_until(retry_after) => {}
             }
         }
-        let session = match self.connect().await {
+        let connected = tokio::select! {
+            biased;
+            _ = self.shutdown.cancelled() => {
+                bail!("vector::session::QuicManager: shutting down")
+            }
+            connected = self.connect() => connected,
+        };
+        let session = match connected {
             Ok(session) => {
                 *self.retry_after.lock().await = None;
                 session
@@ -191,15 +204,23 @@ impl QuicManager {
             queue_budget: Arc::new(Semaphore::new(self.queue_bytes)),
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), true),
             latency,
+            datagram_task: DatagramTask::default(),
         });
-        spawn_datagram_loop(Arc::downgrade(&session), self.shutdown.clone());
+        session.datagram_task.install(spawn_datagram_loop(
+            Arc::downgrade(&session),
+            self.shutdown.clone(),
+        ));
         Ok(session)
     }
 
     pub(in crate::vector) async fn close(&self, deadline: Instant) {
+        self.shutdown.cancel();
+        let _connecting = self.connect_lock.lock().await;
         if let Some(session) = self.state.lock().await.take() {
             session.connection.close(VarInt::from_u32(0), b"");
             let _ = timeout_at(deadline, session.connection.closed()).await;
+            session.datagram_task.stop().await;
+            session.clear_udp();
         }
     }
 
@@ -219,6 +240,7 @@ pub(in crate::vector) struct QuicSession {
     queue_budget: Arc<Semaphore>,
     _link: LinkGuard,
     latency: LatencyGuard,
+    datagram_task: DatagramTask,
 }
 
 pub(in crate::vector) type QueuedDatagram = BudgetedDatagram;
@@ -256,6 +278,47 @@ impl Drop for PendingUdpRoute {
             .is_some_and(|route| Arc::ptr_eq(&route.generation, &self.generation))
         {
             routes.remove(&self.flow_id);
+        }
+    }
+}
+
+#[derive(Default)]
+struct DatagramTask {
+    handle: StdMutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl DatagramTask {
+    fn install(&self, handle: tokio::task::JoinHandle<()>) {
+        let replaced = self
+            .handle
+            .lock()
+            .unwrap_or_else(|lock| lock.into_inner())
+            .replace(handle);
+        debug_assert!(replaced.is_none());
+    }
+
+    async fn stop(&self) {
+        let handle = self
+            .handle
+            .lock()
+            .unwrap_or_else(|lock| lock.into_inner())
+            .take();
+        if let Some(handle) = handle {
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+}
+
+impl Drop for DatagramTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self
+            .handle
+            .get_mut()
+            .unwrap_or_else(|lock| lock.into_inner())
+            .take()
+        {
+            handle.abort();
         }
     }
 }
@@ -397,7 +460,10 @@ impl QuicSession {
     }
 }
 
-fn spawn_datagram_loop(session: Weak<QuicSession>, shutdown: CancellationToken) {
+fn spawn_datagram_loop(
+    session: Weak<QuicSession>,
+    shutdown: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut cleanup = tokio::time::interval(Duration::from_secs(1));
         cleanup.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -427,7 +493,7 @@ fn spawn_datagram_loop(session: Weak<QuicSession>, shutdown: CancellationToken) 
             }
         };
         session.clear_udp();
-    });
+    })
 }
 
 fn configure_quic_transport(
