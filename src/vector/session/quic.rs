@@ -186,7 +186,7 @@ impl QuicManager {
             _endpoint: endpoint,
             connection,
             first_stream: Mutex::new(Some((auth_send, auth_recv, auth))),
-            routes: StdMutex::new(HashMap::new()),
+            routes: Arc::new(StdMutex::new(HashMap::new())),
             reassembler: StdMutex::new(DatagramReassembler::new(reassembly_config)),
             queue_budget: Arc::new(Semaphore::new(self.queue_bytes)),
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), true),
@@ -214,7 +214,7 @@ pub(in crate::vector) struct QuicSession {
     _endpoint: Endpoint,
     pub(in crate::vector) connection: Connection,
     first_stream: Mutex<Option<(SendStream, RecvStream, AuthFrame)>>,
-    routes: StdMutex<HashMap<FlowId, UdpRoute>>,
+    routes: Arc<StdMutex<HashMap<FlowId, UdpRoute>>>,
     reassembler: StdMutex<DatagramReassembler<OwnedSemaphorePermit>>,
     queue_budget: Arc<Semaphore>,
     _link: LinkGuard,
@@ -226,6 +226,38 @@ pub(in crate::vector) type QueuedDatagram = BudgetedDatagram;
 struct UdpRoute {
     sender: mpsc::Sender<QueuedDatagram>,
     ready: bool,
+    generation: Arc<()>,
+}
+
+pub(in crate::vector) struct PendingUdpRoute {
+    routes: Weak<StdMutex<HashMap<FlowId, UdpRoute>>>,
+    flow_id: FlowId,
+    generation: Arc<()>,
+    armed: bool,
+}
+
+impl PendingUdpRoute {
+    pub(in crate::vector) fn commit(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingUdpRoute {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(routes) = self.routes.upgrade() else {
+            return;
+        };
+        let mut routes = routes.lock().unwrap_or_else(|lock| lock.into_inner());
+        if routes
+            .get(&self.flow_id)
+            .is_some_and(|route| Arc::ptr_eq(&route.generation, &self.generation))
+        {
+            routes.remove(&self.flow_id);
+        }
+    }
 }
 
 impl QuicSession {
@@ -245,21 +277,31 @@ impl QuicSession {
     pub(in crate::vector) fn register_udp(
         &self,
         flow_id: FlowId,
-    ) -> Result<mpsc::Receiver<QueuedDatagram>> {
+    ) -> Result<(mpsc::Receiver<QueuedDatagram>, PendingUdpRoute)> {
         let (sender, receiver) = mpsc::channel(64);
+        let generation = Arc::new(());
         let mut routes = self.routes.lock().unwrap_or_else(|lock| lock.into_inner());
         match routes.entry(flow_id) {
             Entry::Vacant(route) => {
                 route.insert(UdpRoute {
                     sender,
                     ready: false,
+                    generation: generation.clone(),
                 });
             }
             Entry::Occupied(_) => {
                 bail!("vector::session::QuicSession: duplicate UDP flow");
             }
         }
-        Ok(receiver)
+        Ok((
+            receiver,
+            PendingUdpRoute {
+                routes: Arc::downgrade(&self.routes),
+                flow_id,
+                generation,
+                armed: true,
+            },
+        ))
     }
 
     pub(in crate::vector) fn activate_udp(&self, flow_id: FlowId) -> Result<()> {
@@ -409,3 +451,7 @@ fn configure_quic_transport(
     config.transport_config(Arc::new(transport));
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../tests/vector/session_quic.rs"]
+mod tests;

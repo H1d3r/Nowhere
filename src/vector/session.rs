@@ -147,7 +147,7 @@ impl Drop for LinkGuard {
 mod quic;
 mod tls;
 
-pub(super) use self::quic::{QueuedDatagram, QuicManager, QuicSession};
+pub(super) use self::quic::{PendingUdpRoute, QueuedDatagram, QuicManager, QuicSession};
 pub(super) use self::tls::{OpenedTls, TlsManager};
 
 #[cfg(test)]

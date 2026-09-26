@@ -34,23 +34,19 @@ pub(crate) async fn open_udp(
         mut lanes,
         quic,
         mut down_datagrams,
+        mut pending_udp_route,
     } = prepared;
-    if let Err(error) = setup_udp_lanes(&mut lanes, flow_id, route, target, hops).await {
-        if let Some(quic) = &quic {
-            quic.remove_udp(flow_id);
-        }
-        return Err(error);
-    }
+    setup_udp_lanes(&mut lanes, flow_id, route, target, hops).await?;
     if down_datagrams.is_some()
         && let Err(error) = quic
             .as_ref()
             .expect("QUIC downlink has session")
             .activate_udp(flow_id)
     {
-        if let Some(quic) = &quic {
-            quic.remove_udp(flow_id);
-        }
         return Err(OpenFlowError::Transport(error));
+    }
+    if let Some(pending_udp_route) = pending_udp_route.take() {
+        pending_udp_route.commit();
     }
 
     let writer = if uplink == Carrier::TlsTcp {
@@ -99,6 +95,7 @@ struct PreparedUdpAttempt {
     lanes: Vec<PhysicalLane>,
     quic: Option<Arc<QuicSession>>,
     down_datagrams: Option<mpsc::Receiver<QueuedDatagram>>,
+    pending_udp_route: Option<PendingUdpRoute>,
 }
 
 async fn prepare_udp_attempt(
@@ -108,19 +105,20 @@ async fn prepare_udp_attempt(
 ) -> Result<PreparedUdpAttempt> {
     let lanes = prepare_lanes(client, route, flow_id).await?;
     let quic = lanes.iter().find_map(|lane| lane._quic.clone());
-    let down_datagrams = if route.downlink == Carrier::Quic {
-        Some(
-            quic.as_ref()
-                .expect("QUIC downlink has session")
-                .register_udp(flow_id)?,
-        )
+    let (down_datagrams, pending_udp_route) = if route.downlink == Carrier::Quic {
+        let (down_datagrams, pending_udp_route) = quic
+            .as_ref()
+            .expect("QUIC downlink has session")
+            .register_udp(flow_id)?;
+        (Some(down_datagrams), Some(pending_udp_route))
     } else {
-        None
+        (None, None)
     };
     Ok(PreparedUdpAttempt {
         lanes,
         quic,
         down_datagrams,
+        pending_udp_route,
     })
 }
 

@@ -28,7 +28,7 @@ use super::flow::{
 };
 use super::flow_id::FlowLease;
 use super::route::{ResolvedRoute, plan_route};
-use super::session::{QueuedDatagram, QuicSession};
+use super::session::{PendingUdpRoute, QueuedDatagram, QuicSession};
 pub(crate) struct UdpTunnel {
     flow_id: u32,
     quic: Option<Arc<QuicSession>>,
