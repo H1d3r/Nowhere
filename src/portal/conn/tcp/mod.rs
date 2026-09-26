@@ -20,7 +20,7 @@ use tokio_rustls::LazyConfigAcceptor;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::MUX_MARKER;
-use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle};
+use crate::mux::{MUX_IDLE_TIMEOUT, MuxCloseReason, MuxConfig, MuxHandle};
 use crate::portal::PortalInner;
 use crate::portal::admission::UnauthenticatedGuard;
 use crate::portal::pairing::SessionKey;
@@ -253,14 +253,21 @@ async fn handle_mux(
         .with_client(peer.to_string()),
     );
     let mut flow_tasks = JoinSet::new();
+    let mut requested_close = None;
     loop {
         let accepted = tokio::select! {
-            _ = shutdown.cancelled() => break,
+            _ = shutdown.cancelled() => {
+                requested_close = Some(MuxCloseReason::ApplicationClose);
+                break;
+            },
             accepted = incoming.accept() => accepted,
             _ = flow_tasks.join_next(), if !flow_tasks.is_empty() => continue,
             idle = mux.idle_for(idle_timeout) => {
                 if idle && mux.active_streams() != 0 {
                     continue;
+                }
+                if idle {
+                    requested_close = Some(MuxCloseReason::IdleTimeout);
                 }
                 break;
             },
@@ -288,12 +295,17 @@ async fn handle_mux(
     }
     flow_tasks.abort_all();
     while flow_tasks.join_next().await.is_some() {}
-    mux.close();
+    if let Some(reason) = requested_close {
+        mux.close_with_reason(reason);
+    } else {
+        mux.close();
+    }
+    let reason = mux.close_reason().await;
     portal.telemetry.emit_runtime(
         RuntimeEvent::new(
             RuntimeLevel::Info,
-            RuntimeKind::Carrier,
-            "TLS mux carrier disconnected",
+            RuntimeKind::Mux,
+            format!("TLS mux carrier disconnected: {}", reason.diagnostic()),
         )
         .with_client(peer.to_string()),
     );

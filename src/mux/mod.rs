@@ -72,6 +72,29 @@ pub(crate) struct MuxHandle {
     shared: Arc<Shared>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MuxCloseReason {
+    ApplicationClose,
+    IdleTimeout,
+    PeerEof,
+    ReaderFailure,
+    WriterFailure,
+    ProtocolViolation,
+}
+
+impl MuxCloseReason {
+    pub(crate) const fn diagnostic(self) -> &'static str {
+        match self {
+            Self::ApplicationClose => "application closed",
+            Self::IdleTimeout => "idle timeout",
+            Self::PeerEof => "unexpected EOF",
+            Self::ReaderFailure => "mux reader failure",
+            Self::WriterFailure => "mux writer failure",
+            Self::ProtocolViolation => "protocol error",
+        }
+    }
+}
+
 pub(crate) struct Incoming {
     receiver: mpsc::Receiver<MuxStream>,
 }

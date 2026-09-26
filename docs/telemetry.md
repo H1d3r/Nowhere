@@ -134,6 +134,10 @@ classified reason, for example `TLS carrier connection failed: connection
 refused`. Only known templates and a closed vocabulary of reasons are published;
 unknown details become `operation failed`. Access errors use the same vocabulary,
 including DNS failure, timeout, certificate failure and connection refusal.
+`TLS mux carrier disconnected` reports the first terminal carrier reason as
+`application closed`, `idle timeout`, `unexpected EOF`, `mux reader failure`,
+`mux writer failure`, or `protocol error`. This reason applies to the physical
+carrier and therefore to every logical stream it owned.
 Lifecycle messages retain whitelisted reasons such as `STOPPED: START_FAILED`.
 Diagnostic inputs include nested error causes, but only classified reasons leave
 the publisher. Keys, passwords, tokens, authentication data and raw error chains are never

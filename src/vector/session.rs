@@ -24,7 +24,7 @@ use crate::common::{
     BudgetedDatagram, LatencyGuard, LatencyTracker, UdpDatagramSend, handshake_timeout,
     parse_local_ip, reserve_udp_budget, send_quic_udp_packet, service_cooldown, udp_idle_timeout,
 };
-use crate::mux::{MUX_IDLE_TIMEOUT, MuxConfig, MuxHandle, MuxStream};
+use crate::mux::{MUX_IDLE_TIMEOUT, MuxCloseReason, MuxConfig, MuxHandle, MuxStream};
 use crate::protocol::{
     AuthFrame, AuthKey, AuthTransport, Credentials, DatagramReassembler, FlowId, OwnedUdpFragment,
     OwnedUdpFrame, ReassemblyConfig, ReassemblyOutcome, SessionId, decode_udp_frame_owned,

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use super::{closed, frame_charge, frame_close, invalid};
 use crate::mux::wire::{CLOSE_FIN, FlowId, FrameHeader, HEADER_LEN, encode_header};
-use crate::mux::{Outbound, Shared, Terminal};
+use crate::mux::{MuxCloseReason, Outbound, Shared, Terminal};
 
 pub(in crate::mux) async fn run_terminals(
     shared: Arc<Shared>,
@@ -150,7 +150,7 @@ pub(in crate::mux) async fn run_writer<W: AsyncWrite + Unpin>(
         result = operation => result,
     };
     if result.is_err() {
-        shared.close();
+        shared.close_with_reason(MuxCloseReason::WriterFailure);
     }
 }
 

@@ -76,7 +76,10 @@ fn diagnostic_templates_never_publish_arbitrary_error_text() {
         "DNS lookup failed"
     );
     assert_eq!(error_reason("secret-key"), "operation failed");
+    assert_eq!(error_reason("application closed"), "application closed");
     assert_eq!(error_reason("idle timeout"), "idle timeout");
+    assert_eq!(error_reason("mux reader failure"), "mux reader failure");
+    assert_eq!(error_reason("mux writer failure"), "mux writer failure");
     assert_eq!(
         error_reason("flow setup rejected: dial failed"),
         "target connection failed"
@@ -85,6 +88,24 @@ fn diagnostic_templates_never_publish_arbitrary_error_text() {
         error_reason("flow setup rejected: flow limit"),
         "resource limit reached"
     );
+}
+
+#[test]
+fn mux_close_reasons_survive_runtime_sanitization() {
+    for reason in [
+        "application closed",
+        "idle timeout",
+        "unexpected EOF",
+        "mux reader failure",
+        "mux writer failure",
+        "protocol error",
+    ] {
+        let message = format!("TLS mux carrier disconnected: {reason}");
+        assert_eq!(
+            runtime_message(RuntimeKind::Mux, RuntimeLevel::Info, &message),
+            message
+        );
+    }
 }
 
 #[test]

@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::{closed, frame_charge, invalid};
 use crate::mux::wire::{FrameHeader, FrameKind, HEADER_LEN, decode_header};
-use crate::mux::{Inbound, ReceiveTarget, Shared};
+use crate::mux::{Inbound, MuxCloseReason, ReceiveTarget, Shared};
 
 pub(in crate::mux) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shared: Arc<Shared>) {
     let operation = async {
@@ -57,16 +57,21 @@ pub(in crate::mux) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shar
         _ = shared.closed_notify.cancelled() => return,
         result = operation => result,
     };
-    if result.is_err() {
-        shared.close();
+    if let Err(error) = result {
+        let reason = match error.kind() {
+            io::ErrorKind::UnexpectedEof => MuxCloseReason::PeerEof,
+            io::ErrorKind::InvalidData => MuxCloseReason::ProtocolViolation,
+            _ => MuxCloseReason::ReaderFailure,
+        };
+        shared.close_with_reason(reason);
     }
 }
 
 async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<()> {
-    let stream = shared.insert_flow(header.flow_id, true)?;
+    let stream = shared.insert_flow(header.flow_id, true).map_err(invalid)?;
     let extra_credit = header.value as usize;
     if extra_credit != 0 {
-        let credit = shared.send_credit(header.flow_id)?;
+        let credit = shared.send_credit(header.flow_id).map_err(invalid)?;
         if credit.available_permits().saturating_add(extra_credit)
             > crate::mux::credit_units(crate::mux::MAX_STREAM_WINDOW_BYTES)
         {
@@ -79,7 +84,10 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
 
 async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes) -> io::Result<()> {
     let charge = frame_charge(payload.len());
-    match shared.admit_receive(header.flow_id, charge)? {
+    match shared
+        .admit_receive(header.flow_id, charge)
+        .map_err(invalid)?
+    {
         ReceiveTarget::Deliver {
             inbound,
             generation,

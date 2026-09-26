@@ -326,6 +326,11 @@ only connection credit; retaining the stream debit bounds the discarded data.
 Late or duplicate FIN/RESET processing is idempotent. Closing the physical Mux
 carrier fails every logical stream on that carrier.
 
+The runtime preserves the first terminal reason when close paths race. Local
+shutdown, idle retirement, peer EOF, reader failure, writer failure, and a peer
+protocol violation are distinct diagnostic categories. They do not change the
+wire contract or permit recovery of logical streams after their carrier closes.
+
 Mux uses an initial 4 MiB stream window and 8 MiB connection window. Each side
 sends one WINDOW to extend its connection window. OPEN advertises the opener's
 stream extension; the receiver returns its stream extension with WINDOW.

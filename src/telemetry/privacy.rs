@@ -193,6 +193,7 @@ pub(super) fn error_reason(value: &str) -> &'static str {
         .strip_prefix("flow setup rejected: ")
         .unwrap_or(&lower)
     {
+        "application closed" => return "application closed",
         "idle timeout" => return "idle timeout",
         "pair timeout" | "flow pairing timed out" => return "flow pairing timed out",
         "portal draining" | "service draining" => return "service draining",
@@ -202,6 +203,8 @@ pub(super) fn error_reason(value: &str) -> &'static str {
         "metadata conflict" => return "metadata conflict",
         "session replaced" => return "session replaced",
         "internal error" => return "internal error",
+        "mux reader failure" => return "mux reader failure",
+        "mux writer failure" => return "mux writer failure",
         "flow setup rejected" => return "flow setup rejected",
         "quic datagram route preparation failed" | "datagram route unavailable" => {
             return "datagram route unavailable";

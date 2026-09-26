@@ -251,3 +251,52 @@ async fn shutdown_closes_mux_pool_and_drains_monitors() {
     orphan_peer.close();
     drop((streams, orphan_streams));
 }
+
+#[tokio::test]
+async fn idle_retirement_reports_failure_that_closed_carrier_first() {
+    let manager = manager();
+    let (left, _peer) = tokio::io::duplex(1024);
+    let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let slot = slot(handle.clone());
+    let mut pool = manager.mux.lock().await;
+    pool.push(slot.clone());
+    let _detail = manager.telemetry.detail_guard();
+    let mut events = manager.telemetry.event_receiver();
+    let link = LinkGuard::new(manager.stats.clone(), manager.telemetry.clone(), false);
+    let latency = manager.latency.register();
+    let mut monitor =
+        Box::pin(
+            manager
+                .clone()
+                .monitor_mux(slot, handle.clone(), link, latency, Duration::ZERO),
+        );
+    std::future::poll_fn(|cx| {
+        assert!(monitor.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    std::future::poll_fn(|cx| {
+        assert!(monitor.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    handle.close_with_reason(MuxCloseReason::WriterFailure);
+    drop(pool);
+    tokio::time::timeout(Duration::from_secs(1), monitor)
+        .await
+        .unwrap();
+    let mut message = None;
+    while let Ok(event) = events.try_recv() {
+        if let crate::telemetry::ServerMessage::RuntimeEvent(event) = event
+            && event.kind == RuntimeKind::Mux
+        {
+            message = Some(event.message);
+        }
+    }
+    assert_eq!(
+        message.as_deref(),
+        Some("TLS mux carrier disconnected: mux writer failure")
+    );
+    assert!(manager.mux.lock().await.is_empty());
+}

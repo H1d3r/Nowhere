@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;
 use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
@@ -14,7 +14,7 @@ use tokio::sync::{Notify, Semaphore, mpsc, oneshot, watch};
 use super::config::{BASE_STREAM_WINDOW_BYTES, WINDOW_UPDATE_DIVISOR};
 use super::driver::closed;
 use super::wire::{FlowId, FrameHeader};
-use super::{FlowReader, FlowWriter, MuxChunk, MuxConfig, MuxStream, credit_units};
+use super::{FlowReader, FlowWriter, MuxChunk, MuxCloseReason, MuxConfig, MuxStream, credit_units};
 
 pub(super) struct Shared {
     pub(super) config: MuxConfig,
@@ -31,6 +31,7 @@ pub(super) struct Shared {
     pub(super) active_streams_tx: watch::Sender<usize>,
     pub(super) handle_count: AtomicUsize,
     pub(super) closed: AtomicBool,
+    pub(super) close_reason: OnceLock<MuxCloseReason>,
     pub(super) closed_notify: tokio_util::sync::CancellationToken,
     #[cfg(test)]
     pub(super) borrowed_write_copies: AtomicUsize,
@@ -172,6 +173,11 @@ impl Shared {
     }
 
     pub(super) fn close(&self) {
+        self.close_with_reason(MuxCloseReason::ApplicationClose);
+    }
+
+    pub(super) fn close_with_reason(&self, reason: MuxCloseReason) {
+        let _ = self.close_reason.set(reason);
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
         }

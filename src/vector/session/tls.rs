@@ -160,7 +160,9 @@ impl TlsManager {
         let close = CloseMuxOnDrop(lifetime.clone());
         monitors.spawn(async move {
             let _close = close;
-            manager.monitor_mux(slot, lifetime, _link, latency).await;
+            manager
+                .monitor_mux(slot, lifetime, _link, latency, MUX_IDLE_TIMEOUT)
+                .await;
         });
         Ok(handle)
     }
@@ -171,20 +173,27 @@ impl TlsManager {
         carrier: MuxHandle,
         _link: LinkGuard,
         _latency: LatencyGuard,
+        idle_timeout: Duration,
     ) {
         loop {
             tokio::select! {
                 _ = carrier.closed() => break,
-                idle = carrier.idle_for(MUX_IDLE_TIMEOUT) => { if !idle { break; } }
+                idle = carrier.idle_for(idle_timeout) => { if !idle { break; } }
             }
             let mut pool = self.mux.lock().await;
             if carrier.active_streams() != 0 || slot.pending.load(Ordering::Relaxed) != 0 {
                 continue;
             }
             pool.retain(|candidate| !Arc::ptr_eq(candidate, &slot));
-            carrier.close();
-            return;
+            carrier.close_with_reason(MuxCloseReason::IdleTimeout);
+            break;
         }
+        let reason = carrier.close_reason().await;
+        self.telemetry.emit_runtime(RuntimeEvent::new(
+            RuntimeLevel::Info,
+            RuntimeKind::Mux,
+            format!("TLS mux carrier disconnected: {}", reason.diagnostic()),
+        ));
         self.mux
             .lock()
             .await

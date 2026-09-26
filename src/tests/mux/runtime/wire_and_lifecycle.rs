@@ -4,14 +4,83 @@
 //! Mux wire validation and carrier shutdown tests.
 
 use super::*;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+struct WriteFailIo;
+
+impl AsyncRead for WriteFailIo {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Poll::Pending
+    }
+}
+
+impl AsyncWrite for WriteFailIo {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Poll::Ready(Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "injected write failure",
+        )))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
 
 async fn assert_raw_frame_closes_carrier(frame: &[u8]) {
     let (left, mut peer) = tokio::io::duplex(1 << 20);
     let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
     peer.write_all(frame).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(1), handle.closed())
+    let reason = tokio::time::timeout(Duration::from_secs(1), handle.close_reason())
         .await
         .expect("invalid frame must close carrier");
+    assert_eq!(reason, MuxCloseReason::ProtocolViolation);
+}
+
+#[tokio::test]
+async fn carrier_eof_and_explicit_close_keep_the_first_reason() {
+    let (left, peer) = tokio::io::duplex(1 << 20);
+    let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    drop(peer);
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), handle.close_reason())
+            .await
+            .unwrap(),
+        MuxCloseReason::PeerEof
+    );
+
+    let (left, _peer) = tokio::io::duplex(1 << 20);
+    let (handle, _incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    handle.close_with_reason(MuxCloseReason::IdleTimeout);
+    handle.close();
+    assert_eq!(handle.close_reason().await, MuxCloseReason::IdleTimeout);
+}
+
+#[tokio::test]
+async fn writer_failure_closes_carrier_with_writer_reason() {
+    let (handle, _incoming) = MuxHandle::start(WriteFailIo, MuxConfig::default()).unwrap();
+    let _ = handle.open_stream(1).await;
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), handle.close_reason())
+            .await
+            .unwrap(),
+        MuxCloseReason::WriterFailure
+    );
 }
 
 #[tokio::test]

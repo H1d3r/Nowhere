@@ -13,7 +13,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Notify, Semaphore, mpsc, watch};
 
 use super::driver::{closed, frame_open, run_reader, run_terminals, run_writer};
-use super::{FlowId, Incoming, MuxConfig, MuxHandle, MuxStream, Outbound, Shared};
+use super::{FlowId, Incoming, MuxCloseReason, MuxConfig, MuxHandle, MuxStream, Outbound, Shared};
 
 struct PreparedOpen {
     shared: Arc<Shared>,
@@ -57,6 +57,7 @@ impl MuxHandle {
             active_streams_tx,
             handle_count: AtomicUsize::new(1),
             closed: AtomicBool::new(false),
+            close_reason: std::sync::OnceLock::new(),
             closed_notify: tokio_util::sync::CancellationToken::new(),
             #[cfg(test)]
             borrowed_write_copies: AtomicUsize::new(0),
@@ -172,6 +173,10 @@ impl MuxHandle {
         self.shared.close();
     }
 
+    pub(crate) fn close_with_reason(&self, reason: MuxCloseReason) {
+        self.shared.close_with_reason(reason);
+    }
+
     #[cfg(test)]
     pub(crate) fn same_carrier(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)
@@ -209,6 +214,15 @@ impl MuxHandle {
             return;
         }
         self.shared.closed_notify.cancelled().await;
+    }
+
+    pub(crate) async fn close_reason(&self) -> MuxCloseReason {
+        self.closed().await;
+        *self
+            .shared
+            .close_reason
+            .get()
+            .expect("closed mux has a close reason")
     }
 }
 
