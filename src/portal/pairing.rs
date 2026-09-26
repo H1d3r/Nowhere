@@ -30,7 +30,9 @@ pub(super) use self::state::{
     BoxReader, BoxWriter, FlowLease, LinkHalf, LinkPath, PairedTcp, PairedUdp, QuicUdpReceiver,
     SessionKey, UdpDown, UdpHalf, UdpUp,
 };
-use self::state::{FlowClaim, FlowKey, LinkCounts, Metadata, PendingTcp, PendingUdp};
+use self::state::{
+    FlowClaim, FlowKey, LinkCounts, Metadata, PendingTcp, PendingTimeout, PendingUdp,
+};
 use self::tcp::reject_tcp_writer;
 use self::udp::reject_udp_downlink_ref;
 

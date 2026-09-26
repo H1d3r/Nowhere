@@ -44,6 +44,7 @@ pub(in crate::portal) struct PendingTcp {
     pub(in crate::portal) downlink_path: Option<LinkPath>,
     pub(in crate::portal) uplink_generation: Option<u64>,
     pub(in crate::portal) downlink_generation: Option<u64>,
+    pub(in crate::portal) timeout: PendingTimeout,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -164,6 +165,31 @@ pub(in crate::portal) struct PendingUdp {
     pub(in crate::portal) downlink_path: Option<LinkPath>,
     pub(in crate::portal) uplink_generation: Option<u64>,
     pub(in crate::portal) downlink_generation: Option<u64>,
+    pub(in crate::portal) timeout: PendingTimeout,
+}
+
+pub(in crate::portal) struct PendingTimeout {
+    cancel: CancellationToken,
+}
+
+impl PendingTimeout {
+    pub(in crate::portal) fn new() -> Self {
+        Self {
+            cancel: CancellationToken::new(),
+        }
+    }
+
+    pub(in crate::portal) fn renew(&mut self) -> CancellationToken {
+        self.cancel.cancel();
+        self.cancel = CancellationToken::new();
+        self.cancel.clone()
+    }
+}
+
+impl Drop for PendingTimeout {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
 }
 
 pub(in crate::portal) struct PairedUdp {

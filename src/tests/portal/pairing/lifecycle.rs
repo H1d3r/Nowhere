@@ -241,6 +241,72 @@ async fn cancel_all_cancels_active_flows_without_waiting_for_pending_writer() {
 }
 
 #[tokio::test]
+async fn cancel_all_releases_pending_pair_timeout_tasks() {
+    let registry = registry(Duration::from_secs(60));
+    let session = [0x37; SESSION_ID_LEN];
+    let guard = registry.register_tcp_link(session, Arc::new(Stats::default()));
+
+    let (tcp_uplink, _tcp_peer) = tokio::io::duplex(64);
+    assert!(
+        registry
+            .submit_tcp(
+                session,
+                header(
+                    FlowRole::Open,
+                    1,
+                    FlowKind::Tcp,
+                    Carrier::TlsTcp,
+                    Carrier::Quic,
+                ),
+                Some(target("target.test:443")),
+                tcp_half("pending-tcp"),
+                Some(Box::pin(tcp_uplink)),
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let (udp_uplink, _udp_peer) = tokio::io::duplex(64);
+    assert!(
+        registry
+            .submit_udp(
+                session,
+                header(
+                    FlowRole::Open,
+                    2,
+                    FlowKind::Udp,
+                    Carrier::TlsTcp,
+                    Carrier::Quic,
+                ),
+                Some(target("target.test:53")),
+                tcp_half("pending-udp"),
+                UdpHalf::Uplink {
+                    uplink: UdpUp::TlsTcp(Box::pin(udp_uplink)),
+                },
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    registry.cancel_all().await;
+    let weak = Arc::downgrade(&registry);
+    drop(guard);
+    drop(registry);
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cancelled pair timeouts must release their registry owner");
+}
+
+#[tokio::test]
 async fn pending_pairs_exceed_former_limit_and_release_quic_credit_on_drain() {
     let registry = registry(Duration::from_secs(30));
     let session = [0x32; SESSION_ID_LEN];

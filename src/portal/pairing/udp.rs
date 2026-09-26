@@ -6,7 +6,10 @@
 use super::*;
 
 enum UdpInstallOutcome {
-    Pending(u64),
+    Pending {
+        epoch: u64,
+        cancel: tokio_util::sync::CancellationToken,
+    },
     Paired(Box<PairedUdp>),
     Rejected {
         error: PairingError,
@@ -220,6 +223,7 @@ impl PairingRegistry {
                 downlink_path: None,
                 uplink_generation: None,
                 downlink_generation: None,
+                timeout: PendingTimeout::new(),
             });
             if pending.metadata != metadata {
                 break 'install UdpInstallOutcome::Rejected {
@@ -317,11 +321,14 @@ impl PairingRegistry {
                 }
             };
             pending.epoch = epoch;
-            UdpInstallOutcome::Pending(epoch)
+            UdpInstallOutcome::Pending {
+                epoch,
+                cancel: pending.timeout.renew(),
+            }
         };
         match outcome {
-            UdpInstallOutcome::Pending(epoch) => {
-                self.spawn_udp_timeout(key, epoch);
+            UdpInstallOutcome::Pending { epoch, cancel } => {
+                self.spawn_udp_timeout(key, epoch, cancel);
                 Ok(None)
             }
             UdpInstallOutcome::Paired(paired) => Ok(Some(*paired)),
@@ -342,10 +349,18 @@ impl PairingRegistry {
         }
     }
 
-    fn spawn_udp_timeout(self: &Arc<Self>, key: FlowKey, epoch: u64) {
+    fn spawn_udp_timeout(
+        self: &Arc<Self>,
+        key: FlowKey,
+        epoch: u64,
+        cancel: tokio_util::sync::CancellationToken,
+    ) {
         let registry = self.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(registry.timeout).await;
+            tokio::select! {
+                _ = tokio::time::sleep(registry.timeout) => {}
+                _ = cancel.cancelled() => return,
+            }
             let pending = {
                 let mut flows = registry.udp.lock().await;
                 if flows.get(&key).is_some_and(|flow| flow.epoch == epoch) {
