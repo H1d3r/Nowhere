@@ -170,17 +170,18 @@ impl PairingRegistry {
             }
             previous
         };
-        if let Some(previous) = previous {
-            previous.replacement.cancel();
-            self.replace_quic_generation(session_id, previous.generation)
-                .await;
-        }
-        LinkGuard {
+        let guard = LinkGuard {
             registry: self.clone(),
             stats,
             session_id,
             carrier: crate::protocol::Carrier::Quic,
             quic_generation: Some(generation),
+        };
+        if let Some(previous) = previous {
+            previous.replacement.cancel();
+            self.replace_quic_generation(session_id, previous.generation)
+                .await;
         }
+        guard
     }
 }

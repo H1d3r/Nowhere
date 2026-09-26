@@ -283,3 +283,63 @@ async fn stale_open_after_map_lock_leaves_exact_rejection_for_tcp_attach() {
     drop(second);
     drop(tcp_guard);
 }
+
+#[tokio::test]
+async fn cancelled_quic_replacement_rolls_back_committed_link_state() {
+    let registry = registry(Duration::from_secs(30));
+    let stats = Arc::new(Stats::default());
+    let session_id = [3; SESSION_ID_LEN];
+    let tcp_guard = registry.register_tcp_link(session_id, stats.clone());
+    let first_replaced = tokio_util::sync::CancellationToken::new();
+    let first = registry
+        .register_quic_link(session_id, stats.clone(), first_replaced.clone())
+        .await;
+
+    assert!(
+        registry
+            .submit_tcp(
+                session_id,
+                header(
+                    FlowRole::Attach,
+                    9,
+                    FlowKind::Tcp,
+                    Carrier::Quic,
+                    Carrier::TlsTcp,
+                ),
+                None,
+                tcp_half("pending-downlink"),
+                None,
+                Some(Box::pin(PendingWriter)),
+                None,
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let replace_registry = registry.clone();
+    let replace_stats = stats.clone();
+    let replacement = tokio::spawn(async move {
+        replace_registry
+            .register_quic_link(
+                session_id,
+                replace_stats,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), first_replaced.cancelled())
+        .await
+        .expect("replacement must commit before old-flow rejection blocks");
+    replacement.abort();
+    let result = replacement.await;
+    assert!(result.is_err_and(|error| error.is_cancelled()));
+
+    assert_eq!(registry.active_quic_generation(session_id), None);
+    assert_eq!(stats.link_udp.load(Ordering::Relaxed), 0);
+    assert!(registry.tcp.lock().await.is_empty());
+    assert!(registry.claims.lock().unwrap().is_empty());
+
+    drop(first);
+    drop(tcp_guard);
+}
