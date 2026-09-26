@@ -37,6 +37,7 @@ impl TokenBucket {
         }
     }
 
+    #[cfg(test)]
     pub fn configure(&self, now: Duration, rate: i64, capacity: i64) {
         let mut inner = self.inner.lock().expect("token bucket poisoned");
         inner.refill(now);
@@ -47,12 +48,14 @@ impl TokenBucket {
         }
     }
 
+    #[cfg(test)]
     pub fn budget(&self, now: Duration) -> i64 {
         let mut inner = self.inner.lock().expect("token bucket poisoned");
         inner.refill(now);
         inner.budget
     }
 
+    #[cfg(test)]
     pub fn spend(&self, now: Duration, bytes: i64) {
         if bytes <= 0 {
             return;
@@ -80,6 +83,7 @@ impl TokenBucket {
         inner.updated_at.saturating_sub(now)
     }
 
+    #[cfg(test)]
     pub fn delay_until_available(
         &self,
         now: Duration,

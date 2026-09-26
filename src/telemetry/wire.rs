@@ -312,4 +312,4 @@ impl Default for LifecycleSnapshot {
 
 #[cfg(test)]
 #[path = "../tests/telemetry/contract.rs"]
-pub(crate) mod contract_tests;
+mod contract_tests;

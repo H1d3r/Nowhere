@@ -11,17 +11,17 @@ mod latency;
 mod lifecycle;
 mod logger;
 mod network;
-pub(crate) mod socks;
+mod socks;
 mod tls;
 
 pub(crate) use alpn::MUX_MARKER;
 pub(crate) use config::first_raw_query_value;
 pub use config::{
     DEFAULT_DIALER_IP, DEFAULT_RATE_LIMIT, DEFAULT_TELEMETRY_INTERVAL, MAX_TELEMETRY_INTERVAL,
-    MIN_TELEMETRY_INTERVAL, env_duration, env_int, flow_setup_timeout, handshake_timeout,
-    init_dialer_ip, mix_fallback_timeout, query_first, rate_limit_bytes_per_second,
-    reload_interval, service_cooldown, shutdown_timeout, tcp_data_buf_size, tcp_dial_timeout,
-    tcp_read_timeout, telemetry_interval, udp_data_buf_size, udp_dial_timeout, udp_idle_timeout,
+    MIN_TELEMETRY_INTERVAL, env_int, flow_setup_timeout, handshake_timeout, init_dialer_ip,
+    mix_fallback_timeout, query_first, rate_limit_bytes_per_second, service_cooldown,
+    shutdown_timeout, tcp_data_buf_size, tcp_read_timeout, telemetry_interval, udp_data_buf_size,
+    udp_idle_timeout,
 };
 pub(crate) use datagram::{
     BudgetedDatagram, UdpDatagramSend, reserve_udp_budget, send_quic_udp_packet,
@@ -35,7 +35,15 @@ pub use network::{bind_udp_addrs, dial_tcp_from_local_ip, dial_udp_from_local_ip
 pub(crate) use network::{
     dial_tcp_from_local_ip_family, filter_addrs_for_family, parse_local_ip, resolve_bind_addrs,
 };
-pub(crate) use socks::{OutboundDialer, OutboundTcpStream, OutboundUdpSocket, SocksConfig};
+pub(crate) use socks::{
+    COMMAND_BIND, COMMAND_CONNECT, COMMAND_UDP_ASSOCIATE, OutboundDialer, OutboundTcpStream,
+    OutboundUdpSocket, REPLY_ADDRESS_NOT_SUPPORTED, REPLY_COMMAND_NOT_SUPPORTED,
+    REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE, REPLY_HOST_UNREACHABLE,
+    REPLY_NETWORK_UNREACHABLE, REPLY_SUCCEEDED, REPLY_TTL_EXPIRED, SocksAddress, SocksConfig,
+    SocksCredentials, authenticate, decode_udp_packet, encode_udp_packet_into,
+    first_raw_socks_value, format_host_port, parse_host_port, parse_socks_value, read_request,
+    write_reply,
+};
+pub(crate) use tls::TLSMode;
 pub(crate) use tls::certificate_sha256;
 pub(crate) use tls::new_server_configs_with_reload_interval;
-pub use tls::{TLSMode, new_server_configs};

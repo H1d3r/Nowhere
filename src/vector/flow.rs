@@ -15,12 +15,10 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use crate::common::socks::{
-    REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE, REPLY_HOST_UNREACHABLE,
-    REPLY_NETWORK_UNREACHABLE, REPLY_SUCCEEDED, REPLY_TTL_EXPIRED, SocksAddress,
-};
 use crate::common::{
-    LatencyGuard, flow_setup_timeout, handshake_timeout, mix_fallback_timeout, tcp_read_timeout,
+    LatencyGuard, REPLY_CONNECTION_NOT_ALLOWED, REPLY_GENERAL_FAILURE, REPLY_HOST_UNREACHABLE,
+    REPLY_NETWORK_UNREACHABLE, REPLY_SUCCEEDED, REPLY_TTL_EXPIRED, SocksAddress,
+    flow_setup_timeout, handshake_timeout, mix_fallback_timeout, tcp_read_timeout,
 };
 use crate::protocol::{
     AUTH_FRAME_LEN, AuthFrame, Carrier, FLOW_HEADER_LEN, FlowHeader, FlowKind, FlowResult,

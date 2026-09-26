@@ -92,6 +92,7 @@ pub fn encode_udp_fragment_header(
     Ok(output)
 }
 
+#[cfg(test)]
 pub fn encode_udp_data(flow_id: FlowId, payload: &[u8]) -> Result<Vec<u8>> {
     validate_udp_payload(payload, "encode_udp_data")?;
     let header = encode_udp_data_header(flow_id)?;
@@ -101,6 +102,7 @@ pub fn encode_udp_data(flow_id: FlowId, payload: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
+#[cfg(test)]
 pub fn encode_udp_data_fragments(
     flow_id: FlowId,
     packet_id: u32,
@@ -331,9 +333,9 @@ pub(super) fn validate_fragment_metadata(
     Ok(())
 }
 
-pub use super::reassembly::{
-    DatagramReassembler, ReassemblyConfig, ReassemblyDropReason, ReassemblyOutcome,
-};
+#[cfg(test)]
+pub use super::reassembly::ReassemblyDropReason;
+pub use super::reassembly::{DatagramReassembler, ReassemblyConfig, ReassemblyOutcome};
 
 #[cfg(test)]
 #[path = "../tests/protocol/datagram.rs"]

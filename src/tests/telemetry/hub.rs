@@ -6,10 +6,9 @@
 use std::sync::atomic::Ordering;
 
 use crate::protocol::Carrier;
-use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    AccessOutcome, AccessStart, InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel,
-    ServerMessage, TELEMETRY_PROTOCOL, TelemetryHub, TrafficProtocol,
+    AccessOutcome, AccessStart, InstanceDescriptor, InstanceRole, RuntimeEvent, RuntimeKind,
+    RuntimeLevel, ServerMessage, TELEMETRY_PROTOCOL, TelemetryHub, TrafficProtocol,
 };
 use crate::transport::Stats;
 

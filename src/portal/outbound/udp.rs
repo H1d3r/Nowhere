@@ -6,7 +6,7 @@
 use std::ops::Range;
 
 use crate::common::OutboundUdpSocket;
-use crate::vector::udp_flow::{ReceivedUdpPacket, UdpTunnel, UdpTunnelReceiver, UdpTunnelSender};
+use crate::vector::{ReceivedUdpPacket, UdpTunnel, UdpTunnelReceiver, UdpTunnelSender};
 
 pub(in crate::portal) enum PortalUdpTarget {
     Network(OutboundUdpSocket),

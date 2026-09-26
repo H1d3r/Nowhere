@@ -93,10 +93,12 @@ impl<R> DatagramReassembler<R> {
         }
     }
 
+    #[cfg(test)]
     pub fn slot_count(&self) -> usize {
         self.slots.len()
     }
 
+    #[cfg(test)]
     pub fn reserved_bytes(&self) -> usize {
         self.reserved_bytes
     }
@@ -292,6 +294,7 @@ impl<R> DatagramReassembler<R> {
 }
 
 impl DatagramReassembler<()> {
+    #[cfg(test)]
     pub fn push(
         &mut self,
         flow_id: FlowId,

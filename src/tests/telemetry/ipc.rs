@@ -14,9 +14,9 @@ use super::registry::registry_directory;
 use super::registry::{RegistryEntry, registry_path};
 use super::*;
 use crate::telemetry::local;
-use crate::telemetry::wire::InstanceDescriptor;
 use crate::telemetry::{
-    ClientMessage, MAX_FRAME_SIZE, ServerMessage, Subscription, TELEMETRY_PROTOCOL, TelemetryHub,
+    ClientMessage, InstanceDescriptor, MAX_FRAME_SIZE, ServerMessage, Subscription,
+    TELEMETRY_PROTOCOL, TelemetryHub,
 };
 use crate::telemetry::{InstanceRole, RuntimeEvent, RuntimeKind, RuntimeLevel, TelemetrySnapshot};
 

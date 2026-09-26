@@ -13,8 +13,10 @@ use crate::tui::client_adapter::{
 };
 use crate::tui::model::{AccessPhase, AccessStatus, InstanceRole, Lifecycle};
 
-use crate::telemetry::wire::{InstanceDescriptor, LifecycleSnapshot};
-use crate::telemetry::{AccessOutcome, InstanceRole as WireRole, TELEMETRY_PROTOCOL};
+use crate::telemetry::{
+    AccessOutcome, InstanceDescriptor, InstanceRole as WireRole, LifecycleSnapshot,
+    TELEMETRY_PROTOCOL,
+};
 
 fn hello() -> Hello {
     Hello {

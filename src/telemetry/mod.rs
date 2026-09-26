@@ -8,7 +8,7 @@ mod ipc;
 mod local;
 mod privacy;
 mod process;
-pub(crate) mod wire;
+mod wire;
 
 pub(crate) use hub::{AccessSpan, TelemetryHub};
 pub(crate) use ipc::{DiscoveredInstance, TelemetryClient, TelemetryServer, discover_instances};
@@ -19,3 +19,5 @@ pub(crate) use wire::{
     MAX_FRAME_SIZE, RuntimeEvent, RuntimeKind, RuntimeLevel, ServerMessage, Subscription,
     TELEMETRY_PROTOCOL, TelemetrySnapshot, TrafficProtocol,
 };
+#[cfg(test)]
+pub(crate) use wire::{InstanceDescriptor, LifecycleSnapshot};

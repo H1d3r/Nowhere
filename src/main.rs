@@ -7,9 +7,7 @@ use std::env;
 use std::io::IsTerminal;
 
 use anyhow::{Context, Result, bail};
-use nowhere::common::{LogLevel, Logger, query_first, validate_endpoint_url_input};
-use nowhere::portal::Portal;
-use nowhere::vector::Vector;
+use nowhere::{LogLevel, Logger, Portal, Vector, query_first, validate_endpoint_url_input};
 use url::{ParseError, Url};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -145,7 +143,7 @@ async fn run_tui() -> Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         bail!("main::run_tui: an interactive terminal is required")
     }
-    nowhere::tui::run().await
+    nowhere::run_tui().await
 }
 
 fn print_help() {

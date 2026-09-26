@@ -9,11 +9,9 @@ use std::fmt;
 use anyhow::{Result, anyhow, bail};
 use url::Url;
 
-use crate::common::socks::{
-    SocksCredentials, first_raw_socks_value, format_host_port, parse_host_port, parse_socks_value,
-};
 use crate::common::{
-    CarrierEndpoint, DEFAULT_DIALER_IP, ServiceEndpoint, query_first, validate_endpoint_url_input,
+    CarrierEndpoint, DEFAULT_DIALER_IP, ServiceEndpoint, SocksCredentials, first_raw_socks_value,
+    format_host_port, parse_host_port, parse_socks_value, query_first, validate_endpoint_url_input,
 };
 use crate::transport::MorphKeys;
 

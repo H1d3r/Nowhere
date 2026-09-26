@@ -22,6 +22,7 @@ pub enum SetupResult {
 }
 
 impl SetupResult {
+    #[cfg(test)]
     pub const fn is_ready(self) -> bool {
         matches!(self, Self::Ready)
     }
@@ -149,6 +150,7 @@ pub fn decode_setup_result(bytes: &[u8]) -> Result<SetupResult> {
     bytes[0].try_into()
 }
 
+#[cfg(test)]
 pub fn encode_flow_result(result: FlowResult) -> [u8; SETUP_RESULT_LEN] {
     encode_setup_result(result.into())
 }

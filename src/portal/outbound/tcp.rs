@@ -9,7 +9,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::common::{LatencyGuard, OutboundTcpStream};
-use crate::vector::flow::{BoxReader, BoxWriter, TcpTunnel, TcpTunnelGuard};
+use crate::vector::{BoxReader, BoxWriter, TcpTunnel, TcpTunnelGuard};
 
 pub(in crate::portal) enum PortalTcpStream {
     Network(OutboundTcpStream),

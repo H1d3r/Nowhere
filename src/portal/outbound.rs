@@ -11,8 +11,7 @@ use tokio::time::Instant;
 
 use crate::common::OutboundDialer;
 use crate::protocol::{MAX_PORTAL_HOPS, SetupResult, Target};
-use crate::vector::PortalClient;
-use crate::vector::flow::OpenFlowError;
+use crate::vector::{OpenFlowError, PortalClient};
 
 mod tcp;
 mod udp;

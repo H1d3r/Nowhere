@@ -17,6 +17,7 @@ pub fn encode_udp_packet_header(payload_len: usize) -> Result<[u8; UOT_HEADER_LE
     Ok((payload_len as u16).to_be_bytes())
 }
 
+#[cfg(test)]
 pub fn encode_udp_packet(payload: &[u8]) -> Result<Vec<u8>> {
     let header = encode_udp_packet_header(payload.len())?;
     let mut output = Vec::with_capacity(UOT_HEADER_LEN + payload.len());
@@ -34,6 +35,7 @@ pub async fn write_udp_packet<W: AsyncWrite + Unpin>(writer: &mut W, payload: &[
         .context("protocol::uot::write_udp_packet: failed to write packet")
 }
 
+#[cfg(test)]
 pub async fn read_udp_packet<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Option<Vec<u8>>> {
     let mut payload = Vec::new();
     let Some(payload_len) = read_udp_packet_into(reader, &mut payload).await? else {

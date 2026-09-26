@@ -6,13 +6,13 @@
 mod client;
 mod config;
 mod event;
-pub(crate) mod flow;
+mod flow;
 mod flow_id;
 mod route;
 mod session;
 mod socks;
 mod tls;
-pub(crate) mod udp_flow;
+mod udp_flow;
 
 use std::sync::Arc;
 
@@ -26,9 +26,11 @@ use url::Url;
 pub(crate) use self::client::PortalClient;
 pub(crate) use self::config::PortalClientConfig;
 use self::config::VectorConfig;
+pub(crate) use self::flow::{BoxReader, BoxWriter, OpenFlowError, TcpTunnel, TcpTunnelGuard};
 use self::flow_id::FlowIdAllocator;
 use self::session::{ClientSignals, QuicManager, TlsManager};
 use self::tls::ClientTls;
+pub(crate) use self::udp_flow::{ReceivedUdpPacket, UdpTunnel, UdpTunnelReceiver, UdpTunnelSender};
 use crate::common::{
     LatencyTracker, LifeReason, LifeState, Logger, ShutdownSignals, rate_limit_bytes_per_second,
     shutdown_timeout, tcp_data_buf_size, telemetry_interval, udp_data_buf_size,

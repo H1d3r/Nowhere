@@ -184,7 +184,6 @@ fn access_line(record: &AccessRecord, app: &App) -> Line<'static> {
 
 fn runtime_line(record: &RuntimeRecord, app: &App) -> Line<'static> {
     let (symbol, color) = match record.level {
-        EventLevel::Debug => ("·", Color::DarkGray),
         EventLevel::Info => ("●", palette::INFO),
         EventLevel::Warn => ("▲", palette::WARNING),
         EventLevel::Error => ("×", palette::FAILURE),
@@ -193,7 +192,7 @@ fn runtime_line(record: &RuntimeRecord, app: &App) -> Line<'static> {
         symbol
     } else {
         match record.level {
-            EventLevel::Debug | EventLevel::Info => "*",
+            EventLevel::Info => "*",
             EventLevel::Warn => "!",
             EventLevel::Error => "x",
         }

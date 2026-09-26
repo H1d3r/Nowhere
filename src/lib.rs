@@ -3,11 +3,16 @@
 
 //! Library entry point for the Nowhere Portal and Vector runtimes.
 
-pub mod common;
-pub(crate) mod mux;
-pub mod portal;
-pub mod protocol;
-pub(crate) mod telemetry;
-pub mod transport;
-pub mod tui;
-pub mod vector;
+mod common;
+mod mux;
+mod portal;
+mod protocol;
+mod telemetry;
+mod transport;
+mod tui;
+mod vector;
+
+pub use common::{LogLevel, Logger, query_first, validate_endpoint_url_input};
+pub use portal::Portal;
+pub use tui::run_tui;
+pub use vector::Vector;

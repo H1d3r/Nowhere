@@ -12,35 +12,35 @@ mod result;
 mod uot;
 mod util;
 
-pub use auth::{
-    AUTH_FRAME_LEN, AUTH_TAG_LEN, AuthFrame, AuthKey, AuthTransport, Credentials, TLS_EXPORTER_LEN,
-    TlsExporter, derive_auth_key, encode_auth_frame, read_auth_frame, validate_auth_frame,
+pub(crate) use auth::{
+    AUTH_FRAME_LEN, AuthFrame, AuthKey, AuthTransport, Credentials, TLS_EXPORTER_LEN, TlsExporter,
+    encode_auth_frame, read_auth_frame,
 };
-pub use datagram::{
-    BorrowedUdpFragment, DatagramReassembler, OwnedUdpFragment, OwnedUdpFrame, ReassemblyConfig,
-    ReassemblyDropReason, ReassemblyOutcome, UDP_FRAGMENT_HEADER_LEN, UDP_FRAME_CLOSE,
-    UDP_FRAME_DATA, UDP_FRAME_FRAGMENT, UDP_HEADER_LEN, UDP_PACKET_MAX, UdpFragment, UdpFragments,
-    UdpFrame, decode_udp_frame, decode_udp_frame_owned, encode_udp_close, encode_udp_data,
-    encode_udp_data_fragments, encode_udp_data_header, encode_udp_fragment_header,
+pub(crate) use datagram::{
+    DatagramReassembler, OwnedUdpFragment, OwnedUdpFrame, ReassemblyConfig, ReassemblyOutcome,
+    UDP_HEADER_LEN, decode_udp_frame_owned, encode_udp_close, encode_udp_data_header,
     encode_udp_fragments,
 };
-pub use flow::{
+pub(crate) use flow::{
     Carrier, FLOW_HEADER_LEN, FlowHeader, FlowId, FlowKind, FlowRole, MAX_FLOW_ID, MAX_PORTAL_HOPS,
-    SESSION_ID_LEN, SessionId, decode_flow_header, encode_flow_header, read_flow_header,
-    write_flow_header,
+    SESSION_ID_LEN, SessionId, read_flow_header, write_flow_header,
 };
-pub use request::{
-    TARGET_ATYP_DOMAIN, TARGET_ATYP_IPV4, TARGET_ATYP_IPV6, TARGET_IPV4_LEN, TARGET_IPV6_LEN,
-    TARGET_MAX_ENCODED_LEN, Target, decode_target, encode_target, encode_target_into, read_request,
-    write_request, write_request_frame,
+pub(crate) use request::{TARGET_MAX_ENCODED_LEN, Target, encode_target_into, read_request};
+pub(crate) use result::{
+    FlowErrorCode, FlowResult, SetupResult, read_flow_result, write_flow_result,
 };
-pub use result::{
-    FlowErrorCode, FlowResult, SETUP_RESULT_LEN, SetupResult, decode_setup_result,
-    encode_flow_result, encode_setup_result, read_flow_result, read_setup_result,
-    write_flow_result, write_setup_result,
-};
-pub use uot::{
-    UOT_HEADER_LEN, UOT_PACKET_MAX, encode_udp_packet, encode_udp_packet_header, read_udp_packet,
-    read_udp_packet_into, write_udp_packet,
-};
+pub(crate) use uot::{read_udp_packet_into, write_udp_packet};
 pub const ALPN: &[u8] = b"nw2";
+
+#[cfg(test)]
+pub(crate) use datagram::{
+    ReassemblyDropReason, UdpFrame, decode_udp_frame, encode_udp_data_fragments,
+};
+#[cfg(test)]
+pub(crate) use flow::decode_flow_header;
+#[cfg(test)]
+pub(crate) use request::{encode_target, write_request_frame};
+#[cfg(test)]
+pub(crate) use result::encode_flow_result;
+#[cfg(test)]
+pub(crate) use uot::{encode_udp_packet, read_udp_packet};

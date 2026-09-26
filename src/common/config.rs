@@ -101,14 +101,6 @@ pub fn udp_data_buf_size() -> usize {
     env_int("NOW_UDP_DATA_BUF_SIZE", 64 * 1024) as usize
 }
 
-pub fn tcp_dial_timeout() -> Duration {
-    env_duration("NOW_TCP_DIAL_TIMEOUT", Duration::from_secs(15))
-}
-
-pub fn udp_dial_timeout() -> Duration {
-    env_duration("NOW_UDP_DIAL_TIMEOUT", Duration::from_secs(15))
-}
-
 pub fn tcp_read_timeout() -> Duration {
     env_duration("NOW_TCP_READ_TIMEOUT", Duration::from_secs(30))
 }
@@ -164,6 +156,7 @@ pub fn shutdown_timeout() -> Duration {
     env_duration("NOW_SHUTDOWN_TIMEOUT", Duration::from_secs(5))
 }
 
+#[cfg(test)]
 pub fn reload_interval() -> Duration {
     env_duration("NOW_RELOAD_INTERVAL", Duration::from_secs(60 * 60))
 }

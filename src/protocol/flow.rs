@@ -80,11 +80,13 @@ impl FlowHeader {
         Ok(())
     }
 
+    #[cfg(test)]
     pub const fn carries_target(self) -> bool {
         matches!(self.role, FlowRole::Duplex | FlowRole::Open)
     }
 }
 
+#[cfg(test)]
 pub fn encode_flow_header(header: FlowHeader) -> Result<[u8; FLOW_HEADER_LEN]> {
     write_flow_header(header)
 }

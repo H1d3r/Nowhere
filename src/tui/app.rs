@@ -32,7 +32,7 @@ enum InputMessage {
     Error(String),
 }
 
-pub async fn run_with_receiver(
+pub(super) async fn run_with_receiver(
     events: mpsc::Receiver<UiEvent>,
     commands: Option<mpsc::UnboundedSender<UiCommand>>,
 ) -> Result<()> {

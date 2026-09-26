@@ -86,7 +86,6 @@ pub struct InstanceMeta {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum EventLevel {
-    Debug,
     #[default]
     Info,
     Warn,

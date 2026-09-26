@@ -8,15 +8,12 @@ mod client;
 mod client_adapter;
 mod format;
 mod input;
-pub mod model;
+mod model;
 mod render;
 
 use anyhow::Result;
 
-pub use app::run_with_receiver;
-pub use client::UiCommand;
-
-pub async fn run() -> Result<()> {
+pub async fn run_tui() -> Result<()> {
     let client = client::start()?;
     app::run_with_receiver(client.events, Some(client.commands)).await
 }

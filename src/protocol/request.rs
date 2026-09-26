@@ -8,7 +8,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt};
+#[cfg(test)]
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use super::util::{DOMAIN_LEN_MAX, validate_domain_bytes, validate_port};
 
@@ -39,6 +41,7 @@ impl Target {
         Ok(Self::Domain { host, port })
     }
 
+    #[cfg(test)]
     pub const fn port(&self) -> u16 {
         match self {
             Self::Ip(address) => address.port(),
@@ -46,6 +49,7 @@ impl Target {
         }
     }
 
+    #[cfg(test)]
     pub const fn socket_addr(&self) -> Option<SocketAddr> {
         match self {
             Self::Ip(address) => Some(*address),
@@ -53,6 +57,7 @@ impl Target {
         }
     }
 
+    #[cfg(test)]
     pub fn domain_name(&self) -> Option<&str> {
         match self {
             Self::Ip(_) => None,
@@ -60,6 +65,7 @@ impl Target {
         }
     }
 
+    #[cfg(test)]
     pub const fn ip_addr(&self) -> Option<IpAddr> {
         match self {
             Self::Ip(address) => Some(address.ip()),
@@ -160,6 +166,7 @@ pub fn encode_target_into(target: &Target, output: &mut [u8]) -> Result<usize> {
     Ok(encoded_len)
 }
 
+#[cfg(test)]
 pub fn encode_target(target: &Target) -> Result<Vec<u8>> {
     let mut output = vec![0; target.encoded_len()?];
     let written = encode_target_into(target, &mut output)?;
@@ -272,6 +279,7 @@ pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Target
     }
 }
 
+#[cfg(test)]
 pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, target: &Target) -> Result<()> {
     let mut encoded = [0; TARGET_MAX_ENCODED_LEN];
     let encoded_len = encode_target_into(target, &mut encoded)?;
@@ -281,6 +289,7 @@ pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, target: &Targe
         .context("protocol::request::write_request: failed to write target")
 }
 
+#[cfg(test)]
 pub fn write_request_frame(target: &Target) -> Result<Vec<u8>> {
     encode_target(target)
 }

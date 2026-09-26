@@ -18,12 +18,12 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
-use crate::common::socks::{
+use crate::common::{
     COMMAND_BIND, COMMAND_CONNECT, COMMAND_UDP_ASSOCIATE, REPLY_ADDRESS_NOT_SUPPORTED,
     REPLY_COMMAND_NOT_SUPPORTED, REPLY_CONNECTION_NOT_ALLOWED, REPLY_SUCCEEDED, SocksAddress,
-    authenticate, decode_udp_packet, encode_udp_packet_into, read_request, write_reply,
+    authenticate, bind_udp_addrs, decode_udp_packet, encode_udp_packet_into, handshake_timeout,
+    read_request, udp_idle_timeout, write_reply,
 };
-use crate::common::{bind_udp_addrs, handshake_timeout, udp_idle_timeout};
 use crate::telemetry::{
     AccessOutcome, AccessSpan, AccessStart, RuntimeEvent, RuntimeKind, RuntimeLevel,
     TrafficProtocol, now_unix_ms,

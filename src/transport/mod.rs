@@ -10,7 +10,7 @@ mod quic;
 mod rate;
 mod stats;
 
-pub use buffers::{BufferLease, Buffers};
+pub(crate) use buffers::Buffers;
 pub(crate) use morph::{
     MorphKeys, MorphTcpStream, UdpRole, configure_morph_mtu, morph_endpoint_config,
     wrap_morph_udp_socket,
@@ -20,5 +20,5 @@ pub(crate) use owned_io::{
     write_owned_to,
 };
 pub(crate) use quic::{TransportFlowControl, transport_flow_control};
-pub use rate::{RateLimiter, TokenBucket};
+pub(crate) use rate::RateLimiter;
 pub use stats::Stats;
