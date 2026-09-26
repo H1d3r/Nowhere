@@ -9,29 +9,33 @@ use std::sync::Arc;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
-use super::{closed, frame_close, invalid};
-use crate::mux::wire::{CLOSE_FIN, FlowId, FrameHeader, FrameKind, HEADER_LEN, encode_header};
-use crate::mux::{Outbound, Shared};
+use super::{closed, frame_charge, frame_close, invalid};
+use crate::mux::wire::{CLOSE_FIN, FlowId, FrameHeader, HEADER_LEN, encode_header};
+use crate::mux::{Outbound, Shared, Terminal};
 
 pub(in crate::mux) async fn run_terminals(
     shared: Arc<Shared>,
-    mut terminal_rx: mpsc::Receiver<FlowId>,
+    mut terminal_rx: mpsc::Receiver<Terminal>,
 ) {
     loop {
         if shared.closed.load(std::sync::atomic::Ordering::Acquire) {
             return;
         }
-        let flow_id = tokio::select! {
+        let terminal = tokio::select! {
             _ = shared.closed_notify.cancelled() => return,
-            flow_id = terminal_rx.recv() => flow_id,
+            terminal = terminal_rx.recv() => terminal,
         };
-        let Some(flow_id) = flow_id else { return };
-        let Ok(header) = frame_close(flow_id, CLOSE_FIN) else {
+        let Some(terminal) = terminal else { return };
+        let Ok(header) = frame_close(terminal.flow_id, CLOSE_FIN) else {
             continue;
         };
         let sent = tokio::select! {
             _ = shared.closed_notify.cancelled() => return,
-            sent = shared.data_tx.send(Outbound::Control(header)) => sent,
+            sent = shared.data_tx.send(Outbound::Control {
+                header,
+                generation: terminal.generation,
+                finishes_flow: true,
+            }) => sent,
         };
         if sent.is_err() {
             return;
@@ -79,19 +83,33 @@ pub(in crate::mux) async fn run_writer<W: AsyncWrite + Unpin>(
                         return Err(closed());
                     }
                 }
-                Outbound::Control(header) => {
+                Outbound::Control {
+                    header,
+                    generation,
+                    finishes_flow,
+                } => {
                     headers.clear();
                     finished_flows.clear();
-                    if header.kind == FrameKind::Fin {
-                        finished_flows.push(header.flow_id);
+                    if !shared.is_current_flow(header.flow_id, &generation) {
+                        continue;
+                    }
+                    if finishes_flow {
+                        finished_flows.push((header.flow_id, generation));
                     }
                     headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
                     while headers.len() < HEADER_LEN * 256 {
                         let Ok(next) = data_rx.try_recv() else { break };
                         match next {
-                            Outbound::Control(header) => {
-                                if header.kind == FrameKind::Fin {
-                                    finished_flows.push(header.flow_id);
+                            Outbound::Control {
+                                header,
+                                generation,
+                                finishes_flow,
+                            } => {
+                                if !shared.is_current_flow(header.flow_id, &generation) {
+                                    continue;
+                                }
+                                if finishes_flow {
+                                    finished_flows.push((header.flow_id, generation));
                                 }
                                 headers.extend_from_slice(&encode_header(header).map_err(invalid)?);
                             }
@@ -103,15 +121,22 @@ pub(in crate::mux) async fn run_writer<W: AsyncWrite + Unpin>(
                     }
                     writer.write_all(&headers).await?;
                     writer.flush().await?;
-                    for flow_id in finished_flows.drain(..) {
-                        shared.finish_local_fin(flow_id);
+                    for (flow_id, generation) in finished_flows.drain(..) {
+                        shared.finish_local_fin(flow_id, &generation);
                     }
                 }
                 Outbound::Data {
                     header,
                     payload,
+                    generation,
                     _slot,
                 } => {
+                    if !shared.is_current_flow(header.flow_id, &generation) {
+                        shared
+                            .connection_send_credit
+                            .add_permits(frame_charge(payload.len()));
+                        continue;
+                    }
                     let header = encode_header(header).map_err(invalid)?;
                     write_frame_vectored(&mut writer, &header, payload.as_ref()).await?;
                     drop(_slot);

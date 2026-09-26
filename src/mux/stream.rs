@@ -82,7 +82,8 @@ impl AsyncRead for FlowReader {
                 buf.put_slice(&payload[offset..offset + count]);
                 let next = offset + count;
                 if next == payload.len() {
-                    self.shared.release_receive(self.flow_id, charge);
+                    self.shared
+                        .release_receive(self.flow_id, &self.generation, charge);
                 } else {
                     self.current = Some((payload, next, charge));
                 }
@@ -119,6 +120,7 @@ impl FlowReader {
                 payload.slice(offset..),
                 self.shared.clone(),
                 self.flow_id,
+                self.generation.clone(),
                 charge,
             )));
         }
@@ -130,6 +132,7 @@ impl FlowReader {
                 payload,
                 self.shared.clone(),
                 self.flow_id,
+                self.generation.clone(),
                 charge,
             ))),
             Some(Inbound::Fin) | None => {
@@ -151,14 +154,16 @@ impl Drop for FlowReader {
     fn drop(&mut self) {
         self.receiver.close();
         if let Some((_, _, charge)) = self.current.take() {
-            self.shared.release_receive(self.flow_id, charge);
+            self.shared
+                .release_receive(self.flow_id, &self.generation, charge);
         }
         while let Ok(inbound) = self.receiver.try_recv() {
             if let Inbound::Data { charge, .. } = inbound {
-                self.shared.release_receive(self.flow_id, charge);
+                self.shared
+                    .release_receive(self.flow_id, &self.generation, charge);
             }
         }
-        self.shared.release_part(self.flow_id);
+        self.shared.release_part(self.flow_id, &self.generation);
     }
 }
 
@@ -216,10 +221,16 @@ impl AsyncWrite for FlowWriter {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.closed {
+            return Poll::Ready(Ok(()));
+        }
         match self.poll_pending(cx) {
             Some(Poll::Pending) => return Poll::Pending,
             Some(Poll::Ready(Err(error))) => return Poll::Ready(Err(error)),
             _ => {}
+        }
+        if !self.shared.is_current_flow(self.flow_id, &self.generation) {
+            return Poll::Ready(Err(closed()));
         }
         if self.pending_action.is_none() {
             let shared = self.shared.clone();
@@ -245,13 +256,21 @@ impl AsyncWrite for FlowWriter {
             Some(Poll::Ready(Err(error))) => return Poll::Ready(Err(error)),
             _ => {}
         }
+        if !self.shared.is_current_flow(self.flow_id, &self.generation) {
+            return Poll::Ready(Err(closed()));
+        }
         if self.pending_action.is_none() {
             let shared = self.shared.clone();
             let flow_id = self.flow_id;
+            let generation = self.generation.clone();
             self.pending_action = Some(Box::pin(async move {
                 shared
                     .data_tx
-                    .send(Outbound::Control(frame_close(flow_id, CLOSE_FIN)?))
+                    .send(Outbound::Control {
+                        header: frame_close(flow_id, CLOSE_FIN)?,
+                        generation,
+                        finishes_flow: true,
+                    })
                     .await
                     .map_err(|_| closed())
             }));
@@ -275,8 +294,9 @@ impl FlowWriter {
     ) -> Poll<io::Result<usize>> {
         let shared = self.shared.clone();
         let flow_id = self.flow_id;
+        let generation = self.generation.clone();
         self.pending = Some(Box::pin(async move {
-            send_data(shared, flow_id, payload).await?;
+            send_data(shared, flow_id, generation, payload).await?;
             Ok(length)
         }));
         self.poll_pending(cx).expect("mux write future installed")
@@ -322,15 +342,31 @@ impl FlowWriter {
                 "mux chunk exceeds frame size",
             ));
         }
-        super::driver::send_data(self.shared.clone(), self.flow_id, chunk).await
+        super::driver::send_data(
+            self.shared.clone(),
+            self.flow_id,
+            self.generation.clone(),
+            chunk,
+        )
+        .await
     }
 }
 
 impl Drop for FlowWriter {
     fn drop(&mut self) {
-        if !self.closed && self.shared.terminal_tx.try_send(self.flow_id).is_err() {
+        if !self.closed
+            && self.shared.is_current_flow(self.flow_id, &self.generation)
+            && self
+                .shared
+                .terminal_tx
+                .try_send(super::Terminal {
+                    flow_id: self.flow_id,
+                    generation: self.generation.clone(),
+                })
+                .is_err()
+        {
             self.shared.close();
         }
-        self.shared.release_part(self.flow_id);
+        self.shared.release_part(self.flow_id, &self.generation);
     }
 }

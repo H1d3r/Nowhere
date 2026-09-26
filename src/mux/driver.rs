@@ -18,16 +18,21 @@ pub(super) use writer::{run_terminals, run_writer};
 pub(super) async fn send_data(
     shared: Arc<Shared>,
     flow_id: FlowId,
+    generation: Arc<()>,
     payload: MuxChunk,
 ) -> io::Result<()> {
     let charge = frame_charge(payload.len());
     let (flow_credit, slot) = {
         let flows = shared.flows.lock().expect("mux flow lock");
         let flow = flows.get(&flow_id).ok_or_else(closed)?;
+        if !Arc::ptr_eq(&flow.generation, &generation) {
+            return Err(closed());
+        }
         (flow.send_credit.clone(), flow.send_slot.clone())
     };
     let slot = slot.acquire_owned().await.map_err(|_| closed())?;
     let flow = flow_credit
+        .clone()
         .acquire_many_owned(charge as u32)
         .await
         .map_err(|_| closed())?;
@@ -42,6 +47,7 @@ pub(super) async fn send_data(
         .send(Outbound::Data {
             header: frame_data(flow_id, payload.len())?,
             payload,
+            generation,
             _slot: slot,
         })
         .await

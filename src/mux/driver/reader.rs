@@ -80,9 +80,12 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
 async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes) -> io::Result<()> {
     let charge = frame_charge(payload.len());
     match shared.admit_receive(header.flow_id, charge)? {
-        ReceiveTarget::Deliver(inbound) => {
+        ReceiveTarget::Deliver {
+            inbound,
+            generation,
+        } => {
             if inbound.send(Inbound::Data { payload, charge }).is_err() {
-                shared.release_receive(header.flow_id, charge);
+                shared.release_receive(header.flow_id, &generation, charge);
             }
         }
         ReceiveTarget::Discard => {

@@ -25,7 +25,7 @@ pub(super) struct Shared {
     pub(super) pending_connection_credit: AtomicUsize,
     pub(super) ready_flows: Mutex<VecDeque<FlowId>>,
     pub(super) data_tx: mpsc::Sender<Outbound>,
-    pub(super) terminal_tx: mpsc::Sender<FlowId>,
+    pub(super) terminal_tx: mpsc::Sender<Terminal>,
     pub(super) control_notify: Notify,
     pub(super) incoming_tx: mpsc::Sender<MuxStream>,
     pub(super) active_streams_tx: watch::Sender<usize>,
@@ -36,6 +36,7 @@ pub(super) struct Shared {
 }
 
 pub(super) struct FlowState {
+    pub(super) generation: Arc<()>,
     pub(super) inbound: mpsc::UnboundedSender<Inbound>,
     pub(super) send_credit: Arc<Semaphore>,
     pub(super) send_slot: Arc<Semaphore>,
@@ -54,17 +55,30 @@ pub(super) enum Inbound {
 }
 
 pub(super) enum ReceiveTarget {
-    Deliver(mpsc::UnboundedSender<Inbound>),
+    Deliver {
+        inbound: mpsc::UnboundedSender<Inbound>,
+        generation: Arc<()>,
+    },
     Discard,
+}
+
+pub(super) struct Terminal {
+    pub(super) flow_id: FlowId,
+    pub(super) generation: Arc<()>,
 }
 
 pub(super) enum Outbound {
     Data {
         header: FrameHeader,
         payload: MuxChunk,
+        generation: Arc<()>,
         _slot: tokio::sync::OwnedSemaphorePermit,
     },
-    Control(FrameHeader),
+    Control {
+        header: FrameHeader,
+        generation: Arc<()>,
+        finishes_flow: bool,
+    },
     Flush(oneshot::Sender<io::Result<()>>),
 }
 
@@ -101,6 +115,7 @@ impl Shared {
             ));
         }
         let send_credit = Arc::new(Semaphore::new(credit_units(BASE_STREAM_WINDOW_BYTES)));
+        let generation = Arc::new(());
         let initial_credit = if advertise_window {
             credit_units(
                 self.config
@@ -113,6 +128,7 @@ impl Shared {
         flows.insert(
             flow_id,
             FlowState {
+                generation: generation.clone(),
                 inbound: sender,
                 send_credit,
                 send_slot: Arc::new(Semaphore::new(1)),
@@ -138,6 +154,7 @@ impl Shared {
             reader: FlowReader {
                 shared: self.clone(),
                 flow_id,
+                generation: generation.clone(),
                 receiver,
                 current: None,
                 eof: false,
@@ -145,6 +162,7 @@ impl Shared {
             writer: FlowWriter {
                 shared: self.clone(),
                 flow_id,
+                generation,
                 pending: None,
                 pending_action: None,
                 closed: false,
@@ -175,6 +193,14 @@ impl Shared {
             .get(&flow_id)
             .map(|flow| flow.send_credit.clone())
             .ok_or_else(closed)
+    }
+
+    pub(super) fn is_current_flow(&self, flow_id: FlowId, expected: &Arc<()>) -> bool {
+        self.flows
+            .lock()
+            .expect("mux flow lock")
+            .get(&flow_id)
+            .is_some_and(|flow| Arc::ptr_eq(&flow.generation, expected))
     }
 
     pub(super) fn remove_flow(&self, flow_id: FlowId) -> Option<FlowState> {
@@ -220,7 +246,10 @@ impl Shared {
         if flow.local_parts == 0 {
             Ok(ReceiveTarget::Discard)
         } else {
-            Ok(ReceiveTarget::Deliver(flow.inbound.clone()))
+            Ok(ReceiveTarget::Deliver {
+                inbound: flow.inbound.clone(),
+                generation: flow.generation.clone(),
+            })
         }
     }
 
@@ -246,7 +275,7 @@ impl Shared {
         }
     }
 
-    pub(super) fn release_receive(&self, flow_id: FlowId, charge: usize) {
+    pub(super) fn release_receive(&self, flow_id: FlowId, generation: &Arc<()>, charge: usize) {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
@@ -263,7 +292,7 @@ impl Shared {
                 .lock()
                 .expect("mux flow lock")
                 .get_mut(&flow_id)
-                .filter(|flow| flow.local_parts != 0)
+                .filter(|flow| flow.local_parts != 0 && Arc::ptr_eq(&flow.generation, generation))
             {
                 flow.receive_credit = flow
                     .receive_credit
@@ -300,11 +329,14 @@ impl Shared {
         }
     }
 
-    pub(super) fn release_part(&self, flow_id: FlowId) {
+    pub(super) fn release_part(&self, flow_id: FlowId, generation: &Arc<()>) {
         let mut flows = self.flows.lock().expect("mux flow lock");
         let Some(flow) = flows.get_mut(&flow_id) else {
             return;
         };
+        if !Arc::ptr_eq(&flow.generation, generation) {
+            return;
+        }
         flow.local_parts = flow.local_parts.saturating_sub(1);
         let flush_credit = flow.pending_receive_credit != 0;
         if flow.local_parts == 0 {
@@ -322,9 +354,12 @@ impl Shared {
         }
     }
 
-    pub(super) fn finish_local_fin(&self, flow_id: FlowId) {
+    pub(super) fn finish_local_fin(&self, flow_id: FlowId, generation: &Arc<()>) {
         let mut flows = self.flows.lock().expect("mux flow lock");
-        if let Some(flow) = flows.get_mut(&flow_id) {
+        if let Some(flow) = flows
+            .get_mut(&flow_id)
+            .filter(|flow| Arc::ptr_eq(&flow.generation, generation))
+        {
             flow.local_fin_sent = true;
             if flow.local_parts == 0 && flow.remote_fin {
                 flows.remove(&flow_id);

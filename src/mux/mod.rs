@@ -18,7 +18,7 @@ use self::config::{
     MAX_CONNECTION_WINDOW_BYTES, MAX_STREAM_WINDOW_BYTES,
 };
 pub(crate) use self::config::{MUX_IDLE_TIMEOUT, MuxConfig};
-use self::state::{Inbound, Outbound, ReceiveTarget, Shared, active_flow_count};
+use self::state::{Inbound, Outbound, ReceiveTarget, Shared, Terminal, active_flow_count};
 use self::wire::FlowId;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
@@ -46,12 +46,14 @@ pub(crate) struct MuxChunk {
 struct ReceiveCredit {
     shared: Arc<Shared>,
     flow_id: FlowId,
+    generation: Arc<()>,
     charge: usize,
 }
 
 pub(crate) struct FlowReader {
     shared: Arc<Shared>,
     flow_id: FlowId,
+    generation: Arc<()>,
     receiver: mpsc::UnboundedReceiver<Inbound>,
     current: Option<(Bytes, usize, usize)>,
     eof: bool,
@@ -60,6 +62,7 @@ pub(crate) struct FlowReader {
 pub(crate) struct FlowWriter {
     shared: Arc<Shared>,
     flow_id: FlowId,
+    generation: Arc<()>,
     pending: Option<WriteFuture>,
     pending_action: Option<ActionFuture>,
     closed: bool,
@@ -85,12 +88,19 @@ impl MuxChunk {
         }
     }
 
-    fn received(payload: Bytes, shared: Arc<Shared>, flow_id: FlowId, charge: usize) -> Self {
+    fn received(
+        payload: Bytes,
+        shared: Arc<Shared>,
+        flow_id: FlowId,
+        generation: Arc<()>,
+        charge: usize,
+    ) -> Self {
         Self {
             payload,
             _credit: Some(ReceiveCredit {
                 shared,
                 flow_id,
+                generation,
                 charge,
             }),
         }
@@ -113,7 +123,8 @@ impl AsRef<[u8]> for MuxChunk {
 
 impl Drop for ReceiveCredit {
     fn drop(&mut self) {
-        self.shared.release_receive(self.flow_id, self.charge);
+        self.shared
+            .release_receive(self.flow_id, &self.generation, self.charge);
     }
 }
 

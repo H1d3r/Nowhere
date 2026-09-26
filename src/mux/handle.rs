@@ -80,14 +80,22 @@ impl MuxHandle {
 
     pub(crate) async fn open_prepared(&self, stream: MuxStream) -> io::Result<MuxStream> {
         let flow_id = stream.flow_id();
+        let generation = stream.writer.generation.clone();
+        if !self.shared.is_current_flow(flow_id, &generation) {
+            return Err(closed());
+        }
         self.shared
             .data_tx
-            .send(Outbound::Control(frame_open(
-                flow_id,
-                self.shared.config.stream_window_bytes,
-            )?))
+            .send(Outbound::Control {
+                header: frame_open(flow_id, self.shared.config.stream_window_bytes)?,
+                generation: generation.clone(),
+                finishes_flow: false,
+            })
             .await
             .map_err(|_| closed())?;
+        if !self.shared.is_current_flow(flow_id, &generation) {
+            return Err(closed());
+        }
         Ok(stream)
     }
 
