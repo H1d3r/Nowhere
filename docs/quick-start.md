@@ -2,8 +2,8 @@
 
 Use a release archive for a supported target or build with
 `cargo build --release --locked`. The commands below work in Linux/macOS
-shells and PowerShell. Windows Command Prompt users should replace single
-quotes with double quotes and invoke `nowhere.exe`.
+shells, PowerShell, and Windows Command Prompt. On Windows, invoke
+`nowhere.exe` instead of `nowhere`.
 
 ```text
 +-------------+  SOCKS5  +--------+  encrypted carrier  +--------+  TCP/UDP  +--------+
@@ -24,7 +24,7 @@ observer and does not start, stop, or reconfigure either process.
 ## 1. Start Portal
 
 ```text
-nowhere 'portal://secret@:2000?log=info'
+nowhere "portal://secret@:2000?log=info"
 ```
 
 The compact endpoint listens for TLS/TCP and QUIC on the same numeric port.
@@ -49,7 +49,7 @@ only selected interfaces. Hostnames are resolved once during startup.
 For independent carrier ports, start Portal with:
 
 ```text
-nowhere 'portal://secret@*/tcp:2006/udp:2017?log=info'
+nowhere "portal://secret@*/tcp:2006/udp:2017?log=info"
 ```
 
 Portal prints one listening line for each bound TCP or UDP address. The TUI
@@ -63,19 +63,19 @@ operating system does not support one address family.
 Dedicated TLS lanes in both directions use the compact endpoint defaults:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080'
+nowhere "vector://secret@127.0.0.1:2000?socks=127.0.0.1:1080"
 ```
 
 QUIC in both directions:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2000?up=udp&down=udp&socks=127.0.0.1:1080'
+nowhere "vector://secret@127.0.0.1:2000?up=udp&down=udp&socks=127.0.0.1:1080"
 ```
 
 When Portal uses independent ports, Vector declares the same endpoint:
 
 ```text
-nowhere 'vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080'
+nowhere "vector://secret@127.0.0.1/tcp:2006/udp:2017?up=tcp&down=udp&socks=127.0.0.1:1080"
 ```
 
 The carrier path describes what can be dialed. `up` and `down` choose from
@@ -84,8 +84,8 @@ endpoints default both directions to TCP with Mux disabled. A single-carrier
 endpoint needs no explicit direction policy:
 
 ```text
-nowhere 'vector://secret@127.0.0.1/tcp4:2006?socks=127.0.0.1:1080'
-nowhere 'vector://secret@[::1]/udp6:2017?socks=127.0.0.1:1080'
+nowhere "vector://secret@127.0.0.1/tcp4:2006?socks=127.0.0.1:1080"
+nowhere "vector://secret@[::1]/udp6:2017?socks=127.0.0.1:1080"
 ```
 
 The first command defaults both directions to TCP; the second defaults both to
@@ -109,7 +109,7 @@ route per flow and can use the other once if primary preparation fails.
 Stateless per-flow selection across full-duplex TLS and QUIC uses:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080'
+nowhere "vector://secret@127.0.0.1:2000?up=mix&down=mix&socks=127.0.0.1:1080"
 ```
 
 `mix/mix` chooses `tcp/tcp` or `udp/udp` once per flow. A single mixed
@@ -121,7 +121,7 @@ TLS Mux is enabled on Vector. Portal recognizes the marked carrier
 automatically:
 
 ```text
-nowhere 'vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080'
+nowhere "vector://secret@127.0.0.1:2000?up=tcp&down=tcp&mux=1&socks=127.0.0.1:1080"
 ```
 
 Both peers use the fixed `nw2` ALPN. The ALPN is not configurable.

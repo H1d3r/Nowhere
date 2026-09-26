@@ -13,8 +13,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick start</a> &middot;
-  <a href="#clients">Clients</a> &middot;
-  <a href="docs/clients.md#link-format">Link format</a> &middot;
+  <a href="#ecosystem">Ecosystem</a> &middot;
   <a href="#how-it-works">Architecture</a> &middot;
   <a href="#live-operations">Live operations</a> &middot;
   <a href="docs/README.md">Documentation</a> &middot;
@@ -46,19 +45,19 @@ cargo build --release --locked
 
 ### 2. Start Portal
 
-Listen on TLS/TCP and QUIC/UDP at port `2000`:
+Listen on TLS/TCP and QUIC/UDP at all interfaces on port `2000`:
 
 ```bash
-./target/release/nowhere 'portal://change-me@127.0.0.1:2000'
+./target/release/nowhere "portal://change-me@*:2000"
 ```
 
 ### 3. Start Vector
 
-Expose SOCKS5 on `127.0.0.1:1080`:
+Connect to Portal and expose SOCKS5 on `127.0.0.1:1080`:
 
 ```bash
 ./target/release/nowhere \
-  'vector://change-me@127.0.0.1:2000?up=tcp&down=tcp&socks=127.0.0.1:1080'
+  "vector://change-me@portal.example:2000?up=tcp&down=tcp&socks=127.0.0.1:1080"
 ```
 
 More examples are available in [Configuration](docs/configuration.md) and the
@@ -72,32 +71,49 @@ Open the local TUI from another terminal:
 ./target/release/nowhere tui
 ```
 
-## Clients
+## Ecosystem
 
 <table>
 <tr>
-<td width="100" align="center">
-<a href="https://github.com/NodePassProject/Anywhere"><img src="https://storage.argsment.com/Anywhere-AppIcon-iOS.png" width="80" height="80" alt="Anywhere"></a>
+<td width="50%" valign="top">
+<sub>CLIENT · APPLE PLATFORMS</sub><br><br>
+<strong><a href="https://github.com/NodePassProject/Anywhere">Anywhere</a></strong><br>
+Native Swift client with independent TCP/UDP carriers, optional TLS multiplexing, and Morph with Prelude.<br><br>
+<a href="https://apps.apple.com/us/app/id6758235178">App Store</a>
 </td>
-<td>
-<strong>Anywhere</strong> · iOS, iPadOS &amp; tvOS<br>
-Native Swift client with independent TCP/UDP carriers, TLS multiplexing, and Morph.<br>
-<a href="https://github.com/NodePassProject/Anywhere">Source code</a> &middot;
-<a href="https://apps.apple.com/us/app/id6758235178">App Store</a> &middot;
-<a href="https://github.com/NodePassProject/Anywhere#deep-links">Import guide</a>
+<td width="50%" valign="top">
+<sub>DEPLOY · LINUX VPS</sub><br><br>
+<strong><a href="https://github.com/NodePassProject/nowhere-sh">nowhere-sh</a></strong><br>
+Interactive Linux VPS deployment script, from installation and upgrades to links, QR codes, and the TUI.<br><br>
+<a href="https://github.com/NodePassProject/nowhere-sh#quick-start">Quick start</a>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<sub>CONTROL · SINGLE-HOST</sub><br><br>
+<strong><a href="https://github.com/NodePassProject/OpenCtrl">OpenCtrl</a></strong><br>
+Supervises Portal and Vector processes and exposes their lifecycle and telemetry through REST and SSE.<br><br>
+<a href="https://github.com/NodePassProject/OpenCtrl/blob/main/docs/master.md">API reference</a>
+</td>
+<td width="50%" valign="top">
+<sub>OPERATE · MULTI-HOST</sub><br><br>
+<strong><a href="https://github.com/NodePassProject/NowhereDash">NowhereDash</a></strong><br>
+Web dashboard for Portal fleets across OpenCtrl endpoints, with live telemetry and private subscriptions.<br><br>
+<a href="https://github.com/NodePassProject/NowhereDash#quick-start">Quick start</a>
 </td>
 </tr>
 </table>
 
-Anywhere connects directly to Portal. Import a share link to get started:
+Anywhere and the built-in Vector connect directly to Portal. Import a share
+link into Anywhere to get started:
 
 ```text
-nowhere://change-me@relay.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
+nowhere://change-me@portal.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
 ```
 
-See [Clients and share links](docs/clients.md) for the full format, parameters,
-and import instructions. For a local SOCKS5 endpoint, use **Vector** as shown
-in the [quick start](#quick-start).
+See [Ecosystem and share links](docs/ecosystem.md) for how the projects fit
+together, plus the full link format, parameters, and import instructions. For
+a local SOCKS5 endpoint, use **Vector** as shown in the [quick start](#quick-start).
 
 ## How it works
 
@@ -194,7 +210,7 @@ A Portal can open the next Nowhere hop directly:
 
 ```bash
 nowhere \
-  'portal://relay-key@:2000?next=origin-key@origin.example:2000&up=udp&down=udp'
+  "portal://relay-key@:2000?next=origin-key@origin.example:2000&up=udp&down=udp"
 ```
 
 `next` is lazy, mutually exclusive with outbound `socks`, and bounded to seven
@@ -216,8 +232,8 @@ The local examples disable certificate verification by omitting `sni`. Public
 deployments should use a trusted certificate and verified server name:
 
 ```bash
-nowhere 'portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem'
-nowhere 'vector://change-me@relay.example:2000?sni=relay.example&socks=127.0.0.1:1080'
+nowhere "portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhere/key.pem"
+nowhere "vector://change-me@portal.example:2000?sni=portal.example&socks=127.0.0.1:1080"
 ```
 
 Certificate pinning is also available. Review [Security](docs/security.md) and
@@ -234,7 +250,7 @@ and [Operations](docs/operations.md).
 | Guide | Covers |
 | --- | --- |
 | [Quick start](docs/quick-start.md) | Build, run, and connect |
-| [Clients and share links](docs/clients.md) | Clients, link format, and import instructions |
+| [Ecosystem](docs/ecosystem.md) | Clients, deployment and control tools, link format |
 | [Configuration](docs/configuration.md) | Service URL, options, chaining, and env variables |
 | [Wire protocol](docs/protocol.md) | Authentication, flows, Mux, and Morph |
 | [Security](docs/security.md) | Certificate verification and trust boundaries |

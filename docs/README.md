@@ -5,7 +5,7 @@ Each document owns one part of the Nowhere interface.
 | Need | Document |
 |---|---|
 | Start a local Portal and Vector | [Quick start](quick-start.md) |
-| Connect a client or share a Portal link | [Clients and share links](clients.md) |
+| Explore clients and management tools or share a Portal link | [Ecosystem](ecosystem.md) |
 | Configure URLs and runtime behavior | [Configuration](configuration.md) |
 | Deploy and observe processes | [Operations](operations.md) |
 | Choose a supported system | [Platforms](platforms.md) |
