@@ -256,7 +256,6 @@ async fn handle_mux(
     loop {
         let accepted = tokio::select! {
             _ = shutdown.cancelled() => break,
-            _ = portal.drain.cancelled() => break,
             accepted = incoming.accept() => accepted,
             _ = flow_tasks.join_next(), if !flow_tasks.is_empty() => continue,
             idle = mux.idle_for(idle_timeout) => {

@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::common::{LogLevel, Logger, MUX_MARKER};
+use crate::mux::{MuxConfig, MuxHandle};
 use crate::portal::Portal;
 use crate::portal::conn::tcp::{
     AUTHENTICATED_LANE_BOOTSTRAP_TIMEOUT, handle_tcp_incoming_with_bootstrap_timeout,
@@ -435,6 +436,79 @@ async fn tls_mux_carrier_closes_after_becoming_fully_idle() {
     );
     assert_eq!(portal.inner.stats.link_tcp.load(Ordering::Relaxed), 0);
     shutdown.cancel();
+}
+
+#[tokio::test]
+async fn tls_mux_active_flow_survives_graceful_drain() {
+    let target_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = target_listener.local_addr().unwrap();
+    let target_task = tokio::spawn(async move {
+        let (mut stream, _) = target_listener.accept().await.unwrap();
+        for expected in [b"before", b"after!"] {
+            let mut payload = [0; 6];
+            stream.read_exact(&mut payload).await.unwrap();
+            assert_eq!(&payload, expected);
+            stream.write_all(&payload).await.unwrap();
+        }
+    });
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listen_addr = listener.local_addr().unwrap();
+    let portal = Portal::new(
+        Url::parse("portal://secret@127.0.0.1:2000?log=none&net=tcp").unwrap(),
+        Logger::new(LogLevel::None, false),
+    )
+    .unwrap();
+    let portal_inner = portal.inner.clone();
+    let shutdown = CancellationToken::new();
+    let child_shutdown = shutdown.clone();
+    let mut server_task = tokio::spawn(async move {
+        let (stream, peer) = listener.accept().await.unwrap();
+        let admission = portal_inner
+            .unauthenticated_admission
+            .try_acquire(peer.ip())
+            .unwrap();
+        handle_tcp_incoming(portal_inner, stream, peer, admission, child_shutdown).await;
+    });
+
+    let mut tls = connect_test_tls(listen_addr).await;
+    let mut bootstrap = tls_auth_frame(&portal, &tls, [24; 16]).to_vec();
+    bootstrap.push(MUX_MARKER);
+    tls.write_all(&bootstrap).await.unwrap();
+    tls.flush().await.unwrap();
+    let (mux, incoming) = MuxHandle::start(tls, MuxConfig::default()).unwrap();
+    drop(incoming);
+    let mut flow = mux.open_stream(7).await.unwrap();
+    flow.write_all(&duplex_setup(7, FlowKind::Tcp, &target.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(
+        read_flow_result(&mut flow).await.unwrap(),
+        FlowResult::Ready
+    );
+
+    flow.write_all(b"before").await.unwrap();
+    let mut echoed = [0; 6];
+    flow.read_exact(&mut echoed).await.unwrap();
+    assert_eq!(&echoed, b"before");
+
+    portal.inner.drain.cancel();
+    assert!(
+        timeout(Duration::from_millis(100), &mut server_task)
+            .await
+            .is_err(),
+        "graceful drain closed an active Mux carrier"
+    );
+    flow.write_all(b"after!").await.unwrap();
+    flow.read_exact(&mut echoed).await.unwrap();
+    assert_eq!(&echoed, b"after!");
+
+    flow.shutdown().await.unwrap();
+    drop(flow);
+    target_task.await.unwrap();
+    shutdown.cancel();
+    server_task.await.unwrap();
+    mux.close();
 }
 
 #[tokio::test]
