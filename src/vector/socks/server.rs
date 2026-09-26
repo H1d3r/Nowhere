@@ -133,17 +133,20 @@ async fn handle_client(
     peer: SocketAddr,
     shutdown: CancellationToken,
 ) -> Result<()> {
-    let request = tokio::time::timeout(handshake_timeout(), async {
-        let credentials = vector
-            .config
-            .socks
-            .credentials
-            .as_ref()
-            .map(|value| value.as_pair());
-        authenticate(&mut stream, credentials).await?;
-        read_request(&mut stream).await
-    })
-    .await;
+    let request = tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => return Ok(()),
+        request = tokio::time::timeout(handshake_timeout(), async {
+            let credentials = vector
+                .config
+                .socks
+                .credentials
+                .as_ref()
+                .map(|value| value.as_pair());
+            authenticate(&mut stream, credentials).await?;
+            read_request(&mut stream).await
+        }) => request,
+    };
     let request = match request {
         Ok(Ok(request)) => request,
         Ok(Err(error)) => {
@@ -187,10 +190,30 @@ async fn handle_client(
                 &request.address,
             );
             let target = to_target(&request.address)?;
-            match open_tcp(vector.client.clone(), &target, 0).await {
+            let opened = tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => {
+                    access.finish(AccessOutcome::Cancelled, None);
+                    return Ok(());
+                }
+                opened = open_tcp(vector.client.clone(), &target, 0) => opened,
+            };
+            match opened {
                 Ok(tunnel) => {
                     let reply = tunnel.socks_reply();
-                    write_reply(&mut stream, reply, &SocksAddress::unspecified()).await?;
+                    let unspecified = SocksAddress::unspecified();
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.cancelled() => {
+                            access.finish(AccessOutcome::Cancelled, None);
+                            return Ok(());
+                        }
+                        result = write_reply(
+                            &mut stream,
+                            reply,
+                            &unspecified,
+                        ) => result?,
+                    }
                     tokio::select! {
                         result = relay_tcp(vector, stream, tunnel, peer, &request.address, access) => result,
                         _ = shutdown.cancelled() => Ok(()),
