@@ -4,7 +4,43 @@
 //! Tests for TLS Mux slot allocation, reuse, pressure, and initialization cancellation.
 
 use super::*;
+use std::sync::atomic::AtomicBool;
 use tokio::io::AsyncReadExt;
+use url::Url;
+
+use crate::telemetry::{InstanceRole, TelemetryHub};
+use crate::transport::Stats;
+use crate::vector::config::VectorConfig;
+
+struct DropMarker(Arc<AtomicBool>);
+
+impl Drop for DropMarker {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+fn manager() -> Arc<TlsManager> {
+    let url = Url::parse("vector://secret@127.0.0.1:2000?mux=1&socks=127.0.0.1:1080").unwrap();
+    let config = VectorConfig::from_url(&url).unwrap();
+    let portal = config.portal_client_config();
+    let credentials = Credentials::new(&url).unwrap();
+    let tls = ClientTls::new(&portal).unwrap();
+    let stats = Arc::new(Stats::default());
+    let telemetry = TelemetryHub::for_current_process(
+        InstanceRole::Vector,
+        "test",
+        "test",
+        Duration::from_secs(1),
+    );
+    TlsManager::new(
+        &portal,
+        tls,
+        &credentials,
+        [0; crate::protocol::SESSION_ID_LEN],
+        ClientSignals::new(stats, telemetry, LatencyTracker::new()),
+    )
+}
 
 fn slot(handle: MuxHandle) -> Arc<TlsMux> {
     let slot = Arc::new(TlsMux::default());
@@ -181,4 +217,37 @@ async fn closed_carrier_is_replaced_with_a_reusable_slot() {
     assert!(!Arc::ptr_eq(&pending.0, &old));
     peer.close();
     drop(streams);
+}
+
+#[tokio::test]
+async fn shutdown_closes_mux_pool_and_drains_monitors() {
+    let manager = manager();
+    let (handle, peer, _incoming, streams) = carrier(false).await;
+    manager.mux.lock().await.push(slot(handle.clone()));
+    let (orphan, orphan_peer, _orphan_incoming, orphan_streams) = carrier(false).await;
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let marker = DropMarker(dropped.clone());
+    let orphan_lifetime = orphan.clone();
+    let close = CloseMuxOnDrop(orphan_lifetime);
+    manager.mux_monitors.lock().await.spawn(async move {
+        let _marker = marker;
+        let _close = close;
+        std::future::pending::<()>().await;
+    });
+
+    manager.close().await;
+
+    assert!(manager.closed.load(Ordering::Acquire));
+    assert!(manager.mux.lock().await.is_empty());
+    assert!(manager.mux_monitors.lock().await.is_empty());
+    assert!(handle.is_closed());
+    assert!(orphan.is_closed());
+    assert!(dropped.load(Ordering::Acquire));
+    assert!(manager.open(99).await.is_err());
+
+    manager.close().await;
+    peer.close();
+    orphan_peer.close();
+    drop((streams, orphan_streams));
 }

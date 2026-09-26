@@ -125,6 +125,7 @@ impl PortalClient {
 
     pub(crate) async fn close(&self, deadline: Instant) {
         self.shutdown.cancel();
+        self.tls_manager.close().await;
         self.quic.close(deadline).await;
     }
 }

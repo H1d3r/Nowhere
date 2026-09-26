@@ -4,8 +4,9 @@
 //! TLS carrier establishment and shared Mux connection management.
 
 use super::*;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize};
 use tokio::sync::OnceCell;
+use tokio::task::JoinSet;
 
 pub(in crate::vector) struct TlsManager {
     endpoint: Option<(String, crate::common::AddressFamily)>,
@@ -17,7 +18,9 @@ pub(in crate::vector) struct TlsManager {
     telemetry: Arc<TelemetryHub>,
     latency: Arc<LatencyTracker>,
     mux: Mutex<Vec<Arc<TlsMux>>>,
+    mux_monitors: Mutex<JoinSet<()>>,
     mux_enabled: bool,
+    closed: AtomicBool,
 }
 
 pub(in crate::vector) enum OpenedTls {
@@ -59,19 +62,30 @@ impl TlsManager {
             telemetry: signals.telemetry,
             latency: signals.latency,
             mux: Mutex::new(Vec::new()),
+            mux_monitors: Mutex::new(JoinSet::new()),
             mux_enabled: config.mux.enabled(),
+            closed: AtomicBool::new(false),
         })
     }
 
     pub(in crate::vector) async fn open(self: &Arc<Self>, flow_id: u32) -> Result<OpenedTls> {
-        if !self.mux_enabled {
-            return self
-                .connect_lane()
-                .await
-                .map(Box::new)
-                .map(OpenedTls::Dedicated);
+        if self.closed.load(Ordering::Acquire) {
+            bail!("vector::session::TlsManager: shutting down");
         }
-        let pending = reserve_mux(&mut *self.mux.lock().await, Some(flow_id))?;
+        if !self.mux_enabled {
+            let lane = self.connect_lane().await?;
+            if self.closed.load(Ordering::Acquire) {
+                bail!("vector::session::TlsManager: shutting down");
+            }
+            return Ok(OpenedTls::Dedicated(Box::new(lane)));
+        }
+        let pending = {
+            let mut pool = self.mux.lock().await;
+            if self.closed.load(Ordering::Acquire) {
+                bail!("vector::session::TlsManager: shutting down");
+            }
+            reserve_mux(&mut pool, Some(flow_id))?
+        };
         let handle = pending
             .0
             .handle
@@ -90,6 +104,9 @@ impl TlsManager {
                 else {
                     return Err(error);
                 };
+                if self.closed.load(Ordering::Acquire) {
+                    bail!("vector::session::TlsManager: shutting down");
+                }
                 let stream = handle.prepare_stream(flow_id)?;
                 drop(pending);
                 drop(pool);
@@ -100,6 +117,9 @@ impl TlsManager {
                     .map_err(Into::into);
             }
         };
+        if self.closed.load(Ordering::Acquire) {
+            bail!("vector::session::TlsManager: shutting down");
+        }
         let pool = self.mux.lock().await;
         let stream = handle.prepare_stream(flow_id)?;
         drop(pending);
@@ -131,7 +151,15 @@ impl TlsManager {
         drop(incoming);
         let manager = self.clone();
         let lifetime = handle.clone();
-        tokio::spawn(async move {
+        let mut monitors = self.mux_monitors.lock().await;
+        while monitors.try_join_next().is_some() {}
+        if self.closed.load(Ordering::Acquire) {
+            handle.close();
+            bail!("vector::session::TlsManager: shutting down");
+        }
+        let close = CloseMuxOnDrop(lifetime.clone());
+        monitors.spawn(async move {
+            let _close = close;
             manager.monitor_mux(slot, lifetime, _link, latency).await;
         });
         Ok(handle)
@@ -163,6 +191,21 @@ impl TlsManager {
             .retain(|candidate| !Arc::ptr_eq(candidate, &slot));
     }
 
+    pub(in crate::vector) async fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        let carriers = std::mem::take(&mut *self.mux.lock().await);
+        for carrier in &carriers {
+            if let Some(handle) = carrier.handle.get() {
+                handle.close();
+            }
+        }
+        drop(carriers);
+
+        let mut monitors = self.mux_monitors.lock().await;
+        monitors.abort_all();
+        while monitors.join_next().await.is_some() {}
+    }
+
     async fn connect_lane(&self) -> Result<TlsLane> {
         let (endpoint, family) = self
             .endpoint
@@ -186,6 +229,14 @@ impl TlsManager {
             _link: LinkGuard::new(self.stats.clone(), self.telemetry.clone(), false),
             latency,
         })
+    }
+}
+
+struct CloseMuxOnDrop(MuxHandle);
+
+impl Drop for CloseMuxOnDrop {
+    fn drop(&mut self) {
+        self.0.close();
     }
 }
 
