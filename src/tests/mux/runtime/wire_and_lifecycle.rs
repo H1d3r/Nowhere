@@ -36,6 +36,64 @@ async fn dropping_last_handle_closes_carrier_and_driver_tasks() {
 }
 
 #[tokio::test]
+async fn cancelling_blocked_open_releases_prepared_flow() {
+    let (carrier, _peer) = tokio::io::duplex(1 << 20);
+    let config = MuxConfig {
+        outbound_frames: 1,
+        ..MuxConfig::default()
+    };
+    let (handle, _incoming) = MuxHandle::start(carrier, config).unwrap();
+    let queue_slot = handle.shared.data_tx.clone().reserve_owned().await.unwrap();
+    assert_eq!(handle.shared.data_tx.capacity(), 0);
+
+    let prepared = handle.prepare_stream(1).unwrap();
+    let opening = {
+        let handle = handle.clone();
+        tokio::spawn(async move { handle.open_prepared(prepared).await })
+    };
+    tokio::task::yield_now().await;
+    assert!(!opening.is_finished());
+
+    opening.abort();
+    assert!(matches!(opening.await, Err(error) if error.is_cancelled()));
+    assert!(!handle.contains_flow(1));
+    assert!(!handle.is_closed());
+
+    drop(queue_slot);
+    handle.close();
+}
+
+#[tokio::test]
+async fn cancelled_stale_open_preserves_reused_flow_id() {
+    let (carrier, _peer) = tokio::io::duplex(1 << 20);
+    let config = MuxConfig {
+        outbound_frames: 1,
+        ..MuxConfig::default()
+    };
+    let (handle, _incoming) = MuxHandle::start(carrier, config).unwrap();
+    let queue_slot = handle.shared.data_tx.clone().reserve_owned().await.unwrap();
+    let stale = handle.prepare_stream(1).unwrap();
+    let opening = {
+        let handle = handle.clone();
+        tokio::spawn(async move { handle.open_prepared(stale).await })
+    };
+    tokio::task::yield_now().await;
+    assert!(!opening.is_finished());
+
+    handle.shared.remove_flow(1).unwrap();
+    let replacement = handle.prepare_stream(1).unwrap();
+    let replacement_generation = replacement.writer.generation.clone();
+    opening.abort();
+    assert!(matches!(opening.await, Err(error) if error.is_cancelled()));
+    assert!(handle.shared.is_current_flow(1, &replacement_generation));
+    assert!(!handle.is_closed());
+
+    drop(queue_slot);
+    handle.close();
+    drop(replacement);
+}
+
+#[tokio::test]
 async fn invalid_kind_and_unknown_flow_data_close_carrier() {
     assert_raw_frame_closes_carrier(&[0xff, 0, 0, 0, 0, 0, 1]).await;
 

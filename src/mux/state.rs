@@ -217,6 +217,21 @@ impl Shared {
         removed
     }
 
+    pub(super) fn remove_current_flow(&self, flow_id: FlowId, generation: &Arc<()>) {
+        let mut flows = self.flows.lock().expect("mux flow lock");
+        let current = flows
+            .get(&flow_id)
+            .is_some_and(|flow| Arc::ptr_eq(&flow.generation, generation));
+        if !current {
+            return;
+        }
+        let flow = flows.remove(&flow_id).expect("current mux flow");
+        flow.send_credit.close();
+        flow.send_slot.close();
+        self.active_streams_tx
+            .send_replace(active_flow_count(&flows));
+    }
+
     pub(super) fn admit_receive(
         &self,
         flow_id: FlowId,

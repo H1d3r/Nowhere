@@ -13,7 +13,14 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{Notify, Semaphore, mpsc, watch};
 
 use super::driver::{closed, frame_open, run_reader, run_terminals, run_writer};
-use super::{Incoming, MuxConfig, MuxHandle, MuxStream, Outbound, Shared};
+use super::{FlowId, Incoming, MuxConfig, MuxHandle, MuxStream, Outbound, Shared};
+
+struct PreparedOpen {
+    shared: Arc<Shared>,
+    flow_id: FlowId,
+    generation: Arc<()>,
+    armed: bool,
+}
 
 impl MuxHandle {
     pub(crate) fn start<T>(io: T, config: MuxConfig) -> io::Result<(Self, Incoming)>
@@ -82,6 +89,12 @@ impl MuxHandle {
     pub(crate) async fn open_prepared(&self, stream: MuxStream) -> io::Result<MuxStream> {
         let flow_id = stream.flow_id();
         let generation = stream.writer.generation.clone();
+        let mut rollback = PreparedOpen {
+            shared: self.shared.clone(),
+            flow_id,
+            generation: generation.clone(),
+            armed: true,
+        };
         if !self.shared.is_current_flow(flow_id, &generation) {
             return Err(closed());
         }
@@ -94,6 +107,7 @@ impl MuxHandle {
             })
             .await
             .map_err(|_| closed())?;
+        rollback.armed = false;
         if !self.shared.is_current_flow(flow_id, &generation) {
             return Err(closed());
         }
@@ -195,6 +209,15 @@ impl MuxHandle {
             return;
         }
         self.shared.closed_notify.cancelled().await;
+    }
+}
+
+impl Drop for PreparedOpen {
+    fn drop(&mut self) {
+        if self.armed {
+            self.shared
+                .remove_current_flow(self.flow_id, &self.generation);
+        }
     }
 }
 
