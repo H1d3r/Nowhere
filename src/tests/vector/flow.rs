@@ -12,6 +12,7 @@ use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
+use super::setup::{prepare_with_fallback_timeout, read_ready_with_timeout};
 use super::*;
 use crate::protocol::{Credentials, encode_target, write_flow_header};
 use crate::telemetry::{InstanceRole, TelemetryHub};

@@ -3,7 +3,7 @@
 
 //! Tests for multi-address listener binding and startup failure cleanup.
 
-use super::{bind_carrier, io_error_is_family_unavailable};
+use super::binding::{bind_carrier, io_error_is_family_unavailable};
 use std::io::{Error, ErrorKind};
 use std::net::{SocketAddr, TcpListener};
 

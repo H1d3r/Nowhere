@@ -5,6 +5,8 @@
 
 use tokio::io::AsyncReadExt;
 
+use crate::protocol::encode_flow_header;
+
 use super::*;
 
 #[test]

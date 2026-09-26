@@ -17,8 +17,6 @@ use super::{Portal, event};
 
 mod binding;
 mod shutdown;
-#[cfg(test)]
-use binding::{bind_carrier, io_error_is_family_unavailable};
 
 struct ShutdownTrigger {
     reason: LifeReason,

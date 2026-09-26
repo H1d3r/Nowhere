@@ -5,9 +5,6 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-#[cfg(test)]
-use anyhow::Result;
-
 use crate::protocol::Target;
 
 pub(crate) const SOCKS_VERSION: u8 = 5;

@@ -157,10 +157,5 @@ pub fn shutdown_timeout() -> Duration {
 }
 
 #[cfg(test)]
-pub fn reload_interval() -> Duration {
-    env_duration("NOW_RELOAD_INTERVAL", Duration::from_secs(60 * 60))
-}
-
-#[cfg(test)]
 #[path = "../tests/common/config.rs"]
 mod tests;

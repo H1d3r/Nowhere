@@ -81,10 +81,5 @@ fn exhausted() -> io::Error {
 }
 
 #[cfg(test)]
-use tcp::apply_at;
-#[cfg(test)]
-use udp::{MorphUdpSocket, UdpReceiveState, UdpSendState};
-
-#[cfg(test)]
 #[path = "../tests/transport/morph.rs"]
 mod tests;

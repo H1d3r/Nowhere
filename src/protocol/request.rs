@@ -9,8 +9,6 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use tokio::io::{AsyncRead, AsyncReadExt};
-#[cfg(test)]
-use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use super::util::{DOMAIN_LEN_MAX, validate_domain_bytes, validate_port};
 
@@ -39,38 +37,6 @@ impl Target {
         validate_domain_bytes(host.as_bytes(), "protocol::request::Target::domain")?;
         validate_port(port, "protocol::request::Target::domain")?;
         Ok(Self::Domain { host, port })
-    }
-
-    #[cfg(test)]
-    pub const fn port(&self) -> u16 {
-        match self {
-            Self::Ip(address) => address.port(),
-            Self::Domain { port, .. } => *port,
-        }
-    }
-
-    #[cfg(test)]
-    pub const fn socket_addr(&self) -> Option<SocketAddr> {
-        match self {
-            Self::Ip(address) => Some(*address),
-            Self::Domain { .. } => None,
-        }
-    }
-
-    #[cfg(test)]
-    pub fn domain_name(&self) -> Option<&str> {
-        match self {
-            Self::Ip(_) => None,
-            Self::Domain { host, .. } => Some(host),
-        }
-    }
-
-    #[cfg(test)]
-    pub const fn ip_addr(&self) -> Option<IpAddr> {
-        match self {
-            Self::Ip(address) => Some(address.ip()),
-            Self::Domain { .. } => None,
-        }
     }
 
     pub fn encoded_len(&self) -> Result<usize> {
@@ -164,14 +130,6 @@ pub fn encode_target_into(target: &Target, output: &mut [u8]) -> Result<usize> {
         }
     }
     Ok(encoded_len)
-}
-
-#[cfg(test)]
-pub fn encode_target(target: &Target) -> Result<Vec<u8>> {
-    let mut output = vec![0; target.encoded_len()?];
-    let written = encode_target_into(target, &mut output)?;
-    debug_assert_eq!(written, output.len());
-    Ok(output)
 }
 
 pub fn decode_target(input: &[u8]) -> Result<(Target, usize)> {
@@ -277,21 +235,6 @@ pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Target
         }
         value => bail!("protocol::request::read_request: unknown address type: {value}"),
     }
-}
-
-#[cfg(test)]
-pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, target: &Target) -> Result<()> {
-    let mut encoded = [0; TARGET_MAX_ENCODED_LEN];
-    let encoded_len = encode_target_into(target, &mut encoded)?;
-    writer
-        .write_all(&encoded[..encoded_len])
-        .await
-        .context("protocol::request::write_request: failed to write target")
-}
-
-#[cfg(test)]
-pub fn write_request_frame(target: &Target) -> Result<Vec<u8>> {
-    encode_target(target)
 }
 
 #[cfg(test)]

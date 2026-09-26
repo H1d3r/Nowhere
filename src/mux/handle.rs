@@ -77,12 +77,6 @@ impl MuxHandle {
         ))
     }
 
-    #[cfg(test)]
-    pub(crate) async fn open_stream(&self, flow_id: super::FlowId) -> io::Result<MuxStream> {
-        let stream = self.prepare_stream(flow_id)?;
-        self.open_prepared(stream).await
-    }
-
     pub(crate) fn prepare_stream(&self, flow_id: super::FlowId) -> io::Result<MuxStream> {
         self.shared.insert_flow(flow_id, false)
     }
@@ -123,15 +117,6 @@ impl MuxHandle {
         super::active_flow_count(&self.shared.flows.lock().expect("mux flow lock"))
     }
 
-    #[cfg(test)]
-    pub(crate) fn contains_flow(&self, flow_id: super::FlowId) -> bool {
-        self.shared
-            .flows
-            .lock()
-            .expect("mux flow lock")
-            .contains_key(&flow_id)
-    }
-
     pub(crate) fn can_open_flow(&self, flow_id: super::FlowId) -> bool {
         if self.is_closed() {
             return false;
@@ -157,29 +142,12 @@ impl MuxHandle {
             .max(occupancy(self.shared.data_tx.capacity(), queue))
     }
 
-    #[cfg(test)]
-    pub(crate) fn borrowed_write_copies(&self) -> usize {
-        self.shared.borrowed_write_copies.load(Ordering::Relaxed)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reset_borrowed_write_copies(&self) {
-        self.shared
-            .borrowed_write_copies
-            .store(0, Ordering::Relaxed);
-    }
-
     pub(crate) fn close(&self) {
         self.shared.close();
     }
 
     pub(crate) fn close_with_reason(&self, reason: MuxCloseReason) {
         self.shared.close_with_reason(reason);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn same_carrier(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.shared, &other.shared)
     }
 
     pub(crate) async fn idle_for(&self, duration: Duration) -> bool {

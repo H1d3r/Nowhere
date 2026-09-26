@@ -3,6 +3,8 @@
 
 //! Flow setup result encoding and decoding tests.
 
+use crate::protocol::encode_flow_result;
+
 use super::*;
 
 #[test]

@@ -5,7 +5,9 @@
 
 use std::time::{Duration, Instant};
 
-use crate::protocol::MAX_FLOW_ID;
+use crate::protocol::{
+    MAX_FLOW_ID, ReassemblyDropReason, encode_udp_data, encode_udp_data_fragments,
+};
 
 use super::*;
 

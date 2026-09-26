@@ -11,8 +11,6 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
-#[cfg(test)]
-use self::config::MIB;
 use self::config::{
     BASE_CONNECTION_WINDOW_BYTES, BASE_STREAM_WINDOW_BYTES, CREDIT_UNIT_BYTES,
     MAX_CONNECTION_WINDOW_BYTES, MAX_STREAM_WINDOW_BYTES,
@@ -20,11 +18,6 @@ use self::config::{
 pub(crate) use self::config::{MUX_IDLE_TIMEOUT, MuxConfig};
 use self::state::{Inbound, Outbound, ReceiveTarget, Shared, Terminal, active_flow_count};
 use self::wire::FlowId;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
-#[cfg(test)]
-use std::time::Duration;
-
 mod config;
 mod driver;
 mod handle;

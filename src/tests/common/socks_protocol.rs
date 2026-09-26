@@ -3,6 +3,7 @@
 
 //! SOCKS5 negotiation and packet framing tests.
 
+use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;

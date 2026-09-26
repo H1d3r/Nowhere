@@ -13,8 +13,6 @@ mod types;
 
 pub use filter::{access_matches, runtime_matches};
 pub use instance::InstanceView;
-#[cfg(test)]
-use instance::OFFLINE_RETENTION;
 pub use metrics::{HISTORY_WINDOW_MS, HistoryPoint, TelemetrySnapshot};
 pub use types::{
     AccessPhase, AccessRecord, AccessStatus, EventLevel, FeedKind, Focus, InstanceId, InstanceMeta,

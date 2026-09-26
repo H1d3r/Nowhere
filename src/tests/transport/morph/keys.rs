@@ -3,7 +3,7 @@
 
 //! Morph key derivation and interoperability vectors tests.
 
-use super::super::*;
+use super::*;
 
 fn hex<const N: usize>(value: &str) -> [u8; N] {
     assert_eq!(value.len(), N * 2);

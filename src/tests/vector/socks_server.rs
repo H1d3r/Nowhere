@@ -3,6 +3,7 @@
 
 //! SOCKS5 ingress requests and UDP association routing tests.
 
+use super::udp::{accept_udp_source, try_admit_udp_target, validate_udp_source_request};
 use super::*;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;

@@ -19,8 +19,6 @@ use crate::protocol::ALPN;
 
 pub(crate) use self::tls_cert::certificate_sha256;
 use self::tls_cert::{ReloadingCertResolver, new_self_signed_cert};
-#[cfg(test)]
-use super::config::reload_interval;
 use super::{Logger, query_first};
 
 const PORTAL_QUERY_PARAMETERS: &[&str] = &[
@@ -42,14 +40,6 @@ impl fmt::Display for TLSMode {
             Self::CATrusted => f.write_str("2"),
         }
     }
-}
-
-#[cfg(test)]
-fn new_server_configs(
-    parsed_url: &Url,
-    logger: Logger,
-) -> Result<(TLSMode, Arc<rustls::ServerConfig>, quinn::ServerConfig)> {
-    new_server_configs_with_reload_interval(parsed_url, reload_interval(), logger)
 }
 
 pub(crate) fn new_server_configs_with_reload_interval(

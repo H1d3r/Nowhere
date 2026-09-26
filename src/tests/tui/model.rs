@@ -3,6 +3,7 @@
 
 //! Dashboard instance state, histories, and filtering tests.
 
+use super::instance::OFFLINE_RETENTION;
 use super::*;
 
 fn meta(id: &str, pid: u32) -> InstanceMeta {

@@ -38,8 +38,6 @@ use super::super::udp_flow::{UdpTunnel, open_udp};
 #[path = "udp.rs"]
 mod udp;
 
-#[cfg(test)]
-use self::udp::{accept_udp_source, try_admit_udp_target, validate_udp_source_request};
 use self::udp::{run_udp_association, start_access};
 const TCP_LISTEN_BACKLOG: i32 = 1024;
 const SOCKS_UDP_PACKET_MAX: usize = u16::MAX as usize + 3 + 1 + 1 + 255 + 2;

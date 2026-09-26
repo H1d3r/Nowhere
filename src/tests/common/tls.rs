@@ -6,6 +6,17 @@
 use super::*;
 use crate::common::{LogLevel, Logger};
 
+fn new_server_configs(
+    parsed_url: &Url,
+    logger: Logger,
+) -> Result<(TLSMode, Arc<rustls::ServerConfig>, quinn::ServerConfig)> {
+    new_server_configs_with_reload_interval(
+        parsed_url,
+        std::time::Duration::from_secs(60 * 60),
+        logger,
+    )
+}
+
 #[test]
 fn certificate_sha256_uses_lowercase_hex() {
     let cert = rustls::pki_types::CertificateDer::from(b"abc".to_vec());

@@ -33,14 +33,7 @@ pub(crate) use uot::{read_udp_packet_into, write_udp_packet};
 pub const ALPN: &[u8] = b"nw2";
 
 #[cfg(test)]
-pub(crate) use datagram::{
-    ReassemblyDropReason, UdpFrame, decode_udp_frame, encode_udp_data_fragments,
-};
+#[path = "../tests/protocol/support.rs"]
+mod test_support;
 #[cfg(test)]
-pub(crate) use flow::decode_flow_header;
-#[cfg(test)]
-pub(crate) use request::{encode_target, write_request_frame};
-#[cfg(test)]
-pub(crate) use result::encode_flow_result;
-#[cfg(test)]
-pub(crate) use uot::{encode_udp_packet, read_udp_packet};
+pub(crate) use test_support::*;

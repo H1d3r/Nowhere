@@ -14,7 +14,7 @@ use quinn::udp::{RecvMeta, Transmit};
 use quinn::{AsyncUdpSocket, UdpPoller};
 
 use super::super::udp::{UDP_NONCE_STREAM_LIMIT, UdpNonceGenerator};
-use super::super::*;
+use super::*;
 
 #[test]
 fn udp_nonce_generator_fills_batches_from_one_stream() {

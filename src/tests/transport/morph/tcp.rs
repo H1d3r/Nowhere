@@ -12,7 +12,7 @@ use std::task::{Context, Poll, Waker};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use super::super::*;
+use super::*;
 
 impl super::super::tcp::MorphWriteReady for tokio::io::DuplexStream {
     fn poll_morph_write_ready(&self, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {

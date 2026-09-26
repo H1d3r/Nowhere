@@ -93,16 +93,6 @@ impl<R> DatagramReassembler<R> {
         }
     }
 
-    #[cfg(test)]
-    pub fn slot_count(&self) -> usize {
-        self.slots.len()
-    }
-
-    #[cfg(test)]
-    pub fn reserved_bytes(&self) -> usize {
-        self.reserved_bytes
-    }
-
     pub fn remove_flow(&mut self, flow_id: FlowId) {
         let removed: usize = self
             .slots
@@ -293,20 +283,12 @@ impl<R> DatagramReassembler<R> {
     }
 }
 
-impl DatagramReassembler<()> {
-    #[cfg(test)]
-    pub fn push(
-        &mut self,
-        flow_id: FlowId,
-        fragment: OwnedUdpFragment,
-        now: Instant,
-    ) -> ReassemblyOutcome {
-        self.push_with(flow_id, fragment, now, |_| Some(()))
-    }
-}
-
 impl Default for DatagramReassembler<()> {
     fn default() -> Self {
         Self::new(ReassemblyConfig::default())
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/protocol/reassembly.rs"]
+mod test_support;

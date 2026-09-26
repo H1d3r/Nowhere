@@ -12,8 +12,6 @@ use chacha20::ChaCha20;
 use chacha20::cipher::{KeyIvInit, StreamCipher, StreamCipherSeek};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-#[cfg(test)]
-use super::MorphKeyBytes;
 use super::{MorphKeys, NONCE_LEN, TCP_PRELUDE_LEN, exhausted};
 
 const TCP_STREAM_LIMIT: u64 = (1u64 << 38) - 64;
@@ -130,41 +128,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> MorphTcpStream<S> {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn initialized_for_test(
-        inner: S,
-        keys: &MorphKeys,
-        nonce: [u8; NONCE_LEN],
-        client: bool,
-    ) -> Self {
-        Self::initialized(inner, keys, nonce, client)
-    }
-
-    #[cfg(test)]
-    pub(super) async fn connect_for_test(
-        inner: S,
-        keys: MorphKeys,
-        prelude: [u8; TCP_PRELUDE_LEN],
-        nonce: [u8; NONCE_LEN],
-    ) -> io::Result<Self> {
-        Self::connect_with_bootstrap(inner, keys, prelude, nonce).await
-    }
-
     pub(crate) fn get_ref(&self) -> &S {
         &self.inner
     }
-}
-
-#[cfg(test)]
-pub(super) fn apply_at(
-    key: &MorphKeyBytes,
-    nonce: &[u8; NONCE_LEN],
-    offset: u64,
-    bytes: &mut [u8],
-) -> io::Result<()> {
-    let mut cipher = ChaCha20::new(key.into(), nonce.into());
-    cipher.try_seek(offset).map_err(|_| exhausted())?;
-    cipher.try_apply_keystream(bytes).map_err(|_| exhausted())
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for MorphTcpStream<S> {
@@ -290,3 +256,7 @@ impl<S: AsyncWrite + MorphWriteReady + Unpin> AsyncWrite for MorphTcpStream<S> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/transport/morph/tcp_support.rs"]
+mod test_support;

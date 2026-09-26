@@ -38,8 +38,6 @@ mod tcp;
 
 pub(super) use self::lane::{PhysicalLane, prepare_lanes};
 pub(super) use self::setup::{prepare_with_fallback, read_ready, write_header, write_open_request};
-#[cfg(test)]
-use self::setup::{prepare_with_fallback_timeout, read_ready_with_timeout};
 pub(crate) use self::tcp::{TcpTunnel, TcpTunnelGuard};
 pub(super) use self::tcp::{open_tcp, relay_tcp};
 

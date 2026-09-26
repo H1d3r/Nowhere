@@ -20,4 +20,7 @@ pub(crate) use wire::{
     TELEMETRY_PROTOCOL, TelemetrySnapshot, TrafficProtocol,
 };
 #[cfg(test)]
-pub(crate) use wire::{InstanceDescriptor, LifecycleSnapshot};
+#[path = "../tests/telemetry/support.rs"]
+mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::*;

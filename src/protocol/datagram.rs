@@ -92,37 +92,6 @@ pub fn encode_udp_fragment_header(
     Ok(output)
 }
 
-#[cfg(test)]
-pub fn encode_udp_data(flow_id: FlowId, payload: &[u8]) -> Result<Vec<u8>> {
-    validate_udp_payload(payload, "encode_udp_data")?;
-    let header = encode_udp_data_header(flow_id)?;
-    let mut output = Vec::with_capacity(UDP_HEADER_LEN + payload.len());
-    output.extend_from_slice(&header);
-    output.extend_from_slice(payload);
-    Ok(output)
-}
-
-#[cfg(test)]
-pub fn encode_udp_data_fragments(
-    flow_id: FlowId,
-    packet_id: u32,
-    payload: &[u8],
-    max_datagram_size: usize,
-) -> Result<Vec<Vec<u8>>> {
-    validate_flow_id(flow_id, "encode_udp_data_fragments")?;
-    validate_udp_payload(payload, "encode_udp_data_fragments")?;
-    if max_datagram_size < UDP_HEADER_LEN {
-        bail!(
-            "protocol::datagram::encode_udp_data_fragments: DATAGRAM limit {max_datagram_size} smaller than header {UDP_HEADER_LEN}"
-        );
-    }
-    if payload.len() <= max_datagram_size - UDP_HEADER_LEN {
-        return Ok(vec![encode_udp_data(flow_id, payload)?]);
-    }
-
-    Ok(encode_udp_fragments(flow_id, packet_id, payload, max_datagram_size)?.collect())
-}
-
 pub fn encode_udp_fragments(
     flow_id: FlowId,
     packet_id: u32,
@@ -333,8 +302,6 @@ pub(super) fn validate_fragment_metadata(
     Ok(())
 }
 
-#[cfg(test)]
-pub use super::reassembly::ReassemblyDropReason;
 pub use super::reassembly::{DatagramReassembler, ReassemblyConfig, ReassemblyOutcome};
 
 #[cfg(test)]
