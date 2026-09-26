@@ -29,6 +29,7 @@ pub(super) struct Shared {
     pub(super) control_notify: Notify,
     pub(super) incoming_tx: mpsc::Sender<MuxStream>,
     pub(super) active_streams_tx: watch::Sender<usize>,
+    pub(super) handle_count: AtomicUsize,
     pub(super) closed: AtomicBool,
     pub(super) closed_notify: tokio_util::sync::CancellationToken,
     #[cfg(test)]

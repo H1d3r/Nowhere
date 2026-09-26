@@ -15,6 +15,27 @@ async fn assert_raw_frame_closes_carrier(frame: &[u8]) {
 }
 
 #[tokio::test]
+async fn dropping_last_handle_closes_carrier_and_driver_tasks() {
+    let (left, _peer) = tokio::io::duplex(1 << 20);
+    let (handle, incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let shared = Arc::downgrade(&handle.shared);
+    let retained = handle.clone();
+
+    drop(handle);
+    assert!(!retained.is_closed());
+
+    drop(retained);
+    drop(incoming);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while shared.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Mux driver tasks retained Shared after the last handle dropped");
+}
+
+#[tokio::test]
 async fn invalid_kind_and_unknown_flow_data_close_carrier() {
     assert_raw_frame_closes_carrier(&[0xff, 0, 0, 0, 0, 0, 1]).await;
 

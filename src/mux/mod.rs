@@ -68,7 +68,6 @@ pub(crate) struct FlowWriter {
     closed: bool,
 }
 
-#[derive(Clone)]
 pub(crate) struct MuxHandle {
     shared: Arc<Shared>,
 }

@@ -48,6 +48,7 @@ impl MuxHandle {
             control_notify: Notify::new(),
             incoming_tx,
             active_streams_tx,
+            handle_count: AtomicUsize::new(1),
             closed: AtomicBool::new(false),
             closed_notify: tokio_util::sync::CancellationToken::new(),
             #[cfg(test)]
@@ -194,6 +195,23 @@ impl MuxHandle {
             return;
         }
         self.shared.closed_notify.cancelled().await;
+    }
+}
+
+impl Clone for MuxHandle {
+    fn clone(&self) -> Self {
+        self.shared.handle_count.fetch_add(1, Ordering::Relaxed);
+        Self {
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+impl Drop for MuxHandle {
+    fn drop(&mut self) {
+        if self.shared.handle_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+            self.shared.close();
+        }
     }
 }
 
