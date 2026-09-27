@@ -40,7 +40,7 @@ pub(in crate::mux) async fn run_reader<R: AsyncRead + Unpin>(mut reader: R, shar
             match header.kind {
                 FrameKind::Open => receive_open(&shared, header).await?,
                 FrameKind::Data => receive_data(&shared, header, Bytes::from(payload)).await?,
-                FrameKind::Window => receive_window(&shared, header)?,
+                FrameKind::Window => receive_window(&shared, header).await?,
                 FrameKind::Fin | FrameKind::Reset => receive_close(&shared, header).await,
             }
             if payload_len != 0 {
@@ -75,7 +75,8 @@ async fn receive_open(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<(
         if credit.available_permits().saturating_add(extra_credit)
             > crate::mux::credit_units(crate::mux::MAX_STREAM_WINDOW_BYTES)
         {
-            return Err(invalid("stream window overflow"));
+            shared.prepare_reset(header.flow_id, Some(&stream.writer.generation))?;
+            return Ok(());
         }
         credit.add_permits(extra_credit);
     }
@@ -99,6 +100,10 @@ async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes)
         ReceiveTarget::Discard => {
             shared.release_connection_receive(charge);
         }
+        ReceiveTarget::Reset(generation) => {
+            shared.release_connection_receive(charge);
+            shared.prepare_reset(header.flow_id, generation.as_ref())?;
+        }
     }
     Ok(())
 }
@@ -106,7 +111,7 @@ async fn receive_data(shared: &Arc<Shared>, header: FrameHeader, payload: Bytes)
 async fn receive_close(shared: &Shared, header: FrameHeader) {
     if header.kind == FrameKind::Reset {
         if let Some(flow) = shared.remove_flow(header.flow_id) {
-            let _ = flow.inbound.send(Inbound::Reset);
+            shared.reset_inbound(&flow);
         }
         return;
     }
@@ -138,7 +143,7 @@ async fn receive_close(shared: &Shared, header: FrameHeader) {
     }
 }
 
-fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
+async fn receive_window(shared: &Arc<Shared>, header: FrameHeader) -> io::Result<()> {
     let credit = header.value as usize;
     if header.flow_id == 0 {
         if shared
@@ -156,15 +161,22 @@ fn receive_window(shared: &Shared, header: FrameHeader) -> io::Result<()> {
         );
         return Ok(());
     }
-    let mut flows = shared.flows.lock().expect("mux flow lock");
-    let Some(flow) = flows.get_mut(&header.flow_id) else {
-        return Ok(());
+    let overflow = {
+        let mut flows = shared.flows.lock().expect("mux flow lock");
+        let Some(flow) = flows.get_mut(&header.flow_id) else {
+            return Ok(());
+        };
+        if flow.send_credit.available_permits().saturating_add(credit)
+            > crate::mux::credit_units(crate::mux::MAX_STREAM_WINDOW_BYTES)
+        {
+            Some(flow.generation.clone())
+        } else {
+            flow.send_credit.add_permits(credit);
+            None
+        }
     };
-    if flow.send_credit.available_permits().saturating_add(credit)
-        > crate::mux::credit_units(crate::mux::MAX_STREAM_WINDOW_BYTES)
-    {
-        return Err(invalid("stream window overflow"));
+    if let Some(generation) = overflow {
+        shared.prepare_reset(header.flow_id, Some(&generation))?;
     }
-    flow.send_credit.add_permits(credit);
     Ok(())
 }

@@ -44,6 +44,8 @@ impl MuxHandle {
 
 #[path = "runtime/admission.rs"]
 mod admission;
+#[path = "runtime/isolation.rs"]
+mod isolation;
 #[path = "runtime/streams.rs"]
 mod streams;
 #[path = "runtime/wire_and_lifecycle.rs"]

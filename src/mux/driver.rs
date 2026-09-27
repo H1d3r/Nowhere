@@ -22,39 +22,50 @@ pub(super) async fn send_data(
     payload: MuxChunk,
 ) -> io::Result<()> {
     let charge = frame_charge(payload.len());
-    let (flow_credit, slot) = {
+    let (flow_credit, slot, stopped) = {
         let flows = shared.flows.lock().expect("mux flow lock");
         let flow = flows.get(&flow_id).ok_or_else(closed)?;
         if !Arc::ptr_eq(&flow.generation, &generation) {
             return Err(closed());
         }
-        (flow.send_credit.clone(), flow.send_slot.clone())
+        (
+            flow.send_credit.clone(),
+            flow.send_slot.clone(),
+            flow.stopped.clone(),
+        )
     };
-    let slot = slot.acquire_owned().await.map_err(|_| closed())?;
-    let flow = flow_credit
-        .clone()
-        .acquire_many_owned(charge as u32)
-        .await
-        .map_err(|_| closed())?;
-    let connection = shared
-        .connection_send_credit
-        .clone()
-        .acquire_many_owned(charge as u32)
-        .await
-        .map_err(|_| closed())?;
-    shared
-        .data_tx
-        .send(Outbound::Data {
-            header: frame_data(flow_id, payload.len())?,
-            payload,
-            generation,
-            _slot: slot,
-        })
-        .await
-        .map_err(|_| closed())?;
-    flow.forget();
-    connection.forget();
-    Ok(())
+    let operation = async {
+        let slot = slot.acquire_owned().await.map_err(|_| closed())?;
+        let flow = flow_credit
+            .clone()
+            .acquire_many_owned(charge as u32)
+            .await
+            .map_err(|_| closed())?;
+        let connection = shared
+            .connection_send_credit
+            .clone()
+            .acquire_many_owned(charge as u32)
+            .await
+            .map_err(|_| closed())?;
+        shared
+            .data_tx
+            .send(Outbound::Data {
+                header: frame_data(flow_id, payload.len())?,
+                payload,
+                generation,
+                _slot: slot,
+            })
+            .await
+            .map_err(|_| closed())?;
+        flow.forget();
+        connection.forget();
+        Ok(())
+    };
+    tokio::select! {
+        biased;
+        _ = stopped.cancelled() => Err(closed()),
+        result = operation => result,
+    }
 }
 
 fn frame_charge(payload: usize) -> usize {

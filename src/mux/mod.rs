@@ -47,9 +47,10 @@ pub(crate) struct FlowReader {
     shared: Arc<Shared>,
     flow_id: FlowId,
     generation: Arc<()>,
-    receiver: mpsc::UnboundedReceiver<Inbound>,
+    receiver: Arc<std::sync::Mutex<mpsc::UnboundedReceiver<Inbound>>>,
     current: Option<(Bytes, usize, usize)>,
     eof: bool,
+    reset: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(crate) struct FlowWriter {
@@ -59,6 +60,7 @@ pub(crate) struct FlowWriter {
     pending: Option<WriteFuture>,
     pending_action: Option<ActionFuture>,
     closed: bool,
+    stopped: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
 pub(crate) struct MuxHandle {

@@ -10,7 +10,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use super::{closed, frame_charge, frame_close, invalid};
-use crate::mux::wire::{CLOSE_FIN, FlowId, FrameHeader, HEADER_LEN, encode_header};
+use crate::mux::wire::{CLOSE_FIN, CLOSE_RESET, FlowId, FrameHeader, HEADER_LEN, encode_header};
 use crate::mux::{MuxCloseReason, Outbound, Shared, Terminal};
 
 pub(in crate::mux) async fn run_terminals(
@@ -195,6 +195,18 @@ async fn write_pending_windows<W: AsyncWrite + Unpin>(
     encoded: &mut Vec<u8>,
 ) -> io::Result<()> {
     encoded.clear();
+    let resets = shared
+        .pending_resets
+        .lock()
+        .expect("mux reset lock")
+        .iter()
+        .copied()
+        .collect::<Vec<_>>();
+    for flow_id in &resets {
+        encoded.extend_from_slice(
+            &encode_header(frame_close(*flow_id, CLOSE_RESET)?).map_err(invalid)?,
+        );
+    }
     let connection = shared
         .pending_connection_credit
         .swap(0, std::sync::atomic::Ordering::AcqRel);
@@ -223,6 +235,9 @@ async fn write_pending_windows<W: AsyncWrite + Unpin>(
     if !encoded.is_empty() {
         writer.write_all(encoded).await?;
         writer.flush().await?;
+    }
+    for flow_id in resets {
+        shared.finish_reset(flow_id);
     }
     Ok(())
 }

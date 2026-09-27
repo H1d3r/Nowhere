@@ -3,7 +3,7 @@
 
 //! Shared Mux flow state, queues, and credit accounting.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,6 +19,7 @@ use super::{FlowReader, FlowWriter, MuxChunk, MuxCloseReason, MuxConfig, MuxStre
 pub(super) struct Shared {
     pub(super) config: MuxConfig,
     pub(super) flows: Mutex<HashMap<FlowId, FlowState>>,
+    pub(super) pending_resets: Mutex<HashSet<FlowId>>,
     pub(super) connection_send_credit: Arc<Semaphore>,
     pub(super) connection_send_peak: AtomicUsize,
     pub(super) connection_receive_credit: Mutex<usize>,
@@ -40,6 +41,8 @@ pub(super) struct Shared {
 pub(super) struct FlowState {
     pub(super) generation: Arc<()>,
     pub(super) inbound: mpsc::UnboundedSender<Inbound>,
+    pub(super) receiver: Arc<Mutex<mpsc::UnboundedReceiver<Inbound>>>,
+    pub(super) stopped: tokio_util::sync::CancellationToken,
     pub(super) send_credit: Arc<Semaphore>,
     pub(super) send_slot: Arc<Semaphore>,
     pub(super) receive_credit: usize,
@@ -48,6 +51,7 @@ pub(super) struct FlowState {
     pub(super) local_parts: u8,
     pub(super) local_fin_sent: bool,
     pub(super) remote_fin: bool,
+    pub(super) reset: Arc<AtomicBool>,
 }
 
 pub(super) enum Inbound {
@@ -62,6 +66,7 @@ pub(super) enum ReceiveTarget {
         generation: Arc<()>,
     },
     Discard,
+    Reset(Option<Arc<()>>),
 }
 
 pub(super) struct Terminal {
@@ -100,17 +105,19 @@ impl Shared {
             return Err(closed());
         }
         let (sender, receiver) = mpsc::unbounded_channel();
+        let receiver = Arc::new(Mutex::new(receiver));
+        let pending_resets = self.pending_resets.lock().expect("mux reset lock");
         let mut flows = self.flows.lock().expect("mux flow lock");
         if self.closed.load(Ordering::Acquire) {
             return Err(closed());
         }
-        if flows.contains_key(&flow_id) {
+        if flows.contains_key(&flow_id) || pending_resets.contains(&flow_id) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 "mux flow already exists",
             ));
         }
-        if flows.len() >= self.config.active_stream_limit {
+        if flows.len().saturating_add(pending_resets.len()) >= self.config.active_stream_limit {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "mux active-stream resource limit reached",
@@ -127,11 +134,15 @@ impl Shared {
         } else {
             0
         };
+        let reset = Arc::new(AtomicBool::new(false));
+        let stopped = tokio_util::sync::CancellationToken::new();
         flows.insert(
             flow_id,
             FlowState {
                 generation: generation.clone(),
                 inbound: sender,
+                receiver: receiver.clone(),
+                stopped: stopped.clone(),
                 send_credit,
                 send_slot: Arc::new(Semaphore::new(1)),
                 receive_credit: credit_units(self.config.stream_window_bytes),
@@ -140,8 +151,10 @@ impl Shared {
                 local_parts: 2,
                 local_fin_sent: false,
                 remote_fin: false,
+                reset: reset.clone(),
             },
         );
+        drop(pending_resets);
         let active_streams = active_flow_count(&flows);
         self.active_streams_tx.send_replace(active_streams);
         drop(flows);
@@ -160,6 +173,7 @@ impl Shared {
                 receiver,
                 current: None,
                 eof: false,
+                reset,
             },
             writer: FlowWriter {
                 shared: self.clone(),
@@ -168,6 +182,7 @@ impl Shared {
                 pending: None,
                 pending_action: None,
                 closed: false,
+                stopped: Box::pin(stopped.cancelled_owned()),
             },
         })
     }
@@ -183,6 +198,7 @@ impl Shared {
         }
         let mut flows = self.flows.lock().expect("mux flow lock");
         for flow in flows.values() {
+            flow.stopped.cancel();
             flow.send_credit.close();
             flow.send_slot.close();
         }
@@ -214,6 +230,7 @@ impl Shared {
         let mut flows = self.flows.lock().expect("mux flow lock");
         let removed = flows.remove(&flow_id);
         if let Some(flow) = &removed {
+            flow.stopped.cancel();
             flow.send_credit.close();
             flow.send_slot.close();
         }
@@ -221,6 +238,72 @@ impl Shared {
         self.active_streams_tx.send_replace(active_streams);
         drop(flows);
         removed
+    }
+
+    pub(super) fn prepare_reset(
+        &self,
+        flow_id: FlowId,
+        generation: Option<&Arc<()>>,
+    ) -> io::Result<bool> {
+        let mut pending = self.pending_resets.lock().expect("mux reset lock");
+        if pending.contains(&flow_id) {
+            return Ok(false);
+        }
+        let mut flows = self.flows.lock().expect("mux flow lock");
+        if flows
+            .get(&flow_id)
+            .map(|flow| &flow.generation)
+            .is_some_and(|current| {
+                generation.is_none_or(|expected| !Arc::ptr_eq(current, expected))
+            })
+        {
+            return Ok(false);
+        }
+        if !flows.contains_key(&flow_id)
+            && flows.len().saturating_add(pending.len()) >= self.config.active_stream_limit
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "mux reset metadata limit reached",
+            ));
+        }
+        pending.insert(flow_id);
+        let removed = flows.remove(&flow_id);
+        self.active_streams_tx
+            .send_replace(active_flow_count(&flows));
+        drop(flows);
+        drop(pending);
+        if let Some(flow) = removed {
+            flow.send_credit.close();
+            flow.send_slot.close();
+            self.reset_inbound(&flow);
+        }
+        self.control_notify.notify_one();
+        Ok(true)
+    }
+
+    pub(super) fn reset_inbound(&self, flow: &FlowState) {
+        flow.reset.store(true, Ordering::Release);
+        flow.stopped.cancel();
+        let mut receiver = flow.receiver.lock().expect("mux inbox lock");
+        let mut released = 0;
+        while let Ok(inbound) = receiver.try_recv() {
+            if let Inbound::Data { charge, .. } = inbound {
+                released += charge;
+            }
+        }
+        let _ = flow.inbound.send(Inbound::Reset);
+        drop(receiver);
+        if released != 0 {
+            self.release_connection_receive(released);
+        }
+    }
+
+    pub(super) fn finish_reset(&self, flow_id: FlowId) {
+        self.pending_resets
+            .lock()
+            .expect("mux reset lock")
+            .remove(&flow_id);
     }
 
     pub(super) fn remove_current_flow(&self, flow_id: FlowId, generation: &Arc<()>) {
@@ -232,6 +315,7 @@ impl Shared {
             return;
         }
         let flow = flows.remove(&flow_id).expect("current mux flow");
+        flow.stopped.cancel();
         flow.send_credit.close();
         flow.send_slot.close();
         self.active_streams_tx
@@ -248,23 +332,20 @@ impl Shared {
             .lock()
             .expect("mux credit lock");
         let mut flows = self.flows.lock().expect("mux flow lock");
-        let flow = flows.get_mut(&flow_id).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "frame for unknown mux flow")
-        })?;
-        if flow.remote_fin {
+        if *connection < charge {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "DATA received after mux FIN",
+                "peer exceeded mux connection window",
             ));
         }
-        if flow.receive_credit < charge || *connection < charge {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "peer exceeded mux window",
-            ));
+        *connection -= charge;
+        let Some(flow) = flows.get_mut(&flow_id) else {
+            return Ok(ReceiveTarget::Reset(None));
+        };
+        if flow.remote_fin || flow.receive_credit < charge {
+            return Ok(ReceiveTarget::Reset(Some(flow.generation.clone())));
         }
         flow.receive_credit -= charge;
-        *connection -= charge;
         if flow.local_parts == 0 {
             Ok(ReceiveTarget::Discard)
         } else {

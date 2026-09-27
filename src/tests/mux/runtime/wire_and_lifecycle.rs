@@ -163,14 +163,38 @@ async fn cancelled_stale_open_preserves_reused_flow_id() {
 }
 
 #[tokio::test]
-async fn invalid_kind_and_unknown_flow_data_close_carrier() {
+async fn invalid_kind_closes_carrier() {
     assert_raw_frame_closes_carrier(&[0xff, 0, 0, 0, 0, 0, 1]).await;
+}
 
+#[tokio::test]
+async fn unknown_flow_data_is_reset_without_closing_the_carrier() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
     let mut frame = encode_header(FrameHeader::data(99, 1).unwrap())
         .unwrap()
         .to_vec();
     frame.push(0);
-    assert_raw_frame_closes_carrier(&frame).await;
+    peer.write_all(&frame).await.unwrap();
+
+    let mut reset = [0; super::wire::HEADER_LEN];
+    peer.read_exact(&mut reset).await.unwrap();
+    assert_eq!(
+        super::wire::decode_header(&reset).unwrap(),
+        FrameHeader::close(99, CLOSE_RESET).unwrap()
+    );
+
+    peer.write_all(&encode_header(FrameHeader::open(7, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let stream = incoming.accept().await.unwrap().unwrap();
+    assert_eq!(stream.flow_id(), 7);
+    assert!(!handle.is_closed());
 }
 
 #[tokio::test]
@@ -196,6 +220,107 @@ async fn duplicate_open_and_credit_overflow_close_carrier() {
 
     let overflow = encode_header(FrameHeader::window(0, u16::MAX as usize).unwrap()).unwrap();
     assert_raw_frame_closes_carrier(&overflow).await;
+}
+
+#[tokio::test]
+async fn stream_window_overflow_resets_only_that_flow() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(7, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let mut bad = incoming.accept().await.unwrap().unwrap();
+    peer.write_all(&encode_header(FrameHeader::window(7, u16::MAX as usize).unwrap()).unwrap())
+        .await
+        .unwrap();
+
+    let mut reset = [0; super::wire::HEADER_LEN];
+    peer.read_exact(&mut reset).await.unwrap();
+    assert_eq!(
+        super::wire::decode_header(&reset).unwrap(),
+        FrameHeader::close(7, CLOSE_RESET).unwrap()
+    );
+    let mut byte = [0; 1];
+    assert_eq!(
+        bad.read(&mut byte).await.unwrap_err().kind(),
+        io::ErrorKind::ConnectionReset
+    );
+
+    peer.write_all(&encode_header(FrameHeader::open(9, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let healthy = incoming.accept().await.unwrap().unwrap();
+    assert_eq!(healthy.flow_id(), 9);
+    assert!(!handle.is_closed());
+}
+
+#[tokio::test]
+async fn open_stream_window_overflow_resets_the_new_flow() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(7, u16::MAX as usize).unwrap()).unwrap())
+        .await
+        .unwrap();
+
+    let mut reset = [0; super::wire::HEADER_LEN];
+    peer.read_exact(&mut reset).await.unwrap();
+    assert_eq!(
+        super::wire::decode_header(&reset).unwrap(),
+        FrameHeader::close(7, CLOSE_RESET).unwrap()
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), incoming.accept())
+            .await
+            .is_err()
+    );
+    assert!(!handle.is_closed());
+}
+
+#[tokio::test]
+async fn connection_receive_overflow_wins_over_stream_isolation() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (left, mut peer) = tokio::io::duplex(16 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
+    let mut streams = Vec::new();
+    for flow_id in [7, 9] {
+        peer.write_all(&encode_header(FrameHeader::open(flow_id, 0).unwrap()).unwrap())
+            .await
+            .unwrap();
+        streams.push(incoming.accept().await.unwrap().unwrap());
+        let header = encode_header(FrameHeader::data(flow_id, FRAME_BYTES).unwrap()).unwrap();
+        let payload = vec![0; FRAME_BYTES];
+        for _ in 0..(BASE_STREAM_WINDOW_BYTES / FRAME_BYTES) {
+            peer.write_all(&header).await.unwrap();
+            peer.write_all(&payload).await.unwrap();
+        }
+    }
+    let mut overflow = encode_header(FrameHeader::data(7, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    overflow.push(0);
+    peer.write_all(&overflow).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), handle.closed())
+        .await
+        .expect("connection receive overflow must close carrier");
+    assert_eq!(
+        handle.close_reason().await,
+        MuxCloseReason::ProtocolViolation
+    );
+    drop(streams);
 }
 
 #[tokio::test]
@@ -332,13 +457,22 @@ async fn reused_flow_id_is_isolated_from_stale_stream_handles() {
 }
 
 #[tokio::test]
-async fn data_after_fin_closes_carrier() {
+async fn data_after_fin_resets_only_that_flow() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
     let (left, mut peer) = tokio::io::duplex(1 << 20);
-    let (handle, mut incoming) = MuxHandle::start(left, MuxConfig::default()).unwrap();
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
     peer.write_all(&encode_header(FrameHeader::open(8, 0).unwrap()).unwrap())
         .await
         .unwrap();
-    let _stream = incoming.accept().await.unwrap().unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(9, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let mut bad = incoming.accept().await.unwrap().unwrap();
+    let mut healthy = incoming.accept().await.unwrap().unwrap();
     peer.write_all(&encode_header(FrameHeader::close(8, CLOSE_FIN).unwrap()).unwrap())
         .await
         .unwrap();
@@ -347,9 +481,106 @@ async fn data_after_fin_closes_carrier() {
         .to_vec();
     data.push(0);
     peer.write_all(&data).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(1), handle.closed())
+    let mut healthy_data = encode_header(FrameHeader::data(9, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    healthy_data.push(0x7a);
+    peer.write_all(&healthy_data).await.unwrap();
+
+    let mut reset = [0; super::wire::HEADER_LEN];
+    peer.read_exact(&mut reset).await.unwrap();
+    assert_eq!(
+        super::wire::decode_header(&reset).unwrap(),
+        FrameHeader::close(8, CLOSE_RESET).unwrap()
+    );
+    let mut byte = [0; 1];
+    assert_eq!(healthy.read(&mut byte).await.unwrap(), 1);
+    assert_eq!(byte, [0x7a]);
+    assert_eq!(
+        bad.read(&mut byte).await.unwrap_err().kind(),
+        io::ErrorKind::ConnectionReset
+    );
+    assert!(!handle.is_closed());
+}
+
+#[tokio::test]
+async fn flow_reset_discards_buffered_data_before_waking_the_reader() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(7, 0).unwrap()).unwrap())
         .await
-        .expect("DATA after FIN must close carrier");
+        .unwrap();
+    let mut stream = incoming.accept().await.unwrap().unwrap();
+    let mut frames = encode_header(FrameHeader::data(7, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    frames.push(0x61);
+    frames.extend_from_slice(&encode_header(FrameHeader::close(7, CLOSE_FIN).unwrap()).unwrap());
+    frames.extend_from_slice(&encode_header(FrameHeader::data(7, 1).unwrap()).unwrap());
+    frames.push(0x62);
+    peer.write_all(&frames).await.unwrap();
+
+    let mut reset = [0; super::wire::HEADER_LEN];
+    peer.read_exact(&mut reset).await.unwrap();
+    assert_eq!(
+        super::wire::decode_header(&reset).unwrap(),
+        FrameHeader::close(7, CLOSE_RESET).unwrap()
+    );
+    let mut byte = [0; 1];
+    assert_eq!(
+        stream.read(&mut byte).await.unwrap_err().kind(),
+        io::ErrorKind::ConnectionReset
+    );
+    assert_eq!(
+        *handle.shared.connection_receive_credit.lock().unwrap(),
+        credit_units(BASE_CONNECTION_WINDOW_BYTES)
+    );
+    assert!(!handle.is_closed());
+}
+
+#[tokio::test]
+async fn peer_reset_overtakes_buffered_data_and_fin() {
+    let config = MuxConfig {
+        stream_window_bytes: BASE_STREAM_WINDOW_BYTES,
+        connection_window_bytes: BASE_CONNECTION_WINDOW_BYTES,
+        ..MuxConfig::default()
+    };
+    let (left, mut peer) = tokio::io::duplex(1 << 20);
+    let (handle, mut incoming) = MuxHandle::start(left, config).unwrap();
+    peer.write_all(&encode_header(FrameHeader::open(7, 0).unwrap()).unwrap())
+        .await
+        .unwrap();
+    let mut stream = incoming.accept().await.unwrap().unwrap();
+    let mut frames = encode_header(FrameHeader::data(7, 1).unwrap())
+        .unwrap()
+        .to_vec();
+    frames.push(0x61);
+    frames.extend_from_slice(&encode_header(FrameHeader::close(7, CLOSE_FIN).unwrap()).unwrap());
+    frames.extend_from_slice(&encode_header(FrameHeader::close(7, CLOSE_RESET).unwrap()).unwrap());
+    peer.write_all(&frames).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while handle.contains_flow(7) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut byte = [0; 1];
+    assert_eq!(
+        stream.read(&mut byte).await.unwrap_err().kind(),
+        io::ErrorKind::ConnectionReset
+    );
+    assert_eq!(
+        *handle.shared.connection_receive_credit.lock().unwrap(),
+        credit_units(BASE_CONNECTION_WINDOW_BYTES)
+    );
+    assert!(!handle.is_closed());
 }
 
 #[tokio::test]

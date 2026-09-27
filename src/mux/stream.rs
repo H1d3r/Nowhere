@@ -6,6 +6,7 @@
 use std::io;
 use std::io::IoSlice;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
 
 use super::wire::CLOSE_FIN;
@@ -77,6 +78,14 @@ impl AsyncRead for FlowReader {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         loop {
+            if self.reset.load(Ordering::Acquire) {
+                self.discard_buffered();
+                self.eof = true;
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "mux flow reset",
+                )));
+            }
             if let Some((payload, offset, charge)) = self.current.take() {
                 let count = (payload.len() - offset).min(buf.remaining());
                 buf.put_slice(&payload[offset..offset + count]);
@@ -92,7 +101,8 @@ impl AsyncRead for FlowReader {
             if self.eof {
                 return Poll::Ready(Ok(()));
             }
-            match Pin::new(&mut self.receiver).poll_recv(cx) {
+            let inbound = self.receiver.lock().expect("mux inbox lock").poll_recv(cx);
+            match inbound {
                 Poll::Ready(Some(Inbound::Data { payload, charge })) => {
                     self.current = Some((payload, 0, charge));
                 }
@@ -114,7 +124,28 @@ impl AsyncRead for FlowReader {
 }
 
 impl FlowReader {
+    fn discard_buffered(&mut self) {
+        if let Some((_, _, charge)) = self.current.take() {
+            self.shared
+                .release_receive(self.flow_id, &self.generation, charge);
+        }
+        while let Ok(inbound) = self.receiver.lock().expect("mux inbox lock").try_recv() {
+            if let Inbound::Data { charge, .. } = inbound {
+                self.shared
+                    .release_receive(self.flow_id, &self.generation, charge);
+            }
+        }
+    }
+
     pub(crate) async fn recv_chunk(&mut self) -> io::Result<Option<MuxChunk>> {
+        if self.reset.load(Ordering::Acquire) {
+            self.discard_buffered();
+            self.eof = true;
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "mux flow reset",
+            ));
+        }
         if let Some((payload, offset, charge)) = self.current.take() {
             return Ok(Some(MuxChunk::received(
                 payload.slice(offset..),
@@ -127,7 +158,22 @@ impl FlowReader {
         if self.eof {
             return Ok(None);
         }
-        match self.receiver.recv().await {
+        let inbound =
+            std::future::poll_fn(|cx| self.receiver.lock().expect("mux inbox lock").poll_recv(cx))
+                .await;
+        if self.reset.load(Ordering::Acquire) {
+            if let Some(Inbound::Data { charge, .. }) = inbound {
+                self.shared
+                    .release_receive(self.flow_id, &self.generation, charge);
+            }
+            self.discard_buffered();
+            self.eof = true;
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "mux flow reset",
+            ));
+        }
+        match inbound {
             Some(Inbound::Data { payload, charge }) => Ok(Some(MuxChunk::received(
                 payload,
                 self.shared.clone(),
@@ -152,17 +198,8 @@ impl FlowReader {
 
 impl Drop for FlowReader {
     fn drop(&mut self) {
-        self.receiver.close();
-        if let Some((_, _, charge)) = self.current.take() {
-            self.shared
-                .release_receive(self.flow_id, &self.generation, charge);
-        }
-        while let Ok(inbound) = self.receiver.try_recv() {
-            if let Inbound::Data { charge, .. } = inbound {
-                self.shared
-                    .release_receive(self.flow_id, &self.generation, charge);
-            }
-        }
+        self.receiver.lock().expect("mux inbox lock").close();
+        self.discard_buffered();
         self.shared.release_part(self.flow_id, &self.generation);
     }
 }
@@ -310,6 +347,10 @@ impl FlowWriter {
     }
 
     fn poll_action(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if self.stopped.as_mut().poll(cx).is_ready() {
+            self.pending_action = None;
+            return Poll::Ready(Err(closed()));
+        }
         let result = self
             .pending_action
             .as_mut()

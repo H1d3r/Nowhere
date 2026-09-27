@@ -3,7 +3,7 @@
 
 //! Public Mux handle lifecycle and logical-stream admission.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -35,6 +35,7 @@ impl MuxHandle {
         let shared = Arc::new(Shared {
             config,
             flows: Mutex::new(HashMap::new()),
+            pending_resets: Mutex::new(HashSet::new()),
             connection_send_credit: Arc::new(Semaphore::new(super::credit_units(
                 super::BASE_CONNECTION_WINDOW_BYTES,
             ))),
@@ -121,8 +122,11 @@ impl MuxHandle {
         if self.is_closed() {
             return false;
         }
+        let pending_resets = self.shared.pending_resets.lock().expect("mux reset lock");
         let flows = self.shared.flows.lock().expect("mux flow lock");
-        flows.len() < self.shared.config.active_stream_limit && !flows.contains_key(&flow_id)
+        flows.len().saturating_add(pending_resets.len()) < self.shared.config.active_stream_limit
+            && !flows.contains_key(&flow_id)
+            && !pending_resets.contains(&flow_id)
     }
 
     pub(crate) fn pressure(&self) -> usize {
