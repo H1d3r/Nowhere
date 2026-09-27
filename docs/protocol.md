@@ -303,6 +303,8 @@ MuxHeader - 7 bytes
 OPEN carries no payload and extends
 the opener's 4 MiB initial stream receive window. The runtime emits DATA
 payloads of at most 32 KiB.
+An otherwise valid OPEN whose extension exceeds the stream window limit resets
+only that flow; header validation remains carrier-wide.
 
 FIN and RESET carry no payload. FIN closes only the sender's direction and does
 not acknowledge that DATA in the reverse direction has ended. A RESET receiver
@@ -315,16 +317,28 @@ field must be zero.
 WINDOW carries no payload and requires nonzero credit in 1 KiB
 units. A
 WINDOW with `flow_id=0` replenishes connection credit; a nonzero ID replenishes
-that logical stream. Credit that would exceed the configured window closes the
-carrier. A late stream-local WINDOW for an already closed stream is ignored.
+that logical stream. Connection credit that would exceed the configured window
+closes the carrier. Stream credit that would exceed its configured window
+resets only that flow. A late stream-local WINDOW for an already closed stream
+is ignored.
 
-DATA for a flow that was never established, has already received FIN, or has
-completed bidirectional termination without retained closed-flow state is a
-carrier error. After a local FIN or RESET, an implementation may discard DATA
-that was already in flight, but it MUST validate both receive windows and return
-only connection credit; retaining the stream debit bounds the discarded data.
-Late or duplicate FIN/RESET processing is idempotent. Closing the physical Mux
-carrier fails every logical stream on that carrier.
+Every DATA payload is charged to the connection receive window before its flow
+state is evaluated. Exceeding the connection window closes the carrier. DATA
+after FIN, DATA that exceeds its stream window, and DATA for an unknown or
+removed flow reset only the identified flow. Discarded DATA returns only
+connection credit; it does not replenish a terminated stream. Late or duplicate
+FIN/RESET processing and WINDOW for an absent flow are idempotent. Invalid frame
+encoding, an ambiguous duplicate active OPEN, and carrier I/O failure remain
+carrier errors. Closing the physical Mux carrier fails every logical stream on
+that carrier.
+
+Flow termination discards buffered DATA and returns its connection credit once.
+DATA already held by a consumer returns credit when consumed or released.
+RESET cancels queued flow operations, while a frame already being written must
+finish before the serial writer emits RESET. Pending RESETs reserve their IDs
+until written and share the bounded flow-state budget; exhaustion of that budget
+is a carrier error. The shared reader never waits for a flow's receive queue or
+for its RESET to be written.
 
 The runtime preserves the first terminal reason when close paths race. Local
 shutdown, idle retirement, peer EOF, reader failure, writer failure, and a peer
@@ -569,7 +583,7 @@ QUIC UDP DATA or CLOSE - 4 + N bytes
 
  offset  0                                               4
          +------------------------------------------------+
-         | type:2 | flow_id:30                             |
+         | type:2 | flow_id:30                            |
          | u32, network byte order                        |
          +------------------------------------------------+
          | payload ...                                    |  DATA only
@@ -597,10 +611,10 @@ Packets that exceed the current QUIC maximum DATAGRAM size are divided into
 QUIC UDP FRAGMENT - 12 + N bytes
 
  offset  0                    4            8          9         10           12
-         +--------------------+------------+----------+---------+------------+
-         | type:2|flow_id:30   | packet_id  | frag_ix  | count   | total_len  |
-         | u32                | u32        | u8       | u8      | u16        |
-         +--------------------+------------+----------+---------+------------+
+         +--------------------+------------+----------+---------+-----------+
+         | type:2|flow_id:30  | packet_id  | frag_ix  | count   | total_len |
+         | u32                | u32        | u8       | u8      | u16       |
+         +--------------------+------------+----------+---------+-----------+
          | fragment payload, N > 0                                          |
          +------------------------------------------------------------------+
 ```
