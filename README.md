@@ -26,7 +26,7 @@ Each flow selects its uplink and downlink independently.
 
 | Core property | What it means |
 | --- | --- |
-| Unified edge | TLS/TCP and QUIC/UDP share one identity and lifecycle |
+| Unified edge | TLS/TCP and QUIC/UDP share one service identity and lifecycle |
 | Split routing | Uplink and downlink choose their carrier independently |
 | Optional Morph | A keyed transform masks the TLS/QUIC wire image |
 | TCP and UDP | SOCKS5 CONNECT and UDP ASSOCIATE are both supported |
@@ -35,7 +35,8 @@ Each flow selects its uplink and downlink independently.
 
 ## Quick start
 
-Use a stable Rust toolchain on a supported target.
+Use a stable Rust toolchain on a supported target, or download a
+[prebuilt binary](https://github.com/NodePassProject/Nowhere/releases).
 
 ### 1. Build
 
@@ -60,9 +61,6 @@ Connect to Portal and expose SOCKS5 on `127.0.0.1:1080`:
   "vector://change-me@portal.example:2000?up=tcp&down=tcp&socks=127.0.0.1:1080"
 ```
 
-More examples are available in [Configuration](docs/configuration.md) and the
-[extended quick start](docs/quick-start.md).
-
 ### 4. Inspect
 
 Open the local TUI from another terminal:
@@ -76,44 +74,33 @@ Open the local TUI from another terminal:
 <table>
 <tr>
 <td width="50%" valign="top">
-<sub>CLIENT · APPLE PLATFORMS</sub><br><br>
+<sub>CLIENT</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/Anywhere">Anywhere</a></strong><br>
-Native Swift client with independent TCP/UDP carriers, optional TLS multiplexing, and Morph with Prelude.<br><br>
+Native Swift client with independent TCP/UDP carriers, TLS multiplexing, and Morph.<br><br>
 <a href="https://apps.apple.com/us/app/id6758235178">App Store</a>
 </td>
 <td width="50%" valign="top">
-<sub>DEPLOY · LINUX VPS</sub><br><br>
+<sub>DEPLOY</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/nowhere-sh">nowhere-sh</a></strong><br>
-Interactive Linux VPS deployment script, from installation and upgrades to links, QR codes, and the TUI.<br><br>
+Interactive Linux VPS deployment script for installation, upgrades, links, QR codes.<br><br>
 <a href="https://github.com/NodePassProject/nowhere-sh#quick-start">Quick start</a>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<sub>CONTROL · SINGLE-HOST</sub><br><br>
+<sub>CONTROL</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/OpenCtrl">OpenCtrl</a></strong><br>
-Supervises Portal and Vector processes and exposes their lifecycle and telemetry through REST and SSE.<br><br>
+Supervises Nowhere processes and exposes their telemetry through REST and SSE.<br><br>
 <a href="https://github.com/NodePassProject/OpenCtrl/blob/main/docs/master.md">API reference</a>
 </td>
 <td width="50%" valign="top">
-<sub>OPERATE · MULTI-HOST</sub><br><br>
+<sub>OPERATE</sub><br><br>
 <strong><a href="https://github.com/NodePassProject/NowhereDash">NowhereDash</a></strong><br>
-Web dashboard for Portal fleets across OpenCtrl endpoints, with live telemetry and private subscriptions.<br><br>
+Web dashboard managed through OpenCtrl, with live telemetry and protected subscriptions.<br><br>
 <a href="https://github.com/NodePassProject/NowhereDash#quick-start">Quick start</a>
 </td>
 </tr>
 </table>
-
-Anywhere and the built-in Vector connect directly to Portal. Import a share
-link into Anywhere to get started:
-
-```text
-nowhere://change-me@portal.example:2000?up=tcp&down=tcp&mux=1#My%20Portal
-```
-
-See [Ecosystem and share links](docs/ecosystem.md) for how the projects fit
-together, plus the full link format, parameters, and import instructions. For
-a local SOCKS5 endpoint, use **Vector** as shown in the [quick start](#quick-start).
 
 ## How it works
 
@@ -137,40 +124,35 @@ a local SOCKS5 endpoint, use **Vector** as shown in the [quick start](#quick-sta
                                   +------------+                          +------------+
 ```
 
+### Endpoint format
+
 Each service URL uses either a compact endpoint for both carriers on one port,
 or an explicit endpoint that assigns carriers, ports, and address families.
 
 | Endpoint | Meaning |
-|---|---|
-| `@*:2000` | TLS/TCP and QUIC/UDP wildcard candidates, port 2000 |
+| --- | --- |
+| `@*:2000` | TLS/TCP and QUIC/UDP on wildcard addresses, port 2000 |
 | `@*/tcp:2006` | TLS/TCP only, IPv4 and IPv6 |
 | `@*/udp:2017` | QUIC/UDP only, IPv4 and IPv6 |
 | `@*/tcp4:2006/udp6:2017` | TLS/TCP on IPv4 and QUIC/UDP on IPv6 |
 
-`*` is reserved for Portal listeners; Vector and `next` require a concrete
-address or hostname. On Portal, `@:2000` is shorthand for `@*:2000`. The full
-grammar is documented in [Configuration](docs/configuration.md).
-
-### Independent uplink and downlink
+### Independent directions
 
 `up` and `down` accept `tcp`, `udp`, or `mix`. With both carriers available,
 the default is TCP; `mux=1` enables TLS multiplexing.
 
 | `up` ↓ / `down` → | `tcp` | `udp` | `mix` |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `tcp` | TT | TQ | TT ↔ TQ |
 | `udp` | QT | QQ | QT ↔ QQ |
 | `mix` | TT ↔ QT | TQ ↔ QQ | TT ↔ QQ |
 
-T is TLS/TCP and Q is QUIC/UDP, with uplink first. `mix` makes one 50/50 choice
-per flow and may try the alternate route once before commitment. Portal
-`next=` applies the same policy independently on each hop.
+T means TLS/TCP and Q means QUIC/UDP, with the uplink listed first. `mix`
+randomly selects either carrier with equal probability for each flow and may
+try the alternate route once before commitment. Portal `next=` applies the same
+policy independently on each hop.
 
 ## Data path
-
-Authentication belongs to each physical carrier; routing belongs to each
-logical flow. Once Portal returns `READY`, application data travels as a plain
-byte stream or QUIC DATAGRAM payload.
 
 ```text
 Carrier bootstrap                 Logical flow
@@ -184,11 +166,6 @@ Carrier bootstrap                 Logical flow
         +-- QUIC: first stream only        +-- UDP: UoT or QUIC DATAGRAM
 ```
 
-Frames are compact, DATA payload queues are bounded by byte credit, and hot-path
-buffers are reused. See
-[Protocol](docs/protocol.md) for the wire contract and
-[Security](docs/security.md) for trust boundaries.
-
 ### Morph
 
 `morph=1` masks the bare TLS/QUIC wire image with a transform derived from the
@@ -200,9 +177,6 @@ TCP  client -> server   [ prelude 64B ][ nonce 12B ][ ChaCha20-XOR(TLS stream) ]
 
 UDP  each datagram      [ nonce 12B ][ ChaCha20-XOR(QUIC datagram) ]
 ```
-
-Both endpoints on a hop must enable it. Morph is wire masking, with no protocol
-camouflage or added security semantics. See [Protocol](docs/protocol.md).
 
 ### Native chaining
 
@@ -222,9 +196,9 @@ hops.
   <img src="assets/nowhere.gif" width="1280" alt="Nowhere TUI showing live traffic histories, connection and carrier metrics, anonymous access logs, runtime events, filtering, pause, and help">
 </p>
 
-The read-only TUI discovers local Portal and Vector instances and presents
-traffic, carrier, process, and anonymized event data without controlling their lifecycle.
-Third-party clients use the same [local telemetry contract](docs/telemetry.md).
+The read-only TUI discovers local Portal and Vector instances. It presents traffic,
+carrier, process, and anonymized event data without controlling their lifecycle.
+Third-party clients use the same [telemetry contract](docs/telemetry.md).
 
 ## Public deployment
 
@@ -236,22 +210,13 @@ nowhere "portal://change-me@:2000?tls=2&crt=/etc/nowhere/cert.pem&key=/etc/nowhe
 nowhere "vector://change-me@portal.example:2000?sni=portal.example&socks=127.0.0.1:1080"
 ```
 
-Certificate pinning is also available. Review [Security](docs/security.md) and
-[Configuration](docs/configuration.md) before exposing a Portal.
-
-## Platform scope
-
-Portal, Vector, relay, TUI, and discovery share the supported platform matrix;
-process telemetry varies by operating system. See [Platforms](docs/platforms.md)
-and [Operations](docs/operations.md).
-
 ## Documentation
 
 | Guide | Covers |
 | --- | --- |
 | [Quick start](docs/quick-start.md) | Build, run, and connect |
-| [Ecosystem](docs/ecosystem.md) | Clients, deployment and control tools, link format |
-| [Configuration](docs/configuration.md) | Service URL, options, chaining, and env variables |
+| [Ecosystem](docs/ecosystem.md) | Clients, deployment and control tools, and share links |
+| [Configuration](docs/configuration.md) | Service URLs, options, chaining, and environment variables |
 | [Wire protocol](docs/protocol.md) | Authentication, flows, Mux, and Morph |
 | [Security](docs/security.md) | Certificate verification and trust boundaries |
 | [Operations](docs/operations.md) | Deployment and runtime behavior |
