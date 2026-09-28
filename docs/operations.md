@@ -12,6 +12,33 @@ Run `nowhere` without a URL and select:
 - `1` Overview;
 - `2` Logs.
 
+## One-shot toolbox
+
+Use `probe` to open one real TCP Flow through the normal Portal client path:
+
+```text
+nowhere probe "vector://secret@portal.example:2000?up=tcp&down=tcp" "example.com:443"
+```
+
+The Vector URL may omit `socks` because no local listener is started. The
+command uses the configured TLS/QUIC, authentication, Mux, Morph and route
+policy, waits for the existing Flow setup result, and then closes the Flow. It
+does not send application payload, relay standard input or output, open UDP,
+repeat the attempt, or benchmark the path. An `OK` result confirms the
+end-to-end Portal-to-target setup; failures report the existing setup result or
+the failed stage, such as `DIAL_FAILED` or `TRANSPORT_FAILED`.
+
+Use `status` for one read-only snapshot of every discoverable local instance:
+
+```text
+nowhere status
+```
+
+Each instance is printed vertically with lifecycle, endpoint, uptime, logical
+Flow counts, physical carrier counts and traffic totals. The command uses the
+same local discovery and telemetry connection as the TUI, then exits without
+changing instance state or runtime configuration.
+
 ## Listener lifecycle
 
 Portal validates the complete URL, resolves every declared carrier, and opens
