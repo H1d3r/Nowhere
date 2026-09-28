@@ -40,6 +40,19 @@ impl TcpTunnel {
         } = self;
         (reader, writer, TcpTunnelGuard { _lanes, _lease })
     }
+
+    pub(crate) async fn close(mut self) -> std::io::Result<()> {
+        let mut result = self.writer.shutdown().await;
+        for lane in &mut self._lanes {
+            if let Some(writer) = &mut lane.writer
+                && let Err(error) = writer.shutdown().await
+                && result.is_ok()
+            {
+                result = Err(error);
+            }
+        }
+        result
+    }
 }
 
 impl AsyncRead for TcpTunnel {

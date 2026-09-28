@@ -13,6 +13,8 @@ mod render;
 
 use anyhow::Result;
 
+pub(crate) use format::{bytes, duration_ms};
+
 pub async fn run_tui() -> Result<()> {
     let client = client::start()?;
     app::run_with_receiver(client.events, Some(client.commands)).await

@@ -5,25 +5,43 @@
 
 use std::env;
 use std::io::IsTerminal;
+use std::{error, fmt};
 
 use anyhow::{Context, Result, bail};
-use nowhere::{LogLevel, Logger, Portal, Vector, query_first, validate_endpoint_url_input};
+use nowhere::{
+    LogLevel, Logger, Portal, Vector, query_first, run_probe, run_status,
+    validate_endpoint_url_input,
+};
 use url::{ParseError, Url};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Debug)]
+struct ProbeFailed;
+
+impl fmt::Display for ProbeFailed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("probe failed")
+    }
+}
+
+impl error::Error for ProbeFailed {}
+
 const HELP_TEXT: &str = "\
 Usage:
-  nowhere
-  nowhere tui
-  nowhere <portal-url>
-  nowhere <vector-url>
-  nowhere -h | --help
-  nowhere -v | --version
+  nowhere                              Open the local telemetry TUI
+  nowhere tui                          Open the local telemetry TUI
+  nowhere <portal-url>                 Run a Portal relay
+  nowhere <vector-url>                 Run a Vector SOCKS5 client
+  nowhere probe <vector-url> <target>  Test one real TCP Flow
+  nowhere status                       Read one local telemetry snapshot
+  nowhere -h | --help                  Show this help
+  nowhere -v | --version               Show version information
 
 Commands:
-  tui             Open the read-only multi-instance TUI.
-  <portal-url>    Run a Portal relay service.
-  <vector-url>    Run a Vector SOCKS5 client.
+  tui       Interactive read-only multi-instance telemetry.
+  probe     End-to-end TCP Flow setup; sends no application payload.
+  status    Read-only local instance telemetry; exits after one snapshot.
 
 URL forms:
   portal://<key>@<listen-host>:<port>[?<options>]
@@ -38,10 +56,12 @@ Endpoint syntax:
   *                           Portal wildcard; clients require a concrete host.
 
 Examples:
-  nowhere 'portal://secret@*:2000'
-  nowhere 'portal://secret@*/tcp:2006/udp:2017?morph=1'
-  nowhere 'vector://secret@relay.example:2000?socks=127.0.0.1:1080'
-  nowhere 'vector://secret@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080'
+  nowhere \"portal://secret@*:2000\"
+  nowhere \"portal://secret@*/tcp:2006/udp:2017?morph=1\"
+  nowhere \"vector://secret@relay.example:2000?socks=127.0.0.1:1080\"
+  nowhere \"vector://secret@relay.example/tcp:2006/udp:2017?up=udp&down=tcp&morph=1&socks=:1080\"
+  nowhere probe \"vector://secret@relay.example:2000\" \"example.com:443\"
+  nowhere status
 
 Common options:
   morph=0|1           Enable keyed wire masking. Default: 0.
@@ -58,7 +78,7 @@ Portal options:
   next=<portal>       Native upstream Portal: key@host or key@host/<carriers>.
 
 Vector options:
-  socks=<listener>    Required local SOCKS5 listener: [user:pass@]host:port.
+  socks=<listener>    Local SOCKS5 listener: [user:pass@]host:port. Optional for probe.
 
 Client route options (Vector and Portal next):
   up=tcp|udp|mix      Upload carrier. Default: the only carrier, otherwise TCP.
@@ -83,9 +103,15 @@ Documentation:
 #[tokio::main]
 async fn main() {
     if let Err(err) = start(env::args().collect()).await {
-        eprintln!("{}", format_start_error(&err));
+        if should_print_start_error(&err) {
+            eprintln!("{}", format_start_error(&err));
+        }
         std::process::exit(1);
     }
+}
+
+fn should_print_start_error(error: &anyhow::Error) -> bool {
+    !error.is::<ProbeFailed>()
 }
 
 fn format_start_error(error: &anyhow::Error) -> String {
@@ -96,16 +122,15 @@ async fn start(args: Vec<String>) -> Result<()> {
     if args.len() == 1 {
         return run_tui().await;
     }
-    if args.len() > 2 {
-        bail!("expected exactly one configuration URL; run 'nowhere --help' for usage");
-    }
 
     match args[1].as_str() {
         "help" | "--help" | "-h" => {
+            require_args(&args, 2, "nowhere --help")?;
             print_help();
             return Ok(());
         }
         "version" | "--version" | "-v" => {
+            require_args(&args, 2, "nowhere --version")?;
             println!(
                 "nowhere-v{VERSION} {}/{}",
                 env::consts::OS,
@@ -113,8 +138,26 @@ async fn start(args: Vec<String>) -> Result<()> {
             );
             return Ok(());
         }
-        "tui" => return run_tui().await,
+        "tui" => {
+            require_args(&args, 2, "nowhere tui")?;
+            return run_tui().await;
+        }
+        "probe" => {
+            require_args(&args, 4, "nowhere probe <URL> <TARGET>")?;
+            let url = parse_toolbox_url(&args[2])?;
+            return match run_probe(url, &args[3]).await? {
+                true => Ok(()),
+                false => Err(ProbeFailed.into()),
+            };
+        }
+        "status" => {
+            require_args(&args, 2, "nowhere status")?;
+            return run_status().await;
+        }
         _ => {}
+    }
+    if args.len() > 2 {
+        bail!("expected exactly one configuration URL; run \"nowhere --help\" for usage");
     }
 
     let command_url = parse_command_url(&args[1]).with_context(|| "invalid configuration URL")?;
@@ -139,6 +182,17 @@ async fn start(args: Vec<String>) -> Result<()> {
     }
 }
 
+fn require_args(args: &[String], expected: usize, usage: &str) -> Result<()> {
+    if args.len() != expected {
+        bail!("usage: {usage}");
+    }
+    Ok(())
+}
+
+fn parse_toolbox_url(raw: &str) -> Result<Url> {
+    parse_command_url(raw).map_err(|_| anyhow::anyhow!("invalid configuration URL"))
+}
+
 async fn run_tui() -> Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         bail!("main::run_tui: an interactive terminal is required")
@@ -148,10 +202,31 @@ async fn run_tui() -> Result<()> {
 
 fn print_help() {
     println!(
-        "nowhere-v{VERSION} {}/{}\n\n{HELP_TEXT}",
+        "NOWHERE\n───────\nv{VERSION} · {}/{}\n\n{}",
         env::consts::OS,
-        env::consts::ARCH
+        env::consts::ARCH,
+        format_help()
     );
+}
+
+fn format_help() -> String {
+    HELP_TEXT
+        .lines()
+        .map(|line| {
+            if !line.starts_with(' ')
+                && let Some(title) = line.strip_suffix(':')
+            {
+                format!(
+                    "{}\n{}",
+                    title.to_ascii_uppercase(),
+                    "─".repeat(title.len())
+                )
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_command_url(raw: &str) -> Result<Url> {

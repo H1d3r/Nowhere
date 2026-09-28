@@ -39,6 +39,7 @@ const ROUTE_POLICY_MATRIX: [(&str, &str); 9] = [
 ];
 
 struct TestRuntime {
+    toolbox_url: Url,
     shutdown: CancellationToken,
     endpoint: quinn::Endpoint,
     portal_tasks: Vec<JoinHandle<()>>,
@@ -168,12 +169,75 @@ async fn start_runtime_with_morph(up: &str, down: &str, mux: u8, morph: bool) ->
     let socks = SocketAddr::from(([127, 0, 0, 1], socks_port));
     wait_for_socks(socks).await;
     TestRuntime {
+        toolbox_url: Url::parse(&format!("vector://secret@127.0.0.1/tcp:{tcp_port}/udp:{udp_port}?up={up}&down={down}&mux={mux}&morph={}", u8::from(morph))).unwrap(),
         shutdown,
         endpoint,
         portal_tasks: vec![quic_task, tcp_task],
         vector_task,
         portal_stats,
         socks,
+    }
+}
+
+#[tokio::test]
+async fn toolbox_probe_closes_real_flows_without_payload() {
+    for (up, down, mux, morph) in [
+        ("tcp", "tcp", 0, false),
+        ("tcp", "tcp", 1, false),
+        ("udp", "udp", 0, false),
+        ("tcp", "udp", 1, false),
+        ("udp", "tcp", 0, false),
+        ("tcp", "tcp", 1, true),
+        ("udp", "udp", 0, true),
+    ] {
+        let runtime = start_runtime_with_morph(up, down, mux, morph).await;
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = target.local_addr().unwrap();
+        let received = tokio::spawn(async move {
+            let (mut stream, _) = target.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).await.unwrap();
+            bytes
+        });
+        let client = crate::toolbox::ToolboxClient::parse(&runtime.toolbox_url).unwrap();
+        let report = timeout(TEST_TIMEOUT, client.probe(Target::Ip(address)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.result.unwrap(), crate::protocol::SetupResult::Ready);
+        assert!(
+            report.cleanup.is_ok(),
+            "{up}/{down}, mux={mux}: {:?}",
+            report.cleanup
+        );
+        assert!(
+            timeout(TEST_TIMEOUT, received)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        runtime.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn toolbox_probe_preserves_remote_setup_failure() {
+    for mux in [0, 1] {
+        let runtime = start_runtime("tcp", "tcp", mux).await;
+        let target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = target.local_addr().unwrap();
+        drop(target);
+        let client = crate::toolbox::ToolboxClient::parse(&runtime.toolbox_url).unwrap();
+        let report = timeout(TEST_TIMEOUT, client.probe(Target::Ip(address)))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            report.result.unwrap(),
+            crate::protocol::SetupResult::DialFailed
+        );
+        runtime.stop().await;
     }
 }
 

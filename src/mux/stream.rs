@@ -309,7 +309,14 @@ impl AsyncWrite for FlowWriter {
                         finishes_flow: true,
                     })
                     .await
-                    .map_err(|_| closed())
+                    .map_err(|_| closed())?;
+                let (tx, rx) = oneshot::channel();
+                shared
+                    .data_tx
+                    .send(Outbound::Flush(tx))
+                    .await
+                    .map_err(|_| closed())?;
+                rx.await.map_err(|_| closed())?
             }));
         }
         match self.poll_action(cx) {

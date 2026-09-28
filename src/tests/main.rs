@@ -6,10 +6,73 @@
 use super::*;
 
 #[test]
+fn probe_results_use_the_panel_as_the_only_error_output() {
+    let error = anyhow::Error::new(ProbeFailed);
+    assert!(!should_print_start_error(&error));
+    assert!(should_print_start_error(&anyhow::anyhow!("invalid URL")));
+}
+
+#[tokio::test]
+async fn commands_reject_extra_arguments() {
+    for command in ["help", "--help", "version", "--version", "tui", "status"] {
+        let error = start(vec![
+            "nowhere".to_owned(),
+            command.to_owned(),
+            "extra".to_owned(),
+        ])
+        .await
+        .unwrap_err();
+        assert!(error.to_string().starts_with("usage:"));
+    }
+}
+
+#[tokio::test]
+async fn probe_requires_exactly_a_url_and_target() {
+    for arguments in [
+        vec!["nowhere", "probe"],
+        vec!["nowhere", "probe", "vector://secret@localhost:2000"],
+        vec![
+            "nowhere",
+            "probe",
+            "vector://secret@localhost:2000",
+            "example.com:443",
+            "extra",
+        ],
+    ] {
+        let error = start(arguments.into_iter().map(str::to_owned).collect())
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "usage: nowhere probe <URL> <TARGET>");
+    }
+}
+
+#[tokio::test]
+async fn toolbox_errors_do_not_expose_configuration_values() {
+    for url in [
+        "vector://secret@localhost:2000?up=secret",
+        "vector://secret@localhost/tcp:secret",
+    ] {
+        let error = start(vec![
+            "nowhere".to_owned(),
+            "probe".to_owned(),
+            url.to_owned(),
+            "example.com:443".to_owned(),
+        ])
+        .await
+        .unwrap_err();
+        let message = format_start_error(&error);
+        assert!(!message.contains("secret"), "{message}");
+    }
+}
+
+#[test]
 fn help_text_documents_usage_and_configuration_surface() {
+    assert!(!HELP_TEXT.contains('\''));
     for expected in [
         "Usage:",
         "nowhere tui",
+        "nowhere probe <vector-url> <target>",
+        "nowhere status",
         "nowhere <portal-url>",
         "nowhere <vector-url>",
         "-h | --help",
@@ -42,6 +105,8 @@ fn help_text_documents_usage_and_configuration_surface() {
         );
     }
     for removed in [
+        "nowhere check",
+        "nowhere dial",
         "NOW_MAX_TCP_FLOWS",
         "NOW_MAX_UDP_FLOWS",
         "NOW_MAX_PENDING_PAIRS",

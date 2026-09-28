@@ -19,6 +19,22 @@ const VECTOR_QUERY_KEYS: &[&str] = &[
     "up", "down", "mux", "sni", "pin", "rate", "etar", "morph", "socks", "log",
 ];
 
+fn vector_query(url: &Url) -> Result<HashMap<String, String>> {
+    if url.scheme() != "vector" {
+        bail!("Vector configuration: URL scheme must be vector");
+    }
+    if url.password().is_some() {
+        bail!("Vector configuration: URL password component is not supported");
+    }
+    if url.username().is_empty() {
+        bail!("Vector configuration: missing shared key before '@'");
+    }
+    if url.fragment().is_some() {
+        bail!("Vector configuration: URL fragment is not supported");
+    }
+    query_first(url, VECTOR_QUERY_KEYS)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MuxMode {
     Disabled,
@@ -176,6 +192,18 @@ impl PortalClientConfig {
         Ok((config, credentials))
     }
 
+    pub(crate) fn from_probe_url(url: &Url) -> Result<(Self, crate::protocol::Credentials)> {
+        let query = vector_query(url)?;
+        let config = Self::parse(url, &query, DEFAULT_DIALER_IP, "Vector endpoint")?;
+        parse_rate(query.get("rate").map(String::as_str), "rate")?;
+        parse_rate(query.get("etar").map(String::as_str), "etar")?;
+        if first_raw_socks_value(url).is_some() {
+            SocksListenConfig::from_url(url)?;
+        }
+        let credentials = crate::protocol::Credentials::new(url)?;
+        Ok((config, credentials))
+    }
+
     pub(crate) fn endpoint(&self) -> String {
         self.remote.canonical()
     }
@@ -264,19 +292,7 @@ pub(crate) struct VectorConfig {
 
 impl VectorConfig {
     pub(super) fn from_url(url: &Url) -> Result<Self> {
-        if url.scheme() != "vector" {
-            bail!("Vector configuration: URL scheme must be vector");
-        }
-        if url.password().is_some() {
-            bail!("Vector configuration: URL password component is not supported");
-        }
-        if url.username().is_empty() {
-            bail!("Vector configuration: missing shared key before '@'");
-        }
-        if url.fragment().is_some() {
-            bail!("Vector configuration: URL fragment is not supported");
-        }
-        let query = query_first(url, VECTOR_QUERY_KEYS)?;
+        let query = vector_query(url)?;
         let portal = PortalClientConfig::parse(url, &query, DEFAULT_DIALER_IP, "Vector endpoint")?;
         let rate_mbps = parse_rate(query.get("rate").map(String::as_str), "rate")?;
         let etar_mbps = parse_rate(query.get("etar").map(String::as_str), "etar")?;
